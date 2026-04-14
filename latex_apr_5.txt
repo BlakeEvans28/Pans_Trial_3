@@ -1,0 +1,70 @@
+\documentclass[12pt]{report}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{setspace}
+\usepackage{booktabs}
+
+\doublespacing
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{\fill}
+
+{\Large Mini Balance Report}\\[0.1in]
+{\Huge \textit{Pan's Trial}}\\[0.15in]
+Blake Evans\\
+ECE 348\\
+April 6, 2026
+
+\vspace*{\fill}
+\end{titlepage}
+
+\chapter*{Introduction}
+\textit{Pan's Trial} is a two-player game in which players move through a changing labyrinth, collect useful cards, and then play a second-phase contest to gain Pan's favor. Because the game includes randomness from drafting, Omen order, and board layout, balance cannot be judged from only a few playtests. To study balance more directly, a headless simulation of 100 games was run using the digital implementation.
+
+The purpose of this mini report is to determine whether the game appears reasonably balanced. The main questions are whether stronger play is rewarded, whether either seat has a major advantage, and whether any request appears noticeably stronger than the others.
+
+\chapter*{Rules}
+Each game begins with drafting and Omen assignment, followed by repeated rounds of Traversing the Labyrinth and Appeasing Pan. During Traversing, players take three alternating movement turns on a 6x6 toroidal grid. Walls block movement, Traps add damage, Ballista tiles allow special linear movement, and weapon-color cards in a player's hand can be used for combat. A player loses when their damage reaches 25 or more.
+
+During Appeasing Pan, both players play one normal hand card if possible. The reversed Omen color order determines trump strength, and matching colors are decided by card rank. The winner chooses a request first, then the loser chooses unless Ignore Us ends the phase. The available requests are Restructure, Steal Life, Ignore Us, and Plane Shift. At the end of the phase, the loser places the two played cards into labyrinth holes when possible.
+
+\chapter*{Results}
+The simulation showed a clear skill ladder. The Experienced AI won 51 of 67 appearances, the Amateur AI won 48 of 67 appearances, and the Beginner AI won only 1 of 66 appearances. This suggests that the game rewards stronger decision making rather than being driven only by randomness.
+
+Seat balance also appeared reasonable. Player 1 won 52 games, while Player 2 won 48. That difference is not large enough to suggest an overwhelming seat advantage. The strongest balance concern came from request usage and pacing. Plane Shift was chosen more often than any other request, and the average game length was 235.83 logged actions.
+
+\begin{table}[h]
+\centering
+\caption{Simulation Summary}
+\begin{tabular}{ll}
+\toprule
+Metric & Value \\
+\midrule
+Games simulated & 100 \\
+Player 1 wins & 52 \\
+Player 2 wins & 48 \\
+Experienced win rate & 76.12\% \\
+Amateur win rate & 71.64\% \\
+Beginner win rate & 1.52\% \\
+Most-used request & Plane Shift (124) \\
+Average actions per game & 235.83 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\chapter*{Conclusion}
+The current version of \textit{Pan's Trial} appears reasonably balanced. Stronger AI profiles consistently beat weaker ones, and neither seat dominated the simulation. These results suggest that the game is strategically meaningful and not controlled by one obvious structural advantage.
+
+The main issues that still stand out are pacing and request value. Plane Shift appears especially useful, and games may still run longer than ideal. Overall, the simulation supports the conclusion that \textit{Pan's Trial} is in a good state for continued refinement rather than major redesign.
+
+\chapter*{References}
+[1] Jasinski, Micah. \textit{Pan's Trial}. Rules document, March 1, 2026.
+
+[2] Jasinski, Micah. \textit{Pan's Trial Report}. ECE 348 design report, March 1, 2026.
+
+[3] \textit{Balancing\_Testing\_01.xlsx}. Headless simulation workbook, April 5, 2026.
+
+\end{document}

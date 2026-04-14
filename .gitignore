@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+dist_onedir/
+*.spec
+!Pans_Trial_slim.spec
+Pans_Trial_exe.zip
+
+# Local editor files
+*.code-workspace
+
+# Keep assignment deliverables such as Pans_Trial.exe and Balancing_Testing_01.xlsx tracked if needed.

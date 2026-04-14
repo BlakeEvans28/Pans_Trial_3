@@ -1,0 +1,704 @@
+"""
+Screen management system for Pan's Trial.
+Handles different game screens: Start, Game, GameOver, etc.
+"""
+
+from enum import Enum
+from random import shuffle
+import sys
+from pathlib import Path
+import pygame
+import pygame_gui
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from engine import CardRank, CardSuit
+from pan_theme import get_card_display, get_family_name, get_rank_name, get_rank_name_with_value
+from .suit_icons import draw_suit_icon
+
+
+class ScreenType(Enum):
+    """Different screens in the game."""
+    START = "start"
+    DRAFT = "draft"
+    JACK_REVEAL = "jack_reveal"
+    GAME = "game"
+    GAME_OVER = "game_over"
+
+
+class Screen:
+    """Base class for all screens."""
+    
+    def __init__(self, window: "GameWindow"):
+        self.window = window
+        self.ui_manager = window.ui_manager
+    
+    def handle_events(self, event: pygame.event.Event) -> bool:
+        """Handle event. Return True if event was consumed."""
+        raise NotImplementedError
+    
+    def update(self, time_delta: float) -> None:
+        """Update screen state."""
+        raise NotImplementedError
+    
+    def render(self, surface: pygame.Surface) -> None:
+        """Render screen."""
+        raise NotImplementedError
+    
+    def on_enter(self) -> None:
+        """Called when screen is activated."""
+        pass
+    
+    def on_exit(self) -> None:
+        """Called when screen is deactivated."""
+        pass
+
+
+class StartScreen(Screen):
+    """Start/menu screen."""
+    
+    def __init__(self, window: "GameWindow"):
+        super().__init__(window)
+        self.title_font = pygame.font.Font(None, 72)
+        self.subtitle_font = pygame.font.Font(None, 36)
+        self.button_font = pygame.font.Font(None, 28)
+        
+        self.play_button = None
+        self.quit_button = None
+        self._create_ui()
+        
+        # Start with elements hidden (will be shown when screen is activated)
+        self._hide_all_elements()
+    
+    def _create_ui(self):
+        """Create UI elements."""
+        # Center the buttons horizontally
+        button_width = 300
+        button_height = 60
+        center_x = (self.window.WINDOW_WIDTH - button_width) // 2
+        
+        # Play button - centered vertically in upper half
+        play_y = self.window.WINDOW_HEIGHT // 2 - button_height - 20
+        self.play_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((center_x, play_y), (button_width, button_height)),
+            text="Start Game",
+            manager=self.ui_manager,
+            object_id="play_button"
+        )
+        
+        # Quit button - centered vertically in lower half  
+        quit_y = self.window.WINDOW_HEIGHT // 2 + 20
+        self.quit_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((center_x, quit_y), (button_width, button_height)),
+            text="Quit",
+            manager=self.ui_manager,
+            object_id="quit_button"
+        )
+    
+    def _hide_all_elements(self):
+        """Hide all UI elements initially."""
+        self.play_button.hide()
+        self.quit_button.hide()
+    
+    def handle_events(self, event: pygame.event.Event) -> bool:
+        """Handle events."""
+        if event.type == pygame_gui.UI_BUTTON_PRESSED:
+            if event.ui_element == self.play_button:
+                return "PLAY"
+            elif event.ui_element == self.quit_button:
+                return "QUIT"
+        return False
+    
+    def update(self, time_delta: float) -> None:
+        """Update."""
+        pass
+    
+    def render(self, surface: pygame.Surface) -> None:
+        """Render start screen."""
+        surface.fill((20, 20, 30))
+        
+        # Title - centered at top
+        title = self.title_font.render("PAN'S TRIAL", True, (200, 100, 200))
+        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, 120))
+        surface.blit(title, title_rect)
+        
+        # Subtitle - centered below title
+        subtitle = self.subtitle_font.render("Card Game", True, (150, 150, 150))
+        subtitle_rect = subtitle.get_rect(center=(self.window.WINDOW_WIDTH // 2, 200))
+        surface.blit(subtitle, subtitle_rect)
+        
+        # Instructions - centered below subtitle
+        inst_font = pygame.font.Font(None, 24)
+        inst = inst_font.render("Two-Player Card Game", True, (100, 100, 100))
+        inst_rect = inst.get_rect(center=(self.window.WINDOW_WIDTH // 2, 280))
+        surface.blit(inst, inst_rect)
+    
+    def on_enter(self) -> None:
+        """Activate start screen."""
+        # Hide all game screen elements first
+        if hasattr(self.window, 'game_screen_ref'):
+            game_screen = self.window.game_screen_ref
+            game_screen.status_label.hide()
+            game_screen.info_label.hide()
+            for _, btn in game_screen.move_buttons:
+                btn.hide()
+            for _, btn in game_screen.request_buttons:
+                btn.hide()
+        
+        # Show start screen elements
+        self.play_button.show()
+        self.quit_button.show()
+    
+    def on_exit(self) -> None:
+        """Deactivate start screen."""
+        self.play_button.hide()
+        self.quit_button.hide()
+
+
+class DraftScreen(Screen):
+    """Pregame drafting screen for the 12-card face-card pool."""
+
+    def __init__(self, window: "GameWindow"):
+        super().__init__(window)
+        self.title_font = pygame.font.Font(None, 64)
+        self.body_font = pygame.font.Font(None, 30)
+        self.small_font = pygame.font.Font(None, 24)
+        self.card_font = pygame.font.Font(None, 34)
+
+        self.card_rects = []
+        self.draft_cards = []
+        self.available_cards = []
+        self.player_hands = {0: [], 1: []}
+        self.current_player = 0
+        self.kings_drafted = 0
+        self.player_cards = []
+        self._create_ui()
+        self._hide_all_elements()
+
+    def _create_ui(self):
+        """Create the 6x2 grid of draft card hitboxes."""
+        button_width = 150
+        button_height = 96
+        col_spacing = 12
+        row_spacing = 18
+        grid_width = 6 * button_width + 5 * col_spacing
+        start_x = (self.window.WINDOW_WIDTH - grid_width) // 2
+        start_y = 255
+
+        for index in range(12):
+            row = index // 6
+            col = index % 6
+            x = start_x + col * (button_width + col_spacing)
+            y = start_y + row * (button_height + row_spacing)
+            self.card_rects.append(pygame.Rect((x, y), (button_width, button_height)))
+
+    def _hide_all_elements(self):
+        """Draft cards are rendered manually; no UI elements to hide."""
+        pass
+
+    def start_draft(self, draft_cards: list) -> None:
+        """Reset the screen with a fresh shuffled draft pool."""
+        self.draft_cards = list(draft_cards)
+        self.available_cards = list(draft_cards)
+        self.player_hands = {0: [], 1: []}
+        self.current_player = 0
+        self.kings_drafted = 0
+        self.player_cards = []
+        self._update_buttons()
+
+    def handle_events(self, event: pygame.event.Event) -> bool:
+        """Handle draft card picks."""
+        if event.type != pygame.MOUSEBUTTONDOWN:
+            return False
+
+        for index, rect in enumerate(self.card_rects):
+            if rect.collidepoint(event.pos):
+                return self._pick_card(index)
+
+        return False
+
+    def _pick_card(self, index: int):
+        """Draft one card and advance the turn order."""
+        if index >= len(self.available_cards):
+            return True
+
+        card = self.available_cards[index]
+        if card is None or not self._can_pick_card(card):
+            return True
+
+        self.player_hands[self.current_player].append(card)
+        if card.rank == CardRank.KING:
+            self.kings_drafted += 1
+        self.available_cards[index] = None
+
+        total_picks = len(self.player_hands[0]) + len(self.player_hands[1])
+        self._update_buttons()
+
+        if total_picks >= 10:
+            self.player_cards = [card for card in self.available_cards if card is not None]
+            return "DRAFT_COMPLETE"
+
+        self.current_player = 1 - self.current_player
+        self._update_buttons()
+        return True
+
+    def _can_pick_card(self, card) -> bool:
+        """Only two Kings may be drafted; the remaining two become player cards."""
+        return not (card.rank == CardRank.KING and self.kings_drafted >= 2)
+
+    def _update_buttons(self) -> None:
+        """Draft cards are rendered manually; no button state to refresh."""
+        return
+
+    def update(self, time_delta: float) -> None:
+        """Update draft button state."""
+        self._update_buttons()
+
+    def render(self, surface: pygame.Surface) -> None:
+        """Render draft instructions and current picks."""
+        surface.fill((16, 18, 28))
+
+        title = self.title_font.render("INITIAL DRAFT", True, (235, 225, 190))
+        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, 90))
+        surface.blit(title, title_rect)
+
+        prompt = self.body_font.render(
+            f"Player {self.current_player + 1} picks a card",
+            True,
+            (220, 220, 220),
+        )
+        prompt_rect = prompt.get_rect(center=(self.window.WINDOW_WIDTH // 2, 150))
+        surface.blit(prompt, prompt_rect)
+
+        rules = [
+            "Draft all 4 Satyrs, all 4 Oracles, and only 2 Heroes.",
+            "The 2 Heroes left behind become the player cards.",
+        ]
+        for index, text in enumerate(rules):
+            line = self.small_font.render(text, True, (150, 150, 150))
+            line_rect = line.get_rect(center=(self.window.WINDOW_WIDTH // 2, 190 + index * 28))
+            surface.blit(line, line_rect)
+
+        counts = self.small_font.render(
+            f"Satyrs/Oracles drafted: {len(self.player_hands[0]) + len(self.player_hands[1]) - self.kings_drafted}/8   Heroes drafted: {self.kings_drafted}/2",
+            True,
+            (185, 185, 185),
+        )
+        counts_rect = counts.get_rect(center=(self.window.WINDOW_WIDTH // 2, 560))
+        surface.blit(counts, counts_rect)
+
+        for index, rect in enumerate(self.card_rects):
+            card = self.available_cards[index] if index < len(self.available_cards) else None
+            self._render_draft_card(surface, rect, card)
+
+        self._render_hand_panel(
+            surface,
+            pygame.Rect(70, 630, 500, 210),
+            "Player 1 Trial Hand",
+            self.player_hands[0],
+            (210, 120, 120),
+        )
+        self._render_hand_panel(
+            surface,
+            pygame.Rect(630, 630, 500, 210),
+            "Player 2 Trial Hand",
+            self.player_hands[1],
+            (120, 160, 230),
+        )
+
+    def on_enter(self) -> None:
+        """Manual card rendering needs no UI activation."""
+        pass
+
+    def on_exit(self) -> None:
+        """Manual card rendering needs no UI teardown."""
+        pass
+
+    def get_draft_result(self) -> tuple[list, list, list]:
+        """Return the drafted player hands and remaining Kings."""
+        return (
+            list(self.player_hands[0]),
+            list(self.player_hands[1]),
+            list(self.player_cards),
+        )
+
+    def _format_card(self, card) -> str:
+        """Render a compact card label without glyph icons."""
+        return get_card_display(card)
+
+    def _render_draft_card(self, surface: pygame.Surface, rect: pygame.Rect, card) -> None:
+        """Draw one draft card with a vector suit icon."""
+        if card is None:
+            pygame.draw.rect(surface, (42, 42, 52), rect, border_radius=10)
+            pygame.draw.rect(surface, (90, 90, 100), rect, 2, border_radius=10)
+            taken = self.body_font.render("Taken", True, (165, 165, 165))
+            taken_rect = taken.get_rect(center=rect.center)
+            surface.blit(taken, taken_rect)
+            return
+
+        enabled = self._can_pick_card(card)
+        fill = (245, 245, 235) if enabled else (155, 155, 150)
+        border = (205, 180, 120) if enabled else (95, 95, 95)
+        text_color = (35, 35, 35)
+
+        pygame.draw.rect(surface, fill, rect, border_radius=12)
+        pygame.draw.rect(surface, border, rect, 3, border_radius=12)
+
+        rank = self.card_font.render(get_rank_name(card.rank), True, text_color)
+        rank_rect = rank.get_rect(center=(rect.centerx, rect.y + 28))
+        surface.blit(rank, rank_rect)
+
+        draw_suit_icon(surface, card.suit, (rect.centerx, rect.centery + 8), size=20, color=(40, 40, 40))
+
+        suit_name = self.small_font.render(get_family_name(card.suit), True, text_color)
+        suit_rect = suit_name.get_rect(center=(rect.centerx, rect.bottom - 18))
+        surface.blit(suit_name, suit_rect)
+
+    def _render_hand_panel(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        title: str,
+        cards: list,
+        accent: tuple[int, int, int],
+    ) -> None:
+        """Draw one player's drafted hand as visible cards instead of text."""
+        pygame.draw.rect(surface, (24, 28, 40), rect, border_radius=14)
+        pygame.draw.rect(surface, accent, rect, 3, border_radius=14)
+
+        title_text = self.body_font.render(f"{title} ({len(cards)}/5)", True, (230, 230, 230))
+        surface.blit(title_text, (rect.x + 18, rect.y + 14))
+
+        card_width = 82
+        card_height = 120
+        card_spacing = 10
+        start_x = rect.x + 18
+        start_y = rect.y + 58
+
+        for index in range(5):
+            card_rect = pygame.Rect(
+                start_x + index * (card_width + card_spacing),
+                start_y,
+                card_width,
+                card_height,
+            )
+            if index < len(cards):
+                self._render_hand_card(surface, card_rect, cards[index], accent)
+            else:
+                pygame.draw.rect(surface, (38, 42, 54), card_rect, border_radius=10)
+                pygame.draw.rect(surface, (80, 84, 98), card_rect, 2, border_radius=10)
+
+    def _render_hand_card(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        card,
+        accent: tuple[int, int, int],
+    ) -> None:
+        """Draw one drafted hand card in the bottom hand display."""
+        pygame.draw.rect(surface, (243, 243, 236), rect, border_radius=10)
+        pygame.draw.rect(surface, accent, rect, 3, border_radius=10)
+
+        rank = self.small_font.render(get_rank_name(card.rank), True, (35, 35, 35))
+        rank_rect = rank.get_rect(center=(rect.centerx, rect.y + 22))
+        surface.blit(rank, rank_rect)
+
+        draw_suit_icon(surface, card.suit, (rect.centerx, rect.centery - 4), size=18, color=(40, 40, 40))
+
+        suit_name = self.small_font.render(get_family_name(card.suit), True, (35, 35, 35))
+        suit_rect = suit_name.get_rect(center=(rect.centerx, rect.bottom - 18))
+        surface.blit(suit_name, suit_rect)
+
+
+class JackRevealScreen(Screen):
+    """Animated pregame reveal for the randomized Jack suit order."""
+
+    ROLE_NAMES = ["Walls", "Traps", "Ballista", "Weapons"]
+
+    def __init__(self, window: "GameWindow"):
+        super().__init__(window)
+        self.title_font = pygame.font.Font(None, 62)
+        self.body_font = pygame.font.Font(None, 30)
+        self.card_font = pygame.font.Font(None, 42)
+        self.small_font = pygame.font.Font(None, 24)
+
+        self.jack_order = []
+        self.player_cards = []
+        self.elapsed = 0.0
+        self.revealed_count = 0
+        self.finished = False
+        self._consumed = False
+
+    def start_reveal(self, jack_cards: list, player_cards: list | None = None) -> None:
+        """Begin a new autonomous Jack reveal animation."""
+        shuffled_jacks = list(jack_cards)
+        shuffle(shuffled_jacks)
+        self.jack_order = [card.suit for card in shuffled_jacks[:4]]
+        self.player_cards = list(player_cards or [])
+        self.elapsed = 0.0
+        self.revealed_count = 0
+        self.finished = False
+        self._consumed = False
+
+    def handle_events(self, event: pygame.event.Event) -> bool:
+        """The reveal is autonomous; user input is ignored."""
+        return False
+
+    def update(self, time_delta: float) -> None:
+        """Advance the reveal animation over time."""
+        if self.finished or not self.jack_order:
+            return
+
+        self.elapsed += time_delta
+        reveal_interval = 0.85
+        finish_delay = 1.1
+
+        new_revealed = min(4, int(self.elapsed / reveal_interval))
+        if new_revealed > self.revealed_count:
+            self.revealed_count = new_revealed
+
+        if self.elapsed >= reveal_interval * 4 + finish_delay:
+            self.finished = True
+
+    def render(self, surface: pygame.Surface) -> None:
+        """Render the animated Jack order reveal."""
+        surface.fill((12, 16, 26))
+
+        title = self.title_font.render("THE OMENS DETERMINE THE TRIAL", True, (225, 225, 205))
+        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, 100))
+        surface.blit(title, title_rect)
+
+        subtitle = self.body_font.render("Resolving the color roles...", True, (150, 150, 170))
+        subtitle_rect = subtitle.get_rect(center=(self.window.WINDOW_WIDTH // 2, 150))
+        surface.blit(subtitle, subtitle_rect)
+
+        card_width = 180
+        card_height = 220
+        spacing = 24
+        total_width = 4 * card_width + 3 * spacing
+        start_x = (self.window.WINDOW_WIDTH - total_width) // 2
+        y = 260
+
+        for index in range(4):
+            rect = pygame.Rect(start_x + index * (card_width + spacing), y, card_width, card_height)
+            pygame.draw.rect(surface, (62, 68, 88), rect, border_radius=12)
+            pygame.draw.rect(surface, (130, 136, 156), rect, 2, border_radius=12)
+
+            if index < self.revealed_count:
+                suit = self.jack_order[index]
+                card_text = self.card_font.render("Omen", True, (235, 235, 235))
+                card_rect = card_text.get_rect(center=(rect.centerx, rect.y + 60))
+                surface.blit(card_text, card_rect)
+                draw_suit_icon(surface, suit, (rect.centerx, rect.y + 108), size=18)
+
+                color_name = self.small_font.render(get_family_name(suit), True, (220, 220, 220))
+                color_rect = color_name.get_rect(center=(rect.centerx, rect.y + 132))
+                surface.blit(color_name, color_rect)
+
+                role_text = self.body_font.render(self.ROLE_NAMES[index], True, (235, 196, 100))
+                role_rect = role_text.get_rect(center=(rect.centerx, rect.y + 168))
+                surface.blit(role_text, role_rect)
+            elif index == self.revealed_count and not self.finished:
+                shuffle_text = self.card_font.render("Omen", True, (190, 190, 220))
+                shuffle_rect = shuffle_text.get_rect(center=(rect.centerx, rect.y + 60))
+                surface.blit(shuffle_text, shuffle_rect)
+                cycling_suit = self._cycling_suit()
+                draw_suit_icon(surface, cycling_suit, (rect.centerx, rect.y + 108), size=18, color=(190, 190, 220))
+
+                color_name = self.small_font.render(get_family_name(cycling_suit), True, (185, 185, 205))
+                color_rect = color_name.get_rect(center=(rect.centerx, rect.y + 132))
+                surface.blit(color_name, color_rect)
+
+                pending = self.small_font.render("shuffling...", True, (165, 165, 180))
+                pending_rect = pending.get_rect(center=(rect.centerx, rect.y + 168))
+                surface.blit(pending, pending_rect)
+            else:
+                hidden = self.card_font.render("?", True, (155, 155, 170))
+                hidden_rect = hidden.get_rect(center=(rect.centerx, rect.y + 70))
+                surface.blit(hidden, hidden_rect)
+
+        footer = self.small_font.render("The Omens reveal automatically, then the labyrinth begins.", True, (145, 145, 160))
+        footer_rect = footer.get_rect(center=(self.window.WINDOW_WIDTH // 2, 620))
+        surface.blit(footer, footer_rect)
+
+        if self.player_cards:
+            left_rect = pygame.Rect(self.window.WINDOW_WIDTH // 2 - 210, 690, 170, 90)
+            right_rect = pygame.Rect(self.window.WINDOW_WIDTH // 2 + 40, 690, 170, 90)
+            self._render_player_card(surface, left_rect, "P1 Player Card", self.player_cards[0] if len(self.player_cards) > 0 else None)
+            self._render_player_card(surface, right_rect, "P2 Player Card", self.player_cards[1] if len(self.player_cards) > 1 else None)
+
+    def on_enter(self) -> None:
+        """Nothing to show outside the rendered animation."""
+        pass
+
+    def on_exit(self) -> None:
+        """Nothing to hide outside the rendered animation."""
+        pass
+
+    def consume_result(self):
+        """Return the revealed suit order once, after the animation finishes."""
+        if not self.finished or self._consumed:
+            return None
+        self._consumed = True
+        return list(self.jack_order)
+
+    def _cycling_suit(self) -> CardSuit:
+        """Return a fast-changing suit for the active reveal slot."""
+        suits = [CardSuit.HEARTS, CardSuit.DIAMONDS, CardSuit.CLUBS, CardSuit.SPADES]
+        return suits[int(self.elapsed * 10) % len(suits)]
+
+    def _format_player_card(self, player_id: int) -> str:
+        """Render one of the leftover Kings used as a player card."""
+        if player_id >= len(self.player_cards):
+            return "-"
+        card = self.player_cards[player_id]
+        return get_card_display(card)
+
+    def _render_player_card(self, surface: pygame.Surface, rect: pygame.Rect, title: str, card) -> None:
+        """Draw one leftover King card without font suit glyphs."""
+        pygame.draw.rect(surface, (240, 240, 232), rect, border_radius=12)
+        pygame.draw.rect(surface, (170, 150, 105), rect, 3, border_radius=12)
+
+        heading = self.small_font.render(title, True, (35, 35, 35))
+        heading_rect = heading.get_rect(center=(rect.centerx, rect.y + 16))
+        surface.blit(heading, heading_rect)
+
+        if card is None:
+            return
+
+        rank = self.body_font.render(get_rank_name_with_value(card.rank), True, (35, 35, 35))
+        rank_rect = rank.get_rect(center=(rect.centerx, rect.y + 42))
+        surface.blit(rank, rank_rect)
+
+        draw_suit_icon(surface, card.suit, (rect.centerx, rect.y + 66), size=14, color=(40, 40, 40))
+
+
+class GameOverScreen(Screen):
+    """Game over screen showing the winner and final damage totals."""
+
+    def __init__(self, window: "GameWindow"):
+        super().__init__(window)
+        self.title_font = pygame.font.Font(None, 72)
+        self.subtitle_font = pygame.font.Font(None, 40)
+        self.body_font = pygame.font.Font(None, 32)
+
+        self.winner_text = "Player 1 Wins!"
+        self.damage_text = "Final damage - P1: 0 | P2: 0"
+
+        self.play_again_button = None
+        self.menu_button = None
+        self._create_ui()
+        self._hide_all_elements()
+
+    def _create_ui(self):
+        """Create UI elements."""
+        button_width = 300
+        button_height = 60
+        center_x = (self.window.WINDOW_WIDTH - button_width) // 2
+
+        play_again_y = self.window.WINDOW_HEIGHT // 2 + 80
+        self.play_again_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((center_x, play_again_y), (button_width, button_height)),
+            text="Play Again",
+            manager=self.ui_manager,
+            object_id="play_again_button"
+        )
+
+        menu_y = play_again_y + 90
+        self.menu_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((center_x, menu_y), (button_width, button_height)),
+            text="Main Menu",
+            manager=self.ui_manager,
+            object_id="menu_button"
+        )
+
+    def set_result(self, winner: int, p1_damage: int, p2_damage: int) -> None:
+        """Set winner screen text."""
+        self.winner_text = f"Player {winner + 1} Wins!"
+        self.damage_text = f"Final damage - P1: {p1_damage} | P2: {p2_damage}"
+
+    def _hide_all_elements(self):
+        """Hide all UI elements initially."""
+        self.play_again_button.hide()
+        self.menu_button.hide()
+
+    def handle_events(self, event: pygame.event.Event) -> bool:
+        """Handle game-over screen events."""
+        if event.type == pygame_gui.UI_BUTTON_PRESSED:
+            if event.ui_element == self.play_again_button:
+                return "PLAY"
+            if event.ui_element == self.menu_button:
+                return "MENU"
+        return False
+
+    def update(self, time_delta: float) -> None:
+        """Update."""
+        pass
+
+    def render(self, surface: pygame.Surface) -> None:
+        """Render game-over screen."""
+        surface.fill((18, 18, 28))
+
+        title = self.title_font.render("VICTORY", True, (220, 180, 90))
+        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, 150))
+        surface.blit(title, title_rect)
+
+        winner = self.subtitle_font.render(self.winner_text, True, (230, 230, 230))
+        winner_rect = winner.get_rect(center=(self.window.WINDOW_WIDTH // 2, 260))
+        surface.blit(winner, winner_rect)
+
+        damage = self.body_font.render(self.damage_text, True, (170, 170, 170))
+        damage_rect = damage.get_rect(center=(self.window.WINDOW_WIDTH // 2, 330))
+        surface.blit(damage, damage_rect)
+
+        prompt = self.body_font.render("Choose what to do next.", True, (140, 140, 140))
+        prompt_rect = prompt.get_rect(center=(self.window.WINDOW_WIDTH // 2, 390))
+        surface.blit(prompt, prompt_rect)
+
+    def on_enter(self) -> None:
+        """Activate game-over screen."""
+        self.play_again_button.show()
+        self.menu_button.show()
+
+    def on_exit(self) -> None:
+        """Deactivate game-over screen."""
+        self.play_again_button.hide()
+        self.menu_button.hide()
+
+
+class ScreenManager:
+    """Manages screen transitions."""
+    
+    def __init__(self, window: "GameWindow"):
+        self.window = window
+        self.screens: dict[ScreenType, Screen] = {}
+        self.current_screen: ScreenType = None
+        self.next_screen: ScreenType = None
+    
+    def add_screen(self, screen_type: ScreenType, screen: Screen) -> None:
+        """Add a screen to the manager."""
+        self.screens[screen_type] = screen
+    
+    def set_screen(self, screen_type: ScreenType) -> None:
+        """Switch to a screen."""
+        if self.current_screen is not None:
+            self.screens[self.current_screen].on_exit()
+        
+        self.current_screen = screen_type
+        self.screens[screen_type].on_enter()
+    
+    def get_current(self) -> Screen:
+        """Get current screen."""
+        return self.screens[self.current_screen]
+    
+    def handle_events(self, event: pygame.event.Event):
+        """Handle event on current screen."""
+        return self.get_current().handle_events(event)
+    
+    def update(self, time_delta: float) -> None:
+        """Update current screen."""
+        self.get_current().update(time_delta)
+    
+    def render(self, surface: pygame.Surface) -> None:
+        """Render current screen."""
+        self.get_current().render(surface)

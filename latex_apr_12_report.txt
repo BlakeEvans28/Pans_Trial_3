@@ -1,0 +1,367 @@
+\documentclass[12pt]{report}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{setspace}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\doublespacing
+
+\begin{document}
+
+% TITLE PAGE
+\begin{titlepage}
+\centering
+\vspace*{\fill}
+
+{\Large Final Design Report -- Digital Implementation}\\[0.3in]
+{\Huge \textit{Pan's Trial}}\\[0.5in]
+
+{\large Blake Evans}\\
+{\large ECE 348}\\
+{\large April 12, 2026}
+
+\vspace*{\fill}
+\end{titlepage}
+
+% FRONT MATTER
+\pagenumbering{roman}
+
+% ACKNOWLEDGMENTS
+\chapter*{Acknowledgments}
+\addcontentsline{toc}{chapter}{Acknowledgments}
+
+We build this version of \textit{Pan's Trial} on the original tabletop design and earlier design writing prepared for the course [1][2]. Those materials give us the thematic direction, the core rule loop, and the design intent that we now translate into a digital form.
+
+We also appreciate the informal playtesting and iteration that continue to shape this project. Each round of testing helps us clarify rules, improve interface communication, and identify where the game feels fair, where it feels exciting, and where it still needs pacing work.
+
+% LETTER OF TRANSMITTAL
+\chapter*{Letter of Transmittal}
+\addcontentsline{toc}{chapter}{Letter of Transmittal}
+
+This report presents the current digital implementation of \textit{Pan's Trial}. We prepare this document to explain what the game is, show how we implement the rules in software, and document the testing we use to evaluate whether the game succeeds as a digital design.
+
+This version of the project is completed during the March--April 2026 work period. In its current state, the game includes a complete pregame draft, an automated Omen reveal, the full Traversing the Labyrinth phase, the full Appeasing Pan phase, all four requests, combat resolution, card placement back into the labyrinth, and an end-of-game result screen [3][5].
+
+Our strongest conclusion is that the current version of the game is fair. The latest automated balance run shows a near-even seat split and a clear skill ladder across 100 simulated games [4]. We therefore recommend continued refinement of pacing and request balance rather than a redesign of the core system.
+
+This report is written for instructors, classmates, and future developers who want to evaluate whether the design works as both a game and a digital implementation. We assume the reader understands general turn-based games, but we explain the specific structure and terminology of \textit{Pan's Trial} in full.
+
+\tableofcontents
+\listoffigures
+\listoftables
+\clearpage
+
+% MAIN BODY
+\pagenumbering{arabic}
+
+% ABSTRACT
+\chapter*{Abstract / Executive Summary}
+\addcontentsline{toc}{chapter}{Abstract/Executive Summary}
+
+We design \textit{Pan's Trial} as a two-player digital strategy game in which both players draft high-rank cards, move through a shifting 6x6 toroidal labyrinth, collect useful cards, and then enter an Appeasing Pan contest that can restructure the board or change damage totals. The game combines spatial movement, card timing, damage management, and changing suit roles into one competitive system [1][2].
+
+As shown in Table~\ref{tab:constraints}, the project must preserve the original design while staying readable and manageable in a single executable. Figure~\ref{fig:draft} marks the best place to show the pregame draft interface from the attached gameplay video [6]. Figure~\ref{fig:omen} marks the animated Omen reveal that assigns suit roles. Figure~\ref{fig:board} marks the main gameplay board during Traversing, and Figure~\ref{fig:appeasing} marks the request-resolution flow during Appeasing Pan. Figure~\ref{fig:gameover} marks the end-of-game results screen.
+
+We implement the game in Python with a headless rules engine and a Pygame-based interface [5]. We test the project with automated rule tests, manual executable play, and a 100-game headless balance harness. Table~\ref{tab:testing} summarizes that testing strategy, and Table~\ref{tab:balance} summarizes the latest balance evidence.
+
+Based on the current evidence, we are most convinced that the game is fair. The automated test suite passes 27 out of 27 checks, and the balance study produces a 52--48 seat split while stronger agents consistently outperform weaker ones [4][5]. The game also shows strong potential to be fun, but we still see enough pacing pressure that fairness is the clearest claim to defend at this stage.
+
+% INTRODUCTION
+\chapter*{Introduction}
+\addcontentsline{toc}{chapter}{Introduction}
+
+We set out to create a two-player game that feels strategic, distinct, and replayable without requiring a large physical setup. Many competitive card games lean on either large player counts or very simple duel structures. We want a game that keeps the intensity of a duel while still changing from match to match.
+
+\textit{Pan's Trial} addresses that goal by combining three different kinds of decision-making. First, we draft a starting hand from a visible pool of high-rank cards. Second, we navigate a labyrinth whose suit roles change every game. Third, we resolve a second-phase contest that can alter the board, shift rows or columns, or change damage totals. These systems create tension because the board state, the hand state, and the damage state all matter at once.
+
+This design is relevant because it shows how a tabletop idea with layered rules can benefit from digital implementation. The physical version asks players to remember changing suit roles, toroidal movement, delayed card placement, and request-specific interactions. A digital version can enforce those rules automatically while presenting the same strategic choices more clearly.
+
+The specific problem we address is the difficulty of running a spatial, state-heavy, two-player card game cleanly without constant rule checking. We believe a digital build solves that problem while preserving the most interesting parts of the original design.
+
+% BACKGROUND
+\chapter*{Summary and Background}
+\addcontentsline{toc}{chapter}{Summary and/or Background}
+
+We assume the reader understands basic playing-card structure and general turn-based game flow, but we do not assume prior knowledge of \textit{Pan's Trial}. At its core, a game is a rule-governed system with goals, conflict, and measurable outcomes. In this project, the measurable outcome is damage: the first player to reach 25 or more damage loses immediately [1].
+
+\textit{Pan's Trial} differs from a standard trick-taking or card-battle game because it ties card value to board movement and temporary role assignment. The four Jacks do not enter a player's hand. Instead, they act as Omens that assign the four suit families to the current labyrinth roles: Walls, Traps, Ballista, and Weapons [1][2]. Because the Omens change every game, the same suit can behave differently from one match to the next.
+
+The digital version also introduces a themed presentation layer. In the current build, Tens appear as Satyrs, Queens appear as Oracles, Kings appear as Heroes, and suits are presented as color families instead of plain playing-card symbols [5]. This does not change the rules, but it helps the interface feel like a coherent game world rather than a raw card prototype.
+
+% ARGUMENTS FOR DIGITAL DESIGN
+\chapter*{Backed Arguments for Proposed Design}
+\addcontentsline{toc}{chapter}{Backed Arguments for Proposed Design}
+
+We believe a digital version of \textit{Pan's Trial} is worth building for several reasons.
+
+\begin{itemize}
+\item Automated rule enforcement removes ambiguity from toroidal movement, combat timing, and request resolution.
+\item A digital board makes the changing Omen-to-role mapping visible at all times, which is much harder to track cleanly in physical play.
+\item A graphical interface makes multi-step actions such as Ballista targeting, Restructure, Steal Life, and Plane Shift easier to understand.
+\item A headless engine lets us run automated testing and balance simulations directly on the live rules instead of relying only on anecdotal play impressions.
+\item A packaged executable makes the project easier to share and evaluate in a course submission context.
+\end{itemize}
+
+Table~\ref{tab:constraints} summarizes the main design pressures we work under. These constraints do not weaken the project. Instead, they explain why digital clarity, consistent rule enforcement, and testability matter so much for this game.
+
+\begin{table}[h]
+\centering
+\caption{Design Constraints Summary}
+\label{tab:constraints}
+\begin{tabular}{p{2.0in} p{4.0in}}
+\toprule
+Constraint & Description \\
+\midrule
+Two-player duel structure & We keep the game focused on direct head-to-head decisions rather than team or multiplayer politics. \\
+Standard 52-card source model & We preserve the original card source and map ranks into labyrinth cards, draft cards, and Omens. \\
+6x6 toroidal labyrinth & We must communicate wraparound movement and line-based effects clearly on one screen. \\
+Changing suit-role assignments & We must show which family is currently Walls, Traps, Ballista, and Weapons at all times. \\
+Multi-step request resolution & We must guide players through request-specific choices without requiring outside rule checking. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% METHODS
+\chapter*{Methods / Procedures / Detailed Design}
+\addcontentsline{toc}{chapter}{Methods/Procedures/Detailed Design}
+
+\textbf{Assumptions:}
+
+\begin{itemize}
+\item We assume the reader is comfortable with basic card ranks and turn-based play.
+\item We assume the reader may not know the original \textit{Pan's Trial} terminology.
+\item We assume the report is read alongside the attached executable, gameplay video, and README [3][6].
+\end{itemize}
+
+\textbf{Current digital structure:}
+
+We implement the project with a clean separation between a rules engine and a user interface. The engine stores the board, player hands, damage piles, suit-role assignments, phase state, and legal actions. The interface presents a start screen, an initial draft screen, an automated Omen reveal screen, the main game screen, and a game-over screen [5]. This separation matters because we use the same rules for both human play and automated balance testing.
+
+\textbf{Setup and pregame flow:}
+
+We begin with a standard deck and divide it into three groups. Cards from Ace through 9 fill the 6x6 labyrinth. The twelve high-rank non-Jack cards form the visible draft pool: four Satyrs (10s), four Oracles (Queens), and four Heroes (Kings). The four Jacks become Omens for role assignment [5].
+
+Players alternate drafting from the 12-card pool until ten cards are taken. Each player finishes with five drafted cards, and the two remaining Heroes become the player identity cards shown during the Omen reveal. Figure~\ref{fig:draft} should capture this draft screen from the attached gameplay video so the reader can see the visible pool and both trial hands at once [6].
+
+\begin{figure}[h]
+\centering
+\fbox{\parbox[c][2.4in][c]{0.78\linewidth}{\centering
+Insert screenshot from attached gameplay video here.\\
+Suggested capture: the initial draft screen with the 12-card pool and both player hand panels visible.
+}}
+\caption{Initial draft interface used to build both players' starting trial hands.}
+\label{fig:draft}
+\end{figure}
+
+After the draft ends, the game reveals the four Omens automatically. Their order determines which family is Walls, which is Traps, which is Ballista, and which is Weapons. Figure~\ref{fig:omen} should show that reveal because it explains one of the game's most important rule translations from tabletop to digital form [6].
+
+\begin{figure}[h]
+\centering
+\fbox{\parbox[c][2.4in][c]{0.78\linewidth}{\centering
+Insert screenshot from attached gameplay video here.\\
+Suggested capture: the Omen reveal screen after all four suit roles are visible.
+}}
+\caption{Automated Omen reveal that assigns the four color families to the active labyrinth roles.}
+\label{fig:omen}
+\end{figure}
+
+\textbf{Traversing the Labyrinth:}
+
+Once the Omens are set, the game enters Traversing. Each round of Traversing contains three alternating movement turns per player, for six total moves before the game checks whether Appeasing Pan can begin [5]. In the current build, players can move with arrow keys, WASD, on-screen movement buttons, or direct board clicks on adjacent cells.
+
+The board wraps toroidally. If a player exits one edge, the player reappears on the opposite edge. Walls block movement. Traps add the landed-on card to the active player's damage pile and leave a hole in the board. Weapon-role cards are collected into the player's normal hand and can later be used in combat. Ballista-role cards trigger a targeting step in which the player clicks any reachable tile along a straight line until a wall blocks the path [5].
+
+If both players occupy the same tile, the game starts combat. Only weapon-role hand cards are valid combat cards. A chosen weapon card leaves the hand and becomes damage on the opponent. Figure~\ref{fig:board} should show the main board during Traversing because it lets the reader see the grid, the suit-role legend, the active controls, and the damage display in one frame [6].
+
+\begin{figure}[h]
+\centering
+\fbox{\parbox[c][2.5in][c]{0.78\linewidth}{\centering
+Insert screenshot from attached gameplay video here.\\
+Suggested capture: the main board during Traversing with player markers, damage totals, and the suit-role legend visible.
+}}
+\caption{Main gameplay view during Traversing the Labyrinth.}
+\label{fig:board}
+\end{figure}
+
+\textbf{Appeasing Pan:}
+
+After six Traversing moves, the game checks whether both players still have normal hand cards. If they do, the game enters Appeasing Pan. Both players play one normal hand card. The reversed Omen order defines the color hierarchy for this phase, and if both cards share the same color, the higher rank wins [1][5]. The winner chooses a request first, and the loser chooses second unless the first request is Ignore Us.
+
+We implement all four requests digitally:
+
+\begin{itemize}
+\item \textbf{Restructure}: the player selects two color families and swaps their roles.
+\item \textbf{Steal Life}: the player selects one card from each damage pile and swaps them.
+\item \textbf{Ignore Us}: the request phase ends immediately.
+\item \textbf{Plane Shift}: the player selects a shift direction and then clicks a row or column to move.
+\end{itemize}
+
+After requests resolve, the loser of Appeasing Pan places the two played cards back into labyrinth holes when holes exist. If there are not enough holes, the remaining cards return to that loser's hand. Figure~\ref{fig:appeasing} should show one of these request workflows, preferably Plane Shift or Steal Life, because those requests best demonstrate why digital guidance improves clarity [6].
+
+\begin{figure}[h]
+\centering
+\fbox{\parbox[c][2.5in][c]{0.78\linewidth}{\centering
+Insert screenshot from attached gameplay video here.\\
+Suggested capture: an Appeasing Pan turn with request controls visible, ideally during Plane Shift or Steal Life resolution.
+}}
+\caption{Appeasing Pan interface during request selection or request resolution.}
+\label{fig:appeasing}
+\end{figure}
+
+\textbf{End condition:}
+
+The game ends as soon as one player reaches 25 or more total damage. The other player becomes Pan's champion. Figure~\ref{fig:gameover} should show the results screen because it demonstrates that the executable now closes the full game loop from draft to final outcome [6].
+
+\begin{figure}[h]
+\centering
+\fbox{\parbox[c][2.2in][c]{0.78\linewidth}{\centering
+Insert screenshot from attached gameplay video here.\\
+Suggested capture: the victory screen with winner and final damage totals visible.
+}}
+\caption{Game-over screen after the executable resolves a completed match.}
+\label{fig:gameover}
+\end{figure}
+
+% RESULTS
+\chapter*{Results}
+\addcontentsline{toc}{chapter}{Results}
+
+We test the game in three complementary ways. First, we use automated rule tests to check deterministic mechanics. Second, we use the playable executable and attached gameplay video as qualitative evidence that the interface communicates a full match flow to human players. Third, we use a headless balance harness to evaluate fairness and pacing at a larger sample size. Table~\ref{tab:testing} summarizes that strategy.
+
+\begin{table}[h]
+\centering
+\caption{Testing Strategy Summary}
+\label{tab:testing}
+\begin{tabular}{p{2.0in} p{2.5in} p{1.8in}}
+\toprule
+Method & What we examine & Current result \\
+\midrule
+Automated rule tests & Deterministic rule correctness and edge cases & 27/27 tests pass \\
+Executable play and gameplay video & End-to-end usability, readability, and full match flow & Current build is playable and recordable \\
+Headless balance simulation (100 games) & Fairness, seat advantage, request usage, and pacing signals & Near-even seats and clear skill ladder \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Automated rule testing:}
+
+The current rule suite passes all 27 tests in the repository [5]. These tests check card values, toroidal wrapping, wall blocking, current-tile pickup, hand management, weapon combat, ballista targeting, request selection, request-specific resolution, and the placement or return of Appeasing Pan cards. This result matters because the rule set contains several multi-step edge cases that are easy to mis-handle in a manual implementation.
+
+\textbf{Manual executable testing:}
+
+The attached gameplay video gives us a direct record of the current executable in use [6]. It shows that the game no longer exists only as a headless rules prototype. Instead, the project now supports the full visible loop of start screen, draft, Omen reveal, active play, and victory resolution. The placeholder figures in this report mark the frames that best communicate that flow.
+
+\textbf{Balance and fairness testing:}
+
+The latest automated balance run simulates 100 games across Experienced, Amateur, and Beginner AI profiles and writes the results to a workbook and companion summary report [4]. Table~\ref{tab:balance} presents the clearest numerical findings from that run.
+
+\begin{table}[h]
+\centering
+\caption{Latest Balance Simulation Summary}
+\label{tab:balance}
+\begin{tabular}{p{2.6in} p{2.2in}}
+\toprule
+Metric & Result \\
+\midrule
+Games simulated & 100 \\
+Rule test status & 27/27 passing \\
+Player 1 wins & 52 \\
+Player 2 wins & 48 \\
+Experienced win rate & 76.12\% (51/67) \\
+Amateur win rate & 71.64\% (48/67) \\
+Beginner win rate & 1.52\% (1/66) \\
+Average actions per game & 235.83 \\
+Average final damage, Player 1 & 19.22 \\
+Average final damage, Player 2 & 19.24 \\
+Most-used request & Plane Shift (124 uses) \\
+Appeasing Pan skips recorded & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+These results support fairness more strongly than any other evaluation goal. The 52--48 seat split is close to even, even though Player 2 is the fixed starting seat in the current implementation [4]. The skill ladder is also strong: the Experienced profile defeats weaker profiles consistently, and the Beginner profile almost never wins. That pattern suggests the game rewards better decisions instead of collapsing into randomness.
+
+At the same time, the balance results also reveal where further tuning may help. Plane Shift appears much more often than Restructure or Ignore Us, which suggests that one request may currently offer more consistent value than the others [4]. The average of 235.83 logged actions per game also tells us that the game is playable but not yet obviously fast.
+
+% DISCUSSION
+\chapter*{Discussion of Results}
+\addcontentsline{toc}{chapter}{Discussion of results}
+
+The current evidence convinces us most strongly that \textit{Pan's Trial} is fair. We say that carefully. We do not mean the game is mathematically solved or perfectly balanced. We mean that the strongest evidence we have right now points toward a healthy competitive structure: seat advantage is small, stronger play is rewarded, and the same core system supports both manual play and automated simulation.
+
+We also see real signs that the game is fun. The project creates meaningful choices at several levels: drafting, route planning, weapon conservation, request timing, and damage management. The digital interface helps those choices feel visible because the player can always see the board, the current damage totals, and the active color-role mapping. In that sense, the project now behaves like a real game experience rather than only a rules exercise.
+
+However, we are less comfortable claiming that the game is already fast. The balance harness shows that matches still run fairly long on average, and Plane Shift in particular may extend game states instead of closing them out quickly [4]. That does not mean the design fails. It means our clearest recommendation is refinement, not a total rewrite. If we continue tuning request values and pacing, we can improve speed without losing the strategic identity that already makes the game interesting.
+
+The broader implication is that a digital version changes what kind of evidence we can collect. Because the engine is headless and the rules are centralized, we can test fairness directly with simulation instead of arguing about it only from memory or small live samples. That makes future balancing decisions much more defensible.
+
+% CONCLUSION
+\chapter*{Conclusions}
+\addcontentsline{toc}{chapter}{Conclusions}
+
+In this report, we describe what \textit{Pan's Trial} is, how the game works, how we translate its rules into a digital system, and how we test the current build. We show that the project now includes the full game loop: pregame draft, Omen reveal, Traversing the Labyrinth, Appeasing Pan, request resolution, card placement, and final win detection.
+
+We also show that our testing is broader than a single play session. The automated rule suite passes 27 out of 27 tests, and the latest 100-game simulation produces a nearly even seat split while strongly rewarding higher-skill play [4][5]. Because of that evidence, we conclude that the current game is fair in its present state.
+
+What remains to be done is refinement rather than reinvention. We want to continue tuning pacing, especially around Plane Shift, and continue improving interface polish and data collection. Even so, the core design now supports a strong recommendation for continued development. The game is playable, testable, strategically meaningful, and clearly suited to digital implementation.
+
+% REFERENCES
+\chapter*{References}
+\addcontentsline{toc}{chapter}{References}
+
+\noindent
+\hangindent=0.5in
+\hangafter=1
+[1] Jasinski, Micah. \textit{Pan's Trial}. Rules document, March 1, 2026.
+
+\bigskip
+
+\noindent
+\hangindent=0.5in
+\hangafter=1
+[2] Jasinski, Micah. \textit{Pan's Trial Report}. ECE 348 design report, March 1, 2026.
+
+\bigskip
+
+\noindent
+\hangindent=0.5in
+\hangafter=1
+[3] Evans, Blake. \textit{README.md} and GitHub submission materials for \textit{Pan's Trial}, April 12, 2026.
+
+\bigskip
+
+\noindent
+\hangindent=0.5in
+\hangafter=1
+[4] Evans, Blake. \textit{Balancing\_Testing\_01.xlsx} and \textit{Balancing\_Testing\_01\_Report.md}, April 12, 2026.
+
+\bigskip
+
+\noindent
+\hangindent=0.5in
+\hangafter=1
+[5] Evans, Blake. \textit{Pan's Trial} source code, including \textit{main.py}, \textit{engine/}, \textit{ui/}, and \textit{tests/test\_rules.py}, April 2026.
+
+\bigskip
+
+\noindent
+\hangindent=0.5in
+\hangafter=1
+[6] Evans, Blake. \textit{Pan's Trial} gameplay video, attached submission file, April 2026.
+
+% APPENDIX
+\appendix
+\chapter{Submission Artifacts}
+
+The current submission includes the following project artifacts:
+
+\begin{itemize}
+\item \texttt{Pans\_Trial.exe}, the playable Windows executable.
+\item The attached gameplay video, which provides the source material for the screenshot locations marked in Figures~\ref{fig:draft} through \ref{fig:gameover}.
+\item \texttt{README.md}, which explains the GitHub submission layout and release asset.
+\item The \texttt{PansTrial\_v1.0} release zip, which contains the complete source code and supporting files [3].
+\end{itemize}
+
+\end{document}
