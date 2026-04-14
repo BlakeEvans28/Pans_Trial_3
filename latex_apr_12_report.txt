@@ -1,6 +1,3 @@
-LAST NIGHT WE LET THE LIQUOR TALK
-
-
 \documentclass[12pt]{report}
 
 \usepackage[margin=1in]{geometry}
