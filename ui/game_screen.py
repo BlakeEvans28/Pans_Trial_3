@@ -11,14 +11,20 @@ import pygame_gui
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pan_theme import get_family_code, get_family_name, get_rank_name, get_rank_name_with_value, get_reversed_hierarchy
+from pan_theme import (
+    get_family_code,
+    get_family_name,
+    get_rank_name,
+    get_rank_name_with_value,
+    get_reversed_hierarchy,
+)
 from .screen_manager import Screen, ScreenType
 from .board_renderer import BoardRenderer
 from .input_handler import InputHandler
 from .suit_icons import draw_suit_icon
 from engine import (
     CardRank, GameState, GamePhase, MoveAction, Position,
-    ChooseRequestAction, RequestType, PickupCurrentCardAction, PlayCardAction, ChooseCombatCardAction,
+    ChooseRequestAction, RequestType, PlayCardAction, ChooseCombatCardAction,
     SelectDamageCardAction, SelectRestructureSuitAction, SelectPlaneShiftDirectionAction,
     ResolvePlaneShiftAction, ResolveBallistaShotAction, PlaceCardsAction
 )
@@ -33,6 +39,36 @@ DIRECTION_KEYS = {
     pygame.K_a: "left",
     pygame.K_RIGHT: "right",
     pygame.K_d: "right",
+}
+
+REQUEST_TYPE_MAP = {
+    "restructure": RequestType.RESTRUCTURE,
+    "steal_life": RequestType.STEAL_LIFE,
+    "ignore_us": RequestType.IGNORE_US,
+    "plane_shift": RequestType.PLANE_SHIFT,
+}
+
+REQUEST_POPUP_COPY = {
+    "restructure": {
+        "title": "Restructure",
+        "description": "Swap two omen colors so their labyrinth roles trade places.",
+        "example": "Example: trade Crimson Weapons with Azure Traps.",
+    },
+    "steal_life": {
+        "title": "Steal Life",
+        "description": "Exchange one of your damage cards with one from the enemy pile.",
+        "example": "Example: swap your Hero damage with their 3.",
+    },
+    "ignore_us": {
+        "title": "Ignore Us",
+        "description": "End Pan's requests immediately and move straight to hole placement.",
+        "example": "Example: skip the second chooser entirely.",
+    },
+    "plane_shift": {
+        "title": "Plane Shift",
+        "description": "Choose a direction, then click a row or column to wrap it by one tile.",
+        "example": "Example: shift row 2 left or column 5 down.",
+    },
 }
 
 
@@ -58,6 +94,10 @@ class GameScreen(Screen):
         self.damage_labels = []
         self.damage_buttons = {0: [], 1: []}
         self.jack_labels = []   # For displaying Jack suit roles/hierarchy
+        self.popup_title_font = pygame.font.Font(None, 38)
+        self.popup_body_font = pygame.font.Font(None, 28)
+        self.popup_small_font = pygame.font.Font(None, 22)
+        self.damage_popup_player = None
         
         self._create_ui()
         
@@ -283,6 +323,15 @@ class GameScreen(Screen):
                 return True
         
         if event.type == pygame.MOUSEBUTTONDOWN:
+            if self._handle_center_popup_click(event.pos):
+                return True
+
+            if self._handle_damage_popup_click(event.pos):
+                return True
+
+            if self._handle_damage_summary_click(event.pos):
+                return True
+
             if self.game.has_pending_ballista() and hasattr(self.renderer, "BOARD_X"):
                 clicked_cell = self.renderer.get_cell_at_mouse(event.pos)
                 if clicked_cell is not None:
@@ -294,7 +343,6 @@ class GameScreen(Screen):
                     self.game.apply_action(action)
                     return True
 
-            # Handle board click for traversing
             if self.game.has_pending_card_placement() and hasattr(self.renderer, "BOARD_X"):
                 clicked_cell = self.renderer.get_cell_at_mouse(event.pos)
                 if clicked_cell is not None:
@@ -322,7 +370,21 @@ class GameScreen(Screen):
                     return True
         
         elif event.type == pygame.KEYDOWN:
-            # Handle arrow key and WASD movement.
+            if event.key == pygame.K_ESCAPE and self.damage_popup_player is not None:
+                self.damage_popup_player = None
+                return True
+
+            if (
+                self.game.get_pending_request_type() == "plane_shift"
+                and self.game.get_pending_plane_shift_direction() is None
+            ):
+                direction = DIRECTION_KEYS.get(event.key)
+
+                if direction:
+                    action = SelectPlaneShiftDirectionAction(self.game.current_player, direction)
+                    self.game.apply_action(action)
+                    return True
+
             if self.game.phase == GamePhase.TRAVERSING and not self.game.has_pending_ballista():
                 direction = DIRECTION_KEYS.get(event.key)
                 
@@ -334,59 +396,8 @@ class GameScreen(Screen):
                         return True
                     except Exception as e:
                         print(f"Move failed: {e}")
-            elif (
-                self.game.get_pending_request_type() == "plane_shift"
-                and self.game.get_pending_plane_shift_direction() is None
-            ):
-                direction = DIRECTION_KEYS.get(event.key)
-
-                if direction:
-                    action = SelectPlaneShiftDirectionAction(self.game.current_player, direction)
-                    self.game.apply_action(action)
-                    return True
         
         elif event.type == pygame_gui.UI_BUTTON_PRESSED:
-            # Movement buttons
-            for direction, btn in self.move_buttons:
-                if event.ui_element == btn:
-                    if self.game.phase == GamePhase.TRAVERSING and not self.game.has_pending_ballista():
-                        try:
-                            action = MoveAction(self.game.current_player, direction)
-                            self.game.apply_action(action)
-                            print(f"Player {action.player_id + 1} moved {direction}")
-                        except Exception as e:
-                            print(f"Move failed: {e}")
-                    elif (
-                        self.game.get_pending_request_type() == "plane_shift"
-                        and self.game.get_pending_plane_shift_direction() is None
-                    ):
-                        action = SelectPlaneShiftDirectionAction(self.game.current_player, direction)
-                        self.game.apply_action(action)
-                    return True
-
-            if event.ui_element == self.pickup_button:
-                if self.game.phase == GamePhase.TRAVERSING and not self.game.has_pending_ballista():
-                    action = PickupCurrentCardAction(self.game.current_player)
-                    self.game.apply_action(action)
-                return True
-            
-            # Request buttons
-            for request_name, btn in self.request_buttons:
-                if event.ui_element == btn:
-                    if self.game.can_choose_request(self.game.current_player):
-                        request_type_map = {
-                            "restructure": RequestType.RESTRUCTURE,
-                            "steal_life": RequestType.STEAL_LIFE,
-                            "ignore_us": RequestType.IGNORE_US,
-                            "plane_shift": RequestType.PLANE_SHIFT
-                        }
-                        request_type = request_type_map.get(request_name.lower().replace(' ', '_'))
-                        if request_type:
-                            action = ChooseRequestAction(self.game.current_player, request_type)
-                            self.game.apply_action(action)
-                            print(f"Player {action.player_id + 1} chose request: {request_name}")
-                    return True
-            
             # Card buttons
             for i, btn in enumerate(self.card_buttons):
                 if event.ui_element == btn:
@@ -409,24 +420,6 @@ class GameScreen(Screen):
                         self.game.apply_action(action)
                         print(f"Player {action.player_id + 1} used weapon card: {card}")
                     return True
-
-            # Restructure suit/color buttons
-            for index, btn in enumerate(self.restructure_buttons):
-                if event.ui_element == btn:
-                    if index < len(self.game.jack_order):
-                        action = SelectRestructureSuitAction(self.game.current_player, self.game.jack_order[index])
-                        self.game.apply_action(action)
-                    return True
-
-            # Damage pile buttons
-            for player_id, buttons in self.damage_buttons.items():
-                for index, btn in enumerate(buttons):
-                    if event.ui_element == btn:
-                        if index < len(self.game.damage[player_id].cards):
-                            card = self.game.damage[player_id].cards[index]
-                            action = SelectDamageCardAction(self.game.current_player, player_id, card)
-                            self.game.apply_action(action)
-                        return True
         
         return False
     
@@ -439,6 +432,12 @@ class GameScreen(Screen):
         # Update status
         player = f"P{self.game.current_player + 1}"
         pending_request_type = self.game.get_pending_request_type()
+        showing_request_selection = (
+            self.game.phase == GamePhase.APPEASING
+            and self.game.current_request_winner is not None
+            and not self.game.has_pending_request_resolution()
+            and not self.game.has_pending_card_placement()
+        )
         
         if self.game.phase == GamePhase.SETUP:
             status_text = "SETUP: Drafting complete. Omens drawn and color roles assigned. Press SPACE to start game."
@@ -455,19 +454,19 @@ class GameScreen(Screen):
         elif pending_request_type == "steal_life":
             selected_card = self.game.get_pending_steal_life_card()
             if selected_card is None:
-                status_text = f"APPEASING PAN: {player} chooses one of their damage cards"
+                status_text = f"APPEASING PAN: {player} selects their damage card first"
             else:
-                status_text = f"APPEASING PAN: {player} chooses one of P{2 - self.game.current_player} damage cards"
+                status_text = f"APPEASING PAN: {player} selects the enemy damage card to steal"
         elif pending_request_type == "plane_shift":
             direction = self.game.get_pending_plane_shift_direction()
             if direction is None:
-                status_text = f"APPEASING PAN: {player} chooses Plane Shift direction"
+                status_text = f"APPEASING PAN: {player} chooses Plane Shift direction from the popup"
             else:
                 line_type = "row" if direction in ["left", "right"] else "column"
                 status_text = f"APPEASING PAN: {player} clicks a {line_type} to shift {direction}"
         elif pending_request_type == "restructure":
             selected = len(self.game.get_pending_restructure_suits())
-            status_text = f"APPEASING PAN: {player} chooses Restructure color {selected + 1} of 2"
+            status_text = f"APPEASING PAN: {player} chooses Restructure color {selected + 1} of 2 from the popup"
         elif self.game.phase == GamePhase.APPEASING:
             if self.game.current_request_winner is None:
                 played_count = len(self.game.phase_started_cards)
@@ -478,16 +477,15 @@ class GameScreen(Screen):
                 else:
                     status_text = "APPEASING PAN: Resolving duel..."
             else:
-                status_text = f"APPEASING PAN: {player} chooses a request"
+                status_text = f"APPEASING PAN: {player} chooses a request from the popup"
         else:
             status_text = f"TRAVERSING: {player} Turn (Move {self.game.movement_turn // 2 + 1})"
         
         self.status_label.set_text(status_text)
-        
-        # Update damage info
-        p1_damage = self.game.get_damage_total(0)
-        p2_damage = self.game.get_damage_total(1)
-        self.info_label.set_text(f"P1 Damage: {p1_damage} | P2 Damage: {p2_damage}")
+        self.info_label.hide()
+
+        if pending_request_type in {"steal_life", "restructure"} or showing_request_selection:
+            self.damage_popup_player = None
 
         # Update the small turn indicator above the card buttons.
         for i, label in enumerate(self.hand_labels):
@@ -497,49 +495,16 @@ class GameScreen(Screen):
             else:
                 label.hide()
         
-        # Enable/disable buttons based on phase
-        choosing_plane_shift_direction = (
-            pending_request_type == "plane_shift"
-            and self.game.get_pending_plane_shift_direction() is None
-        )
-        showing_damage_selection = pending_request_type == "steal_life"
-        showing_restructure_selection = pending_request_type == "restructure"
-        placing_phase_cards = self.game.has_pending_card_placement()
-
         for _, btn in self.move_buttons:
-            if showing_damage_selection or showing_restructure_selection or placing_phase_cards:
-                btn.hide()
-                btn.disabled = True
-            else:
-                btn.show()
-                btn.disabled = not (
-                    (
-                        self.game.phase == GamePhase.TRAVERSING
-                        and not self.game.has_pending_combat()
-                        and not self.game.has_pending_ballista()
-                    )
-                    or choosing_plane_shift_direction
-                )
+            btn.hide()
+            btn.disabled = True
 
-        if showing_damage_selection or showing_restructure_selection or placing_phase_cards:
-            self.pickup_button.hide()
-            self.pickup_button.disabled = True
-        else:
-            self.pickup_button.show()
-            self.pickup_button.disabled = not (
-                self.game.phase == GamePhase.TRAVERSING
-                and not self.game.has_pending_combat()
-                and not self.game.has_pending_ballista()
-                and self.game.can_pick_up_current_card(self.game.current_player)
-            )
+        self.pickup_button.hide()
+        self.pickup_button.disabled = True
         
         for _, btn in self.request_buttons:
-            if showing_damage_selection or showing_restructure_selection or placing_phase_cards:
-                btn.hide()
-                btn.disabled = True
-            else:
-                btn.show()
-                btn.disabled = not self.game.can_choose_request(self.game.current_player)
+            btn.hide()
+            btn.disabled = True
         
         # Update card buttons
         player_hand = self.game.get_player_hand(self.game.current_player)
@@ -577,45 +542,19 @@ class GameScreen(Screen):
                 btn.hide()
 
         # Update Restructure suit/color selector.
-        selected_restructure_suits = self.game.get_pending_restructure_suits()
         for index, btn in enumerate(self.restructure_buttons):
-            if showing_restructure_selection and index < len(self.game.jack_order):
-                suit = self.game.jack_order[index]
-                prefix = "[X] " if suit in selected_restructure_suits else ""
-                btn.set_text(f"{prefix}{get_family_name(suit)}")
-                btn.disabled = suit in selected_restructure_suits
-                btn.show()
-            else:
+            btn.set_text("")
+            btn.disabled = True
+            btn.hide()
+
+        for label in self.damage_labels:
+            label.hide()
+
+        for buttons in self.damage_buttons.values():
+            for btn in buttons:
                 btn.set_text("")
                 btn.disabled = True
                 btn.hide()
-
-        # Update damage pile controls for Steal Life.
-        selected_damage_card = self.game.get_pending_steal_life_card()
-        for player_id, label in enumerate(self.damage_labels):
-            if showing_damage_selection:
-                total = self.game.get_damage_total(player_id)
-                label.set_text(f"P{player_id + 1} Damage ({total})")
-                label.show()
-            else:
-                label.hide()
-
-        for player_id, buttons in self.damage_buttons.items():
-            cards = self.game.damage[player_id].cards
-            for index, btn in enumerate(buttons):
-                if showing_damage_selection and index < len(cards):
-                    card = cards[index]
-                    prefix = "[X] " if player_id == self.game.current_player and selected_damage_card == card else ""
-                    btn.set_text(f"{prefix}{self._format_card_label(card)}")
-                    if selected_damage_card is None:
-                        btn.disabled = player_id != self.game.current_player
-                    else:
-                        btn.disabled = player_id == self.game.current_player
-                    btn.show()
-                else:
-                    btn.set_text("")
-                    btn.disabled = True
-                    btn.hide()
         
         for label in self.jack_labels:
             label.hide()
@@ -639,19 +578,20 @@ class GameScreen(Screen):
         self.renderer.render(surface, self.game.board, suit_role_render, self.game.phase, highlight_positions)
         self._render_suit_role_legend(surface)
         self._render_rank_guide(surface)
+        self._render_damage_summary(surface)
         if self.game.phase == GamePhase.APPEASING:
             self._render_color_hierarchy_strip(surface)
+        self._render_active_popups(surface)
     
     def on_enter(self) -> None:
         """Activate game screen."""
-        # Show all UI elements
         self.status_label.show()
-        self.info_label.show()
+        self.info_label.hide()
         for _, btn in self.move_buttons:
-            btn.show()
-        self.pickup_button.show()
+            btn.hide()
+        self.pickup_button.hide()
         for _, btn in self.request_buttons:
-            btn.show()
+            btn.hide()
         for btn in self.card_buttons:
             btn.show()
         self.weapon_label.show()
@@ -671,7 +611,6 @@ class GameScreen(Screen):
     
     def on_exit(self) -> None:
         """Deactivate game screen."""
-        # Hide UI elements
         self.status_label.hide()
         self.info_label.hide()
         for _, btn in self.move_buttons:
@@ -695,10 +634,518 @@ class GameScreen(Screen):
         for buttons in self.damage_buttons.values():
             for btn in buttons:
                 btn.hide()
+        self.damage_popup_player = None
 
     def _format_card_label(self, card) -> str:
         """Render a compact label for a hand or damage card."""
         return f"{get_rank_name(card.rank)} {get_family_code(card.suit)}"
+
+    def _is_request_popup_active(self) -> bool:
+        """Return True when the centered request chooser should be visible."""
+        return (
+            self.game.phase == GamePhase.APPEASING
+            and self.game.current_request_winner is not None
+            and not self.game.has_pending_request_resolution()
+            and not self.game.has_pending_card_placement()
+        )
+
+    def _is_steal_life_popup_active(self) -> bool:
+        """Return True when Steal Life card selection is in progress."""
+        return self.game.get_pending_request_type() == "steal_life"
+
+    def _is_restructure_popup_active(self) -> bool:
+        """Return True when Restructure suit selection is in progress."""
+        return self.game.get_pending_request_type() == "restructure"
+
+    def _is_plane_shift_direction_popup_active(self) -> bool:
+        """Return True when Plane Shift still needs a direction choice."""
+        return (
+            self.game.get_pending_request_type() == "plane_shift"
+            and self.game.get_pending_plane_shift_direction() is None
+        )
+
+    def _has_center_popup(self) -> bool:
+        """Return True when a centered modal popup is active."""
+        return any([
+            self._is_request_popup_active(),
+            self._is_steal_life_popup_active(),
+            self._is_restructure_popup_active(),
+            self._is_plane_shift_direction_popup_active(),
+        ])
+
+    def _get_centered_panel_rect(self, width: int, height: int) -> pygame.Rect:
+        """Return a centered popup rect."""
+        return pygame.Rect(
+            (self.window.WINDOW_WIDTH - width) // 2,
+            (self.window.WINDOW_HEIGHT - height) // 2,
+            width,
+            height,
+        )
+
+    def _get_damage_summary_rects(self) -> dict[int, pygame.Rect]:
+        """Return the clickable top-right damage summary rects."""
+        width = 184
+        height = 32
+        x = self.window.WINDOW_WIDTH - width - 24
+        return {
+            0: pygame.Rect(x, 18, width, height),
+            1: pygame.Rect(x, 56, width, height),
+        }
+
+    def _get_request_popup_layout(self) -> tuple[pygame.Rect, list[tuple[str, pygame.Rect]]]:
+        """Return request popup panel and button rects."""
+        request_types = self.game.get_available_request_types(self.game.current_player)
+        cols = 2 if len(request_types) > 1 else 1
+        rows = max(1, (len(request_types) + cols - 1) // cols)
+        button_width = 360 if cols == 2 else 420
+        button_height = 100
+        spacing_x = 20
+        spacing_y = 18
+        panel_width = cols * button_width + (cols - 1) * spacing_x + 60
+        panel_height = rows * button_height + (rows - 1) * spacing_y + 110
+        panel_rect = self._get_centered_panel_rect(panel_width, panel_height)
+
+        rects = []
+        for index, request_type in enumerate(request_types):
+            row = index // cols
+            col = index % cols
+            rect = pygame.Rect(
+                panel_rect.x + 30 + col * (button_width + spacing_x),
+                panel_rect.y + 66 + row * (button_height + spacing_y),
+                button_width,
+                button_height,
+            )
+            rects.append((request_type, rect))
+        return panel_rect, rects
+
+    def _get_steal_life_popup_layout(self) -> tuple[pygame.Rect, list[tuple[int, object, pygame.Rect]]]:
+        """Return Steal Life popup panel and clickable damage-card rects."""
+        left_cards = self.game.damage[0].cards
+        right_cards = self.game.damage[1].cards
+        rows = max(1, len(left_cards), len(right_cards))
+        panel_height = min(170 + rows * 36, 720)
+        panel_rect = self._get_centered_panel_rect(840, panel_height)
+
+        rects = []
+        lane_width = 330
+        start_y = panel_rect.y + 126
+        left_x = panel_rect.x + 40
+        right_x = panel_rect.centerx + 20
+        for player_id, cards, x in [
+            (0, left_cards, left_x),
+            (1, right_cards, right_x),
+        ]:
+            for index, card in enumerate(cards):
+                rect = pygame.Rect(x, start_y + index * 36, lane_width, 30)
+                rects.append((player_id, card, rect))
+        return panel_rect, rects
+
+    def _get_restructure_popup_layout(self) -> tuple[pygame.Rect, list[tuple[object, pygame.Rect]]]:
+        """Return Restructure popup panel and suit button rects."""
+        panel_rect = self._get_centered_panel_rect(620, 258)
+        rects = []
+        for index, suit in enumerate(self.game.jack_order):
+            row = index // 2
+            col = index % 2
+            rect = pygame.Rect(
+                panel_rect.x + 34 + col * 278,
+                panel_rect.y + 96 + row * 72,
+                244,
+                54,
+            )
+            rects.append((suit, rect))
+        return panel_rect, rects
+
+    def _get_plane_shift_popup_layout(self) -> tuple[pygame.Rect, list[tuple[str, pygame.Rect]]]:
+        """Return Plane Shift direction popup panel and direction rects."""
+        panel_rect = self._get_centered_panel_rect(500, 246)
+        directions = ["up", "left", "right", "down"]
+        rects = []
+        for index, direction in enumerate(directions):
+            row = index // 2
+            col = index % 2
+            rect = pygame.Rect(
+                panel_rect.x + 36 + col * 214,
+                panel_rect.y + 92 + row * 66,
+                180,
+                46,
+            )
+            rects.append((direction, rect))
+        return panel_rect, rects
+
+    def _get_damage_popup_layout(self, player_id: int) -> tuple[pygame.Rect, list[tuple[object, pygame.Rect]]]:
+        """Return the generic damage-pile popup layout for one player."""
+        cards = self.game.damage[player_id].cards
+        cols = 2 if len(cards) > 8 else 1
+        rows = max(1, (len(cards) + cols - 1) // cols)
+        panel_width = 580 if cols == 2 else 340
+        panel_height = min(128 + rows * 34, 720)
+        panel_rect = self._get_centered_panel_rect(panel_width, panel_height)
+
+        rects = []
+        col_width = 240
+        start_x = panel_rect.x + 26
+        start_y = panel_rect.y + 70
+        for index, card in enumerate(cards):
+            col = index // rows
+            row = index % rows
+            rect = pygame.Rect(
+                start_x + col * (col_width + 24),
+                start_y + row * 34,
+                col_width,
+                28,
+            )
+            rects.append((card, rect))
+        return panel_rect, rects
+
+    def _handle_center_popup_click(self, pos: tuple[int, int]) -> bool:
+        """Handle clicks inside the centered modal popups."""
+        if self._is_request_popup_active():
+            panel_rect, option_rects = self._get_request_popup_layout()
+            if not panel_rect.collidepoint(pos):
+                return True
+            for request_type, rect in option_rects:
+                if rect.collidepoint(pos):
+                    action = ChooseRequestAction(self.game.current_player, REQUEST_TYPE_MAP[request_type])
+                    self.game.apply_action(action)
+                    return True
+            return True
+
+        if self._is_steal_life_popup_active():
+            panel_rect, card_rects = self._get_steal_life_popup_layout()
+            if not panel_rect.collidepoint(pos):
+                return True
+            for player_id, card, rect in card_rects:
+                if rect.collidepoint(pos):
+                    action = SelectDamageCardAction(self.game.current_player, player_id, card)
+                    self.game.apply_action(action)
+                    return True
+            return True
+
+        if self._is_restructure_popup_active():
+            panel_rect, suit_rects = self._get_restructure_popup_layout()
+            if not panel_rect.collidepoint(pos):
+                return True
+            for suit, rect in suit_rects:
+                if rect.collidepoint(pos):
+                    action = SelectRestructureSuitAction(self.game.current_player, suit)
+                    self.game.apply_action(action)
+                    return True
+            return True
+
+        if self._is_plane_shift_direction_popup_active():
+            panel_rect, direction_rects = self._get_plane_shift_popup_layout()
+            if not panel_rect.collidepoint(pos):
+                return True
+            for direction, rect in direction_rects:
+                if rect.collidepoint(pos):
+                    action = SelectPlaneShiftDirectionAction(self.game.current_player, direction)
+                    self.game.apply_action(action)
+                    return True
+            return True
+
+        return False
+
+    def _handle_damage_summary_click(self, pos: tuple[int, int]) -> bool:
+        """Toggle the generic damage-pile popup when a summary chip is clicked."""
+        if self._has_center_popup():
+            return False
+
+        for player_id, rect in self._get_damage_summary_rects().items():
+            if rect.collidepoint(pos):
+                self.damage_popup_player = None if self.damage_popup_player == player_id else player_id
+                return True
+        return False
+
+    def _handle_damage_popup_click(self, pos: tuple[int, int]) -> bool:
+        """Consume clicks while a generic damage popup is open."""
+        if self.damage_popup_player is None or self._has_center_popup():
+            return False
+
+        for player_id, rect in self._get_damage_summary_rects().items():
+            if rect.collidepoint(pos):
+                self.damage_popup_player = None if self.damage_popup_player == player_id else player_id
+                return True
+
+        panel_rect, _ = self._get_damage_popup_layout(self.damage_popup_player)
+        if panel_rect.collidepoint(pos):
+            return True
+
+        self.damage_popup_player = None
+        return True
+
+    def _draw_wrapped_text(
+        self,
+        surface: pygame.Surface,
+        text: str,
+        font: pygame.font.Font,
+        color: tuple[int, int, int],
+        rect: pygame.Rect,
+        line_height: int,
+        max_lines: int,
+    ) -> None:
+        """Draw wrapped text clipped to the given rect."""
+        words = text.split()
+        lines = []
+        current = ""
+
+        for word in words:
+            candidate = word if not current else f"{current} {word}"
+            if font.size(candidate)[0] <= rect.width:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+
+        for index, line in enumerate(lines[:max_lines]):
+            line_surface = font.render(line, True, color)
+            surface.blit(line_surface, (rect.x, rect.y + index * line_height))
+
+    def _render_popup_backdrop(self, surface: pygame.Surface, alpha: int = 150) -> None:
+        """Render a dim backdrop behind an active popup."""
+        overlay = pygame.Surface((self.window.WINDOW_WIDTH, self.window.WINDOW_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((6, 8, 14, alpha))
+        surface.blit(overlay, (0, 0))
+
+    def _render_damage_summary(self, surface: pygame.Surface) -> None:
+        """Render clickable damage summary chips."""
+        for player_id, rect in self._get_damage_summary_rects().items():
+            active = self.damage_popup_player == player_id
+            fill = (56, 60, 76) if active else (33, 37, 49)
+            border = (224, 199, 120) if active else (106, 112, 128)
+            pygame.draw.rect(surface, fill, rect, border_radius=10)
+            pygame.draw.rect(surface, border, rect, 2, border_radius=10)
+
+            label = self.popup_small_font.render(
+                f"P{player_id + 1} Damage: {self.game.get_damage_total(player_id)}",
+                True,
+                (232, 232, 232),
+            )
+            label_rect = label.get_rect(center=rect.center)
+            surface.blit(label, label_rect)
+
+    def _render_active_popups(self, surface: pygame.Surface) -> None:
+        """Render whichever modal popup is currently active."""
+        if self._is_request_popup_active():
+            self._render_popup_backdrop(surface)
+            self._render_request_popup(surface)
+            return
+
+        if self._is_steal_life_popup_active():
+            self._render_popup_backdrop(surface)
+            self._render_steal_life_popup(surface)
+            return
+
+        if self._is_restructure_popup_active():
+            self._render_popup_backdrop(surface)
+            self._render_restructure_popup(surface)
+            return
+
+        if self._is_plane_shift_direction_popup_active():
+            self._render_popup_backdrop(surface)
+            self._render_plane_shift_direction_popup(surface)
+            return
+
+        if self.damage_popup_player is not None:
+            self._render_popup_backdrop(surface, alpha=110)
+            self._render_damage_popup(surface, self.damage_popup_player)
+
+    def _render_request_popup(self, surface: pygame.Surface) -> None:
+        """Render the centered request-selection popup."""
+        panel_rect, option_rects = self._get_request_popup_layout()
+        pygame.draw.rect(surface, (20, 24, 34), panel_rect, border_radius=18)
+        pygame.draw.rect(surface, (140, 146, 165), panel_rect, 2, border_radius=18)
+
+        title = self.popup_title_font.render("Choose Pan's Request", True, (240, 236, 214))
+        surface.blit(title, (panel_rect.x + 28, panel_rect.y + 18))
+
+        subtitle = self.popup_small_font.render(
+            f"Player {self.game.current_player + 1} chooses now.",
+            True,
+            (198, 198, 198),
+        )
+        surface.blit(subtitle, (panel_rect.x + 30, panel_rect.y + 50))
+
+        for request_type, rect in option_rects:
+            copy = REQUEST_POPUP_COPY[request_type]
+            pygame.draw.rect(surface, (38, 44, 58), rect, border_radius=14)
+            pygame.draw.rect(surface, (108, 114, 134), rect, 2, border_radius=14)
+
+            title_surface = self.popup_body_font.render(copy["title"], True, (238, 238, 238))
+            surface.blit(title_surface, (rect.x + 16, rect.y + 12))
+
+            self._draw_wrapped_text(
+                surface,
+                copy["description"],
+                self.popup_small_font,
+                (208, 208, 208),
+                pygame.Rect(rect.x + 16, rect.y + 42, rect.width - 32, 32),
+                line_height=18,
+                max_lines=2,
+            )
+            self._draw_wrapped_text(
+                surface,
+                copy["example"],
+                self.popup_small_font,
+                (170, 200, 220),
+                pygame.Rect(rect.x + 16, rect.y + 74, rect.width - 32, 18),
+                line_height=18,
+                max_lines=1,
+            )
+
+    def _render_steal_life_popup(self, surface: pygame.Surface) -> None:
+        """Render the centered Steal Life selector."""
+        panel_rect, card_rects = self._get_steal_life_popup_layout()
+        chooser = self.game.current_player
+        selected_own = self.game.get_pending_steal_life_card()
+        first_selection_pending = selected_own is None
+
+        pygame.draw.rect(surface, (20, 24, 34), panel_rect, border_radius=18)
+        pygame.draw.rect(surface, (146, 126, 112), panel_rect, 2, border_radius=18)
+
+        title = self.popup_title_font.render("Steal Life", True, (240, 236, 214))
+        surface.blit(title, (panel_rect.x + 30, panel_rect.y + 18))
+
+        instruction = "Select your damage card first, then select the enemy card you want to steal."
+        self._draw_wrapped_text(
+            surface,
+            instruction,
+            self.popup_small_font,
+            (212, 212, 212),
+            pygame.Rect(panel_rect.x + 30, panel_rect.y + 54, panel_rect.width - 60, 36),
+            line_height=18,
+            max_lines=2,
+        )
+
+        headings = {
+            0: (panel_rect.x + 40, f"P1 Damage ({self.game.get_damage_total(0)})"),
+            1: (panel_rect.centerx + 20, f"P2 Damage ({self.game.get_damage_total(1)})"),
+        }
+        for player_id, (x, text) in headings.items():
+            highlight = player_id == chooser if first_selection_pending else player_id != chooser
+            color = (240, 220, 150) if highlight else (200, 200, 200)
+            heading = self.popup_body_font.render(text, True, color)
+            surface.blit(heading, (x, panel_rect.y + 92))
+
+        if not card_rects:
+            empty = self.popup_body_font.render("No damage cards available.", True, (210, 210, 210))
+            empty_rect = empty.get_rect(center=panel_rect.center)
+            surface.blit(empty, empty_rect)
+            return
+
+        for player_id, card, rect in card_rects:
+            selectable = player_id == chooser if first_selection_pending else player_id != chooser
+            is_selected = player_id == chooser and selected_own == card
+            fill = (70, 84, 102) if selectable else (44, 46, 56)
+            border = (234, 201, 114) if is_selected else ((110, 116, 130) if selectable else (78, 82, 92))
+            text_color = (238, 238, 238) if selectable else (156, 156, 156)
+
+            pygame.draw.rect(surface, fill, rect, border_radius=10)
+            pygame.draw.rect(surface, border, rect, 2, border_radius=10)
+            label = self.popup_small_font.render(
+                f"{self._format_card_label(card)} ({card.combat_value()})",
+                True,
+                text_color,
+            )
+            surface.blit(label, (rect.x + 12, rect.y + 6))
+
+    def _render_restructure_popup(self, surface: pygame.Surface) -> None:
+        """Render the centered Restructure color selector."""
+        panel_rect, suit_rects = self._get_restructure_popup_layout()
+        selected_suits = set(self.game.get_pending_restructure_suits())
+
+        pygame.draw.rect(surface, (20, 24, 34), panel_rect, border_radius=18)
+        pygame.draw.rect(surface, (128, 158, 188), panel_rect, 2, border_radius=18)
+
+        title = self.popup_title_font.render("Restructure", True, (240, 236, 214))
+        surface.blit(title, (panel_rect.x + 30, panel_rect.y + 18))
+
+        subtitle = self.popup_small_font.render(
+            "Choose two colors to swap their omen roles.",
+            True,
+            (210, 210, 210),
+        )
+        surface.blit(subtitle, (panel_rect.x + 30, panel_rect.y + 56))
+
+        for suit, rect in suit_rects:
+            role = self.game.suit_roles.get(suit)
+            selected = suit in selected_suits
+            fill = (54, 68, 86) if selected else (36, 42, 54)
+            border = (234, 201, 114) if selected else (104, 112, 128)
+            pygame.draw.rect(surface, fill, rect, border_radius=12)
+            pygame.draw.rect(surface, border, rect, 2, border_radius=12)
+
+            draw_suit_icon(surface, suit, (rect.x + 24, rect.centery), size=10)
+            family = self.popup_body_font.render(get_family_name(suit), True, (238, 238, 238))
+            surface.blit(family, (rect.x + 44, rect.y + 8))
+
+            role_text = role.value.title() if role else "Unknown"
+            detail = self.popup_small_font.render(role_text, True, (194, 204, 220))
+            surface.blit(detail, (rect.x + 46, rect.y + 31))
+
+    def _render_plane_shift_direction_popup(self, surface: pygame.Surface) -> None:
+        """Render the centered Plane Shift direction picker."""
+        panel_rect, direction_rects = self._get_plane_shift_popup_layout()
+        pygame.draw.rect(surface, (20, 24, 34), panel_rect, border_radius=18)
+        pygame.draw.rect(surface, (150, 138, 188), panel_rect, 2, border_radius=18)
+
+        title = self.popup_title_font.render("Plane Shift", True, (240, 236, 214))
+        surface.blit(title, (panel_rect.x + 28, panel_rect.y + 18))
+
+        subtitle = self.popup_small_font.render(
+            "Choose a direction first. Then click the row or column on the board.",
+            True,
+            (210, 210, 210),
+        )
+        surface.blit(subtitle, (panel_rect.x + 28, panel_rect.y + 56))
+
+        labels = {
+            "up": "Shift Up",
+            "left": "Shift Left",
+            "right": "Shift Right",
+            "down": "Shift Down",
+        }
+        for direction, rect in direction_rects:
+            pygame.draw.rect(surface, (40, 46, 60), rect, border_radius=12)
+            pygame.draw.rect(surface, (110, 118, 138), rect, 2, border_radius=12)
+            label = self.popup_body_font.render(labels[direction], True, (236, 236, 236))
+            label_rect = label.get_rect(center=rect.center)
+            surface.blit(label, label_rect)
+
+    def _render_damage_popup(self, surface: pygame.Surface, player_id: int) -> None:
+        """Render a centered popup listing one player's damage pile."""
+        panel_rect, card_rects = self._get_damage_popup_layout(player_id)
+        pygame.draw.rect(surface, (22, 26, 36), panel_rect, border_radius=18)
+        pygame.draw.rect(surface, (136, 142, 160), panel_rect, 2, border_radius=18)
+
+        title = self.popup_title_font.render(
+            f"P{player_id + 1} Damage Pile ({self.game.get_damage_total(player_id)})",
+            True,
+            (240, 236, 214),
+        )
+        surface.blit(title, (panel_rect.x + 24, panel_rect.y + 18))
+
+        subtitle = self.popup_small_font.render("Click outside this popup to close it.", True, (192, 192, 192))
+        surface.blit(subtitle, (panel_rect.x + 26, panel_rect.y + 50))
+
+        if not card_rects:
+            empty = self.popup_body_font.render("No damage cards yet.", True, (212, 212, 212))
+            empty_rect = empty.get_rect(center=panel_rect.center)
+            surface.blit(empty, empty_rect)
+            return
+
+        for card, rect in card_rects:
+            pygame.draw.rect(surface, (42, 48, 62), rect, border_radius=10)
+            pygame.draw.rect(surface, (100, 108, 124), rect, 1, border_radius=10)
+            label = self.popup_small_font.render(
+                f"{self._format_card_label(card)} ({card.combat_value()})",
+                True,
+                (236, 236, 236),
+            )
+            surface.blit(label, (rect.x + 10, rect.y + 6))
 
     def _render_suit_role_legend(self, surface: pygame.Surface) -> None:
         """Render suit-role mappings with drawn icons instead of font glyphs."""

@@ -125,6 +125,32 @@ class GameState:
             and self.pending_placement_player is None
         )
 
+    def can_select_request_type(self, player_id: int, request_type: str) -> bool:
+        """Return True when a specific request is currently legal for the player."""
+        if not self.can_choose_request(player_id):
+            return False
+
+        if request_type == "ignore_us":
+            return player_id == self.current_request_winner
+
+        if request_type == "steal_life":
+            opponent_id = 1 - player_id
+            return bool(self.damage[player_id].cards) and bool(self.damage[opponent_id].cards)
+
+        if request_type == "restructure":
+            return len(self.jack_order) >= 2
+
+        return request_type == "plane_shift"
+
+    def get_available_request_types(self, player_id: int) -> list[str]:
+        """Return request types the current chooser may actually click."""
+        order = ["restructure", "steal_life", "ignore_us", "plane_shift"]
+        return [
+            request_type
+            for request_type in order
+            if self.can_select_request_type(player_id, request_type)
+        ]
+
     def has_pending_combat(self) -> bool:
         """Return True while players are choosing combat damage cards."""
         return bool(self.pending_combat_players)
@@ -173,13 +199,20 @@ class GameState:
         """Return the played cards still waiting to be placed or returned."""
         return list(self.pending_placement_cards)
 
+    def is_player_on_position(self, pos: Position) -> bool:
+        """Return True when either player is currently standing on the position."""
+        return any(
+            self.board.get_player_position(player_id) == pos
+            for player_id in [0, 1]
+        )
+
     def get_hole_positions(self) -> list[Position]:
         """Return all positions that currently contain a board hole."""
         holes = []
         for row in range(6):
             for col in range(6):
                 pos = Position(row, col)
-                if self.board.get_card(pos) is None:
+                if self.board.get_card(pos) is None and not self.is_player_on_position(pos):
                     holes.append(pos)
         return holes
 
@@ -596,6 +629,9 @@ class GameState:
 
     def _execute_request(self, chooser_id: int, request_type: str, params: dict) -> bool:
         """Execute the chosen request."""
+        if not self.can_select_request_type(chooser_id, request_type):
+            return False
+
         opponent_id = 1 - chooser_id
         
         if request_type == "restructure":
@@ -818,7 +854,7 @@ class GameState:
         for pos in action.positions:
             if pos in seen_positions:
                 return False
-            if self.board.get_card(pos) is not None:
+            if self.board.get_card(pos) is not None or self.is_player_on_position(pos):
                 return False
             seen_positions.add(pos)
 

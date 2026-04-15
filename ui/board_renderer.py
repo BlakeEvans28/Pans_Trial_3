@@ -130,16 +130,19 @@ class BoardRenderer:
             pos = board.get_player_position(player_id)
             if pos is not None:
                 color = self.PLAYER1_COLOR if player_id == 0 else self.PLAYER2_COLOR
-                
-                x = self.BOARD_X + pos.col * self.CELL_SIZE + self.CELL_SIZE // 2
+
+                x_offset = -self.CELL_SIZE // 5 if player_id == 0 else self.CELL_SIZE // 5
+                x = self.BOARD_X + pos.col * self.CELL_SIZE + self.CELL_SIZE // 2 + x_offset
                 y = self.BOARD_Y + pos.row * self.CELL_SIZE + self.CELL_SIZE // 2
                 radius = 15
-                
+
+                pygame.draw.circle(surface, (20, 20, 28), (x, y), radius)
                 pygame.draw.circle(surface, color, (x, y), radius, 3)
-                
+
                 # Player label
                 label = self.font_small.render(f"P{player_id + 1}", True, color)
-                surface.blit(label, (x - 10, y - 10))
+                label_rect = label.get_rect(center=(x, y))
+                surface.blit(label, label_rect)
     
     def get_cell_at_mouse(self, mouse_pos: tuple[int, int]) -> Optional[Position]:
         """Get grid cell at mouse position."""

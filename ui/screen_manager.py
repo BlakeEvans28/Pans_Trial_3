@@ -13,7 +13,13 @@ import pygame_gui
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from engine import CardRank, CardSuit
-from pan_theme import get_card_display, get_family_name, get_rank_name, get_rank_name_with_value
+from pan_theme import (
+    get_card_display,
+    get_family_color,
+    get_family_name,
+    get_rank_name,
+    get_rank_name_with_value,
+)
 from .suit_icons import draw_suit_icon
 
 
@@ -257,6 +263,7 @@ class DraftScreen(Screen):
     def render(self, surface: pygame.Surface) -> None:
         """Render draft instructions and current picks."""
         surface.fill((16, 18, 28))
+        self._render_value_legend(surface)
 
         title = self.title_font.render("INITIAL DRAFT", True, (235, 225, 190))
         title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, 90))
@@ -348,7 +355,13 @@ class DraftScreen(Screen):
         rank_rect = rank.get_rect(center=(rect.centerx, rect.y + 28))
         surface.blit(rank, rank_rect)
 
-        draw_suit_icon(surface, card.suit, (rect.centerx, rect.centery + 8), size=20, color=(40, 40, 40))
+        draw_suit_icon(
+            surface,
+            card.suit,
+            (rect.centerx, rect.centery + 8),
+            size=20,
+            color=get_family_color(card.suit),
+        )
 
         suit_name = self.small_font.render(get_family_name(card.suit), True, text_color)
         suit_rect = suit_name.get_rect(center=(rect.centerx, rect.bottom - 18))
@@ -403,11 +416,35 @@ class DraftScreen(Screen):
         rank_rect = rank.get_rect(center=(rect.centerx, rect.y + 22))
         surface.blit(rank, rank_rect)
 
-        draw_suit_icon(surface, card.suit, (rect.centerx, rect.centery - 4), size=18, color=(40, 40, 40))
+        draw_suit_icon(
+            surface,
+            card.suit,
+            (rect.centerx, rect.centery - 4),
+            size=18,
+            color=get_family_color(card.suit),
+        )
 
         suit_name = self.small_font.render(get_family_name(card.suit), True, (35, 35, 35))
         suit_rect = suit_name.get_rect(center=(rect.centerx, rect.bottom - 18))
         surface.blit(suit_name, suit_rect)
+
+    def _render_value_legend(self, surface: pygame.Surface) -> None:
+        """Show the draft-phase values for the three high-rank card types."""
+        panel_rect = pygame.Rect(28, 28, 230, 126)
+        pygame.draw.rect(surface, (25, 28, 38), panel_rect, border_radius=14)
+        pygame.draw.rect(surface, (106, 112, 132), panel_rect, 2, border_radius=14)
+
+        title = self.small_font.render("Draft Value Guide", True, (232, 232, 232))
+        surface.blit(title, (panel_rect.x + 14, panel_rect.y + 12))
+
+        lines = [
+            get_rank_name_with_value(CardRank.TEN),
+            get_rank_name_with_value(CardRank.QUEEN),
+            get_rank_name_with_value(CardRank.KING),
+        ]
+        for index, text in enumerate(lines):
+            line = self.small_font.render(text, True, (205, 205, 205))
+            surface.blit(line, (panel_rect.x + 18, panel_rect.y + 42 + index * 24))
 
 
 class JackRevealScreen(Screen):

@@ -11,7 +11,7 @@ import pygame
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from engine import Action, MoveAction, PickupCurrentCardAction, Position
+from engine import Action, Board, MoveAction, PickupCurrentCardAction, Position
 
 
 class InputHandler:
@@ -56,26 +56,16 @@ class InputHandler:
         Get direction from one cell to adjacent cell.
         Returns None if cells are not adjacent.
         """
-        dr = to_pos.row - from_pos.row
-        dc = to_pos.col - from_pos.col
-        
-        # Normalize for toroidal grid
-        if abs(dr) > 3:
-            dr = 0 if dr == 0 else (-dr % 6)
-        if abs(dc) > 3:
-            dc = 0 if dc == 0 else (-dc % 6)
-        
-        # Check if adjacent
-        if abs(dr) + abs(dc) != 1:
-            return None
-        
-        if dr == -1:
-            return "up"
-        elif dr == 1:
-            return "down"
-        elif dc == -1:
-            return "left"
-        elif dc == 1:
-            return "right"
-        
+        if from_pos.col == to_pos.col:
+            if (from_pos.row - 1) % Board.ROWS == to_pos.row:
+                return "up"
+            if (from_pos.row + 1) % Board.ROWS == to_pos.row:
+                return "down"
+
+        if from_pos.row == to_pos.row:
+            if (from_pos.col - 1) % Board.COLS == to_pos.col:
+                return "left"
+            if (from_pos.col + 1) % Board.COLS == to_pos.col:
+                return "right"
+
         return None

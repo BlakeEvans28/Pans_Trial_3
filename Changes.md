@@ -13,6 +13,13 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-04-14 - OpenAI Codex
+Commit: `pending` - Updated gameplay popups and traversal interactions
+Summary:
+- Replaced the old side-button request flow with centered request, Steal Life, Restructure, and Plane Shift popups, and made the top damage totals clickable to open a damage-pile popup.
+- Removed the visible left-side movement and pickup controls, fixed toroidal edge click movement, offset the two player markers so shared tiles stay readable, and added the draft value legend plus colored draft suit markers.
+- Prevented players from placing Appeasing cards into occupied holes, limited `Ignore Us` to the winning appeaser, and added regression coverage for ballista landings, toroidal click directions, request availability, and hole placement.
+
 ## Entry Template
 
 ## YYYY-MM-DD - Author Name

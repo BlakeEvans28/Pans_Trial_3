@@ -11,6 +11,7 @@ from engine import (
     PlaceCardsAction
 )
 from deck_utils import setup_game_deck, create_6x6_labyrinth, draft_hands, get_jack_suit_order
+from ui.input_handler import InputHandler
 
 
 @pytest.fixture
@@ -61,6 +62,16 @@ def test_toroidal_wrapping(game_setup):
     # Test column wrapping
     wrapped_col = (4 + 1) % 6
     assert wrapped_col == 5
+
+
+def test_click_direction_handles_toroidal_edges():
+    """Click-to-move should treat opposite edges as adjacent on the toroidal board."""
+    handler = InputHandler(None)
+
+    assert handler.get_direction_to_cell(Position(0, 0), Position(5, 0)) == "up"
+    assert handler.get_direction_to_cell(Position(5, 0), Position(0, 0)) == "down"
+    assert handler.get_direction_to_cell(Position(0, 0), Position(0, 5)) == "left"
+    assert handler.get_direction_to_cell(Position(0, 5), Position(0, 0)) == "right"
 
 
 def test_damage_calculation(game_setup):
@@ -248,6 +259,62 @@ def test_ballista_targets_clickable_tiles_until_wall(game_setup):
     assert game.board.get_player_position(0) == Position(5, 0)
 
 
+def test_ballista_landing_on_weapon_collects_it(game_setup):
+    """Landing on a weapon via ballista should still collect the card immediately."""
+    game = game_setup
+    ballista_suit = next(suit for suit, role in game.suit_roles.items() if role == SuitRole.BALLISTA)
+    weapon_suit = next(suit for suit, role in game.suit_roles.items() if role == SuitRole.WEAPONS)
+    destination = Position(0, 1)
+    weapon_card = Card(CardRank.SEVEN, weapon_suit)
+    hand_before = len(game.get_player_hand(0))
+
+    game.board.place_player(0, Position(0, 0))
+    game.board.set_card(Position(0, 0), Card(CardRank.THREE, ballista_suit))
+    game.board.set_card(destination, weapon_card)
+    game._start_ballista(0)
+
+    assert game.apply_action(ResolveBallistaShotAction(0, destination.row, destination.col))
+    assert weapon_card in game.get_player_hand(0)
+    assert len(game.get_player_hand(0)) == hand_before + 1
+    assert game.board.get_card(destination) is None
+
+
+def test_ballista_landing_on_trap_adds_damage(game_setup):
+    """Landing on a trap via ballista should still apply the trap immediately."""
+    game = game_setup
+    ballista_suit = next(suit for suit, role in game.suit_roles.items() if role == SuitRole.BALLISTA)
+    trap_suit = next(suit for suit, role in game.suit_roles.items() if role == SuitRole.TRAPS)
+    destination = Position(0, 1)
+    trap_card = Card(CardRank.SIX, trap_suit)
+
+    game.board.place_player(0, Position(0, 0))
+    game.board.set_card(Position(0, 0), Card(CardRank.THREE, ballista_suit))
+    game.board.set_card(destination, trap_card)
+    game._start_ballista(0)
+
+    assert game.apply_action(ResolveBallistaShotAction(0, destination.row, destination.col))
+    assert trap_card in game.damage[0].cards
+    assert game.board.get_card(destination) is None
+
+
+def test_ballista_can_chain_into_another_ballista(game_setup):
+    """Landing on a second ballista from a ballista should immediately start the next shot."""
+    game = game_setup
+    ballista_suit = next(suit for suit, role in game.suit_roles.items() if role == SuitRole.BALLISTA)
+    first_destination = Position(0, 1)
+    second_destination = Position(0, 2)
+
+    game.board.place_player(0, Position(0, 0))
+    game.board.set_card(first_destination, Card(CardRank.FOUR, ballista_suit))
+    game.board.set_card(second_destination, Card(CardRank.FIVE, ballista_suit))
+    game._start_ballista(0)
+
+    assert game.apply_action(ResolveBallistaShotAction(0, first_destination.row, first_destination.col))
+    assert game.has_pending_ballista()
+    assert game.board.get_player_position(0) == first_destination
+    assert second_destination in game.get_pending_ballista_targets()
+
+
 def test_battle_is_ignored_when_neither_player_has_weapons(game_setup):
     """Same-tile contact should not trigger combat when nobody has weapons."""
     game = game_setup
@@ -340,10 +407,27 @@ def test_both_players_choose_requests_unless_ignore_us(game_setup):
     assert game.current_player == 1
     assert game.pending_request_players == [1]
 
-    assert game.choose_request(1, "ignore_us")
+    assert game.apply_action(ChooseRequestAction(
+        1,
+        RequestType.RESTRUCTURE,
+        {"suits": [game.jack_order[2], game.jack_order[3]]},
+    ))
     assert game.phase == GamePhase.TRAVERSING
     assert game.pending_request_players == []
     assert game.current_player == 1
+
+
+def test_second_requester_cannot_choose_ignore_us(game_setup):
+    """Only the initial request winner should be allowed to choose Ignore Us."""
+    game = game_setup
+    game.phase = GamePhase.APPEASING
+    game.current_request_winner = 0
+    game.pending_request_players = [1]
+    game.current_player = 1
+
+    assert not game.can_select_request_type(1, "ignore_us")
+    assert "ignore_us" not in game.get_available_request_types(1)
+    assert not game.choose_request(1, "ignore_us")
 
 
 def test_ignore_us_skips_second_request_only(game_setup):
@@ -502,6 +586,22 @@ def test_appeasing_cards_return_to_loser_when_no_holes_exist(game_setup):
     assert not game.has_pending_card_placement()
     assert card_a in game.get_player_hand(1)
     assert card_b in game.get_player_hand(1)
+
+
+def test_hole_positions_exclude_tiles_currently_occupied_by_players(game_setup):
+    """Players standing in holes should block those holes from post-appeasing placement."""
+    game = game_setup
+    occupied_hole = Position(2, 2)
+    open_hole = Position(3, 3)
+
+    game.board.set_card(occupied_hole, None)
+    game.board.set_card(open_hole, None)
+    game.board.place_player(0, occupied_hole)
+
+    holes = game.get_hole_positions()
+
+    assert occupied_hole not in holes
+    assert open_hole in holes
 
 
 if __name__ == "__main__":
