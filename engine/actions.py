@@ -140,6 +140,7 @@ class ResolveBallistaShotAction(Action):
 class PlaceCardsAction(Action):
     """Place cards in holes after Appeasing Pan phase."""
     positions: list[Position]  # Where to place the cards
+    card_indices: list[int] | None = None  # Which pending cards to place at those positions
 
     def __post_init__(self):
         self.type = ActionType.PLACE_CARDS

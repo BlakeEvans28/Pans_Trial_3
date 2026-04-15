@@ -52,22 +52,22 @@ REQUEST_POPUP_COPY = {
     "restructure": {
         "title": "Restructure",
         "description": "Swap two omen colors so their labyrinth roles trade places.",
-        "example": "Example: trade Crimson Weapons with Azure Traps.",
+        "disabled": "Requires at least two omen colors to swap.",
     },
     "steal_life": {
         "title": "Steal Life",
         "description": "Exchange one of your damage cards with one from the enemy pile.",
-        "example": "Example: swap your Hero damage with their 3.",
+        "disabled": "Needs at least one damage card in both piles.",
     },
     "ignore_us": {
         "title": "Ignore Us",
         "description": "End Pan's requests immediately and move straight to hole placement.",
-        "example": "Example: skip the second chooser entirely.",
+        "disabled": "",
     },
     "plane_shift": {
         "title": "Plane Shift",
         "description": "Choose a direction, then click a row or column to wrap it by one tile.",
-        "example": "Example: shift row 2 left or column 5 down.",
+        "disabled": "",
     },
 }
 
@@ -98,6 +98,10 @@ class GameScreen(Screen):
         self.popup_body_font = pygame.font.Font(None, 28)
         self.popup_small_font = pygame.font.Font(None, 22)
         self.damage_popup_player = None
+        self.selected_placement_card_index = None
+        self.dragging_placement_card_index = None
+        self.dragging_placement_card_pos = None
+        self.hovered_placement_target = None
         
         self._create_ui()
         
@@ -326,6 +330,9 @@ class GameScreen(Screen):
             if self._handle_center_popup_click(event.pos):
                 return True
 
+            if self._handle_pending_placement_mouse_down(event.pos):
+                return True
+
             if self._handle_damage_popup_click(event.pos):
                 return True
 
@@ -344,11 +351,7 @@ class GameScreen(Screen):
                     return True
 
             if self.game.has_pending_card_placement() and hasattr(self.renderer, "BOARD_X"):
-                clicked_cell = self.renderer.get_cell_at_mouse(event.pos)
-                if clicked_cell is not None:
-                    action = PlaceCardsAction(self.game.current_player, [clicked_cell])
-                    self.game.apply_action(action)
-                    return True
+                return True
             elif self.game.phase == GamePhase.TRAVERSING:
                 action = self.input_handler.handle_mouse_click(
                     event.pos, self.game.current_player, self.game
@@ -368,6 +371,14 @@ class GameScreen(Screen):
                     action = ResolvePlaneShiftAction(self.game.current_player, index)
                     self.game.apply_action(action)
                     return True
+
+        elif event.type == pygame.MOUSEMOTION:
+            if self._handle_pending_placement_mouse_motion(event.pos):
+                return True
+
+        elif event.type == pygame.MOUSEBUTTONUP:
+            if self._handle_pending_placement_mouse_up(event.pos):
+                return True
         
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE and self.damage_popup_player is not None:
@@ -484,8 +495,32 @@ class GameScreen(Screen):
         self.status_label.set_text(status_text)
         self.info_label.hide()
 
-        if pending_request_type in {"steal_life", "restructure"} or showing_request_selection:
+        if (
+            pending_request_type in {"steal_life", "restructure"}
+            or showing_request_selection
+            or self.game.has_pending_card_placement()
+        ):
             self.damage_popup_player = None
+
+        if not self.game.has_pending_card_placement():
+            self.selected_placement_card_index = None
+            self.dragging_placement_card_index = None
+            self.dragging_placement_card_pos = None
+            self.hovered_placement_target = None
+        else:
+            pending_cards = self.game.get_pending_placement_cards()
+            if (
+                self.selected_placement_card_index is not None
+                and self.selected_placement_card_index >= len(pending_cards)
+            ):
+                self.selected_placement_card_index = None
+            if (
+                self.dragging_placement_card_index is not None
+                and self.dragging_placement_card_index >= len(pending_cards)
+            ):
+                self.dragging_placement_card_index = None
+                self.dragging_placement_card_pos = None
+                self.hovered_placement_target = None
 
         # Update the small turn indicator above the card buttons.
         for i, label in enumerate(self.hand_labels):
@@ -571,14 +606,25 @@ class GameScreen(Screen):
             highlight_positions = set(self.game.get_pending_ballista_targets())
         elif self.game.has_pending_card_placement():
             highlight_positions = set(self.game.get_hole_positions())
+        elif (
+            self.game.get_pending_request_type() == "plane_shift"
+            and self.game.get_pending_plane_shift_direction() is not None
+        ):
+            highlight_positions = {
+                Position(row, col)
+                for row in range(6)
+                for col in range(6)
+            }
         else:
             highlight_positions = set()
         
         # Render board
         self.renderer.render(surface, self.game.board, suit_role_render, self.game.phase, highlight_positions)
+        self._render_pending_placement_hover(surface)
         self._render_suit_role_legend(surface)
         self._render_rank_guide(surface)
         self._render_damage_summary(surface)
+        self._render_pending_placement_cards(surface)
         if self.game.phase == GamePhase.APPEASING:
             self._render_color_hierarchy_strip(surface)
         self._render_active_popups(surface)
@@ -686,7 +732,7 @@ class GameScreen(Screen):
         """Return the clickable top-right damage summary rects."""
         width = 184
         height = 32
-        x = self.window.WINDOW_WIDTH - width - 24
+        x = 24
         return {
             0: pygame.Rect(x, 18, width, height),
             1: pygame.Rect(x, 56, width, height),
@@ -694,9 +740,9 @@ class GameScreen(Screen):
 
     def _get_request_popup_layout(self) -> tuple[pygame.Rect, list[tuple[str, pygame.Rect]]]:
         """Return request popup panel and button rects."""
-        request_types = self.game.get_available_request_types(self.game.current_player)
-        cols = 2 if len(request_types) > 1 else 1
-        rows = max(1, (len(request_types) + cols - 1) // cols)
+        request_options = self._get_request_popup_options()
+        cols = 2 if len(request_options) > 1 else 1
+        rows = max(1, (len(request_options) + cols - 1) // cols)
         button_width = 360 if cols == 2 else 420
         button_height = 100
         spacing_x = 20
@@ -706,7 +752,7 @@ class GameScreen(Screen):
         panel_rect = self._get_centered_panel_rect(panel_width, panel_height)
 
         rects = []
-        for index, request_type in enumerate(request_types):
+        for index, (request_type, _, _) in enumerate(request_options):
             row = index // cols
             col = index % cols
             rect = pygame.Rect(
@@ -717,6 +763,24 @@ class GameScreen(Screen):
             )
             rects.append((request_type, rect))
         return panel_rect, rects
+
+    def _get_request_popup_options(self) -> list[tuple[str, bool, str]]:
+        """Return request popup entries with enabled state and optional disabled reason."""
+        player_id = self.game.current_player
+        options = []
+        order = ["restructure", "steal_life", "ignore_us", "plane_shift"]
+
+        for request_type in order:
+            if request_type == "ignore_us" and player_id != self.game.current_request_winner:
+                continue
+
+            enabled = self.game.can_select_request_type(player_id, request_type)
+            disabled_reason = ""
+            if not enabled:
+                disabled_reason = REQUEST_POPUP_COPY[request_type].get("disabled", "")
+            options.append((request_type, enabled, disabled_reason))
+
+        return options
 
     def _get_steal_life_popup_layout(self) -> tuple[pygame.Rect, list[tuple[int, object, pygame.Rect]]]:
         """Return Steal Life popup panel and clickable damage-card rects."""
@@ -802,12 +866,17 @@ class GameScreen(Screen):
         """Handle clicks inside the centered modal popups."""
         if self._is_request_popup_active():
             panel_rect, option_rects = self._get_request_popup_layout()
+            option_states = {
+                request_type: enabled
+                for request_type, enabled, _ in self._get_request_popup_options()
+            }
             if not panel_rect.collidepoint(pos):
                 return True
             for request_type, rect in option_rects:
                 if rect.collidepoint(pos):
-                    action = ChooseRequestAction(self.game.current_player, REQUEST_TYPE_MAP[request_type])
-                    self.game.apply_action(action)
+                    if option_states.get(request_type, False):
+                        action = ChooseRequestAction(self.game.current_player, REQUEST_TYPE_MAP[request_type])
+                        self.game.apply_action(action)
                     return True
             return True
 
@@ -956,6 +1025,10 @@ class GameScreen(Screen):
     def _render_request_popup(self, surface: pygame.Surface) -> None:
         """Render the centered request-selection popup."""
         panel_rect, option_rects = self._get_request_popup_layout()
+        option_states = {
+            request_type: (enabled, disabled_reason)
+            for request_type, enabled, disabled_reason in self._get_request_popup_options()
+        }
         pygame.draw.rect(surface, (20, 24, 34), panel_rect, border_radius=18)
         pygame.draw.rect(surface, (140, 146, 165), panel_rect, 2, border_radius=18)
 
@@ -971,29 +1044,36 @@ class GameScreen(Screen):
 
         for request_type, rect in option_rects:
             copy = REQUEST_POPUP_COPY[request_type]
-            pygame.draw.rect(surface, (38, 44, 58), rect, border_radius=14)
-            pygame.draw.rect(surface, (108, 114, 134), rect, 2, border_radius=14)
+            enabled, disabled_reason = option_states[request_type]
+            fill = (38, 44, 58) if enabled else (30, 32, 40)
+            border = (108, 114, 134) if enabled else (78, 82, 94)
+            title_color = (238, 238, 238) if enabled else (164, 164, 172)
+            body_color = (208, 208, 208) if enabled else (136, 136, 144)
+            detail_color = (170, 200, 220) if enabled else (200, 164, 124)
 
-            title_surface = self.popup_body_font.render(copy["title"], True, (238, 238, 238))
+            pygame.draw.rect(surface, fill, rect, border_radius=14)
+            pygame.draw.rect(surface, border, rect, 2, border_radius=14)
+
+            title_surface = self.popup_body_font.render(copy["title"], True, title_color)
             surface.blit(title_surface, (rect.x + 16, rect.y + 12))
 
             self._draw_wrapped_text(
                 surface,
                 copy["description"],
                 self.popup_small_font,
-                (208, 208, 208),
+                body_color,
                 pygame.Rect(rect.x + 16, rect.y + 42, rect.width - 32, 32),
                 line_height=18,
                 max_lines=2,
             )
             self._draw_wrapped_text(
                 surface,
-                copy["example"],
+                disabled_reason if not enabled else "",
                 self.popup_small_font,
-                (170, 200, 220),
+                detail_color,
                 pygame.Rect(rect.x + 16, rect.y + 74, rect.width - 32, 18),
                 line_height=18,
-                max_lines=1,
+                max_lines=2,
             )
 
     def _render_steal_life_popup(self, surface: pygame.Surface) -> None:
@@ -1146,6 +1226,186 @@ class GameScreen(Screen):
                 (236, 236, 236),
             )
             surface.blit(label, (rect.x + 10, rect.y + 6))
+
+    def _get_pending_placement_card_rects(self) -> list[tuple[int, pygame.Rect]]:
+        """Return the left-side card rects for pending hole placement."""
+        if not self.game.has_pending_card_placement():
+            return []
+
+        summary_rects = self._get_damage_summary_rects()
+        top_y = max(rect.bottom for rect in summary_rects.values()) + 96
+        card_width = 182
+        card_height = 122
+        spacing = 18
+        x = 26
+        rects = []
+        for index, _ in enumerate(self.game.get_pending_placement_cards()):
+            rect = pygame.Rect(x, top_y + index * (card_height + spacing), card_width, card_height)
+            rects.append((index, rect))
+        return rects
+
+    def _get_hovered_placement_target(self, mouse_pos: tuple[int, int]) -> Position | None:
+        """Return the hovered board tile while dragging a pending placement card."""
+        if not self.game.has_pending_card_placement() or not hasattr(self.renderer, "BOARD_X"):
+            return None
+        return self.renderer.get_cell_at_mouse(mouse_pos)
+
+    def _is_valid_placement_target(self, pos: Position | None) -> bool:
+        """Return True when the hovered tile is a valid hole target."""
+        if pos is None:
+            return False
+        return pos in set(self.game.get_hole_positions())
+
+    def _handle_pending_placement_mouse_down(self, pos: tuple[int, int]) -> bool:
+        """Start dragging a pending placement card from the left-side stack."""
+        if not self.game.has_pending_card_placement():
+            return False
+
+        for index, rect in self._get_pending_placement_card_rects():
+            if rect.collidepoint(pos):
+                self.selected_placement_card_index = index
+                self.dragging_placement_card_index = index
+                self.dragging_placement_card_pos = pos
+                self.hovered_placement_target = self._get_hovered_placement_target(pos)
+                return True
+        return False
+
+    def _handle_pending_placement_mouse_motion(self, pos: tuple[int, int]) -> bool:
+        """Track the dragged pending placement card and hovered drop target."""
+        if self.dragging_placement_card_index is None:
+            return False
+
+        self.dragging_placement_card_pos = pos
+        self.hovered_placement_target = self._get_hovered_placement_target(pos)
+        return True
+
+    def _handle_pending_placement_mouse_up(self, pos: tuple[int, int]) -> bool:
+        """Drop the dragged pending placement card onto a valid hole target."""
+        if self.dragging_placement_card_index is None:
+            return False
+
+        drag_index = self.dragging_placement_card_index
+        target = self._get_hovered_placement_target(pos)
+        self.dragging_placement_card_pos = pos
+        self.hovered_placement_target = target
+        placed = False
+
+        if self._is_valid_placement_target(target):
+            action = PlaceCardsAction(
+                self.game.current_player,
+                [target],
+                [drag_index],
+            )
+            placed = self.game.apply_action(action)
+
+        self.dragging_placement_card_index = None
+        self.dragging_placement_card_pos = None
+        self.hovered_placement_target = None
+
+        if placed:
+            pending_cards = self.game.get_pending_placement_cards()
+            if not pending_cards:
+                self.selected_placement_card_index = None
+            elif drag_index >= len(pending_cards):
+                self.selected_placement_card_index = len(pending_cards) - 1
+            else:
+                self.selected_placement_card_index = drag_index
+            return True
+
+        self.selected_placement_card_index = drag_index
+        return True
+
+    def _render_pending_placement_hover(self, surface: pygame.Surface) -> None:
+        """Render hover feedback for the current drag target."""
+        if self.dragging_placement_card_index is None or self.hovered_placement_target is None:
+            return
+
+        rect = self.renderer.get_cell_rect(self.hovered_placement_target)
+        color = (108, 235, 148) if self._is_valid_placement_target(self.hovered_placement_target) else (232, 112, 112)
+        pygame.draw.rect(surface, color, rect.inflate(-8, -8), 4, border_radius=10)
+
+    def _render_pending_placement_cards(self, surface: pygame.Surface) -> None:
+        """Render draggable pending placement cards on the left side of the screen."""
+        if not self.game.has_pending_card_placement():
+            return
+
+        cards = self.game.get_pending_placement_cards()
+        if not cards:
+            return
+
+        header_rect = pygame.Rect(24, 104, 192, 34)
+        pygame.draw.rect(surface, (28, 32, 44), header_rect, border_radius=10)
+        pygame.draw.rect(surface, (98, 108, 126), header_rect, 1, border_radius=10)
+        header = self.popup_small_font.render("Drag a Played Card", True, (232, 232, 232))
+        header_rect_text = header.get_rect(center=header_rect.center)
+        surface.blit(header, header_rect_text)
+
+        instructions = self.popup_small_font.render("Hold, drag to a hole, release.", True, (186, 186, 186))
+        surface.blit(instructions, (28, 146))
+
+        card_rects = self._get_pending_placement_card_rects()
+        for index, rect in card_rects:
+            if index >= len(cards):
+                continue
+            selected = index == self.selected_placement_card_index
+            dragging = index == self.dragging_placement_card_index
+            self._render_pending_card_face(surface, rect, cards[index], selected=selected, dimmed=dragging)
+
+        if (
+            self.dragging_placement_card_index is not None
+            and self.dragging_placement_card_pos is not None
+            and self.dragging_placement_card_index < len(cards)
+        ):
+            drag_rect = pygame.Rect(0, 0, 182, 122)
+            drag_rect.center = self.dragging_placement_card_pos
+            self._render_pending_card_face(
+                surface,
+                drag_rect,
+                cards[self.dragging_placement_card_index],
+                selected=True,
+                floating=True,
+            )
+
+    def _render_pending_card_face(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        card,
+        *,
+        selected: bool = False,
+        dimmed: bool = False,
+        floating: bool = False,
+    ) -> None:
+        """Render a physical-looking card for pending post-Appeasing placement."""
+        base = pygame.Surface(rect.size, pygame.SRCALPHA)
+        fill = (244, 240, 224, 255 if not dimmed else 110)
+        border = (224, 198, 112, 255 if selected else 205) if not dimmed else (138, 138, 138, 120)
+        text_color = (38, 38, 42, 255 if not dimmed else 120)
+        note_color = (90, 90, 96, 255 if not dimmed else 110)
+
+        pygame.draw.rect(base, fill, base.get_rect(), border_radius=14)
+        pygame.draw.rect(base, border, base.get_rect(), 3, border_radius=14)
+
+        rank = self.popup_body_font.render(get_rank_name(card.rank), True, text_color)
+        rank_rect = rank.get_rect(center=(rect.width // 2, 24))
+        base.blit(rank, rank_rect)
+
+        draw_suit_icon(base, card.suit, (rect.width // 2, 58), size=14)
+
+        family = self.popup_small_font.render(get_family_name(card.suit), True, text_color)
+        family_rect = family.get_rect(center=(rect.width // 2, 86))
+        base.blit(family, family_rect)
+
+        note = self.popup_small_font.render("Drag to a hole", True, note_color)
+        note_rect = note.get_rect(center=(rect.width // 2, 104))
+        base.blit(note, note_rect)
+
+        if floating:
+            shadow = pygame.Surface(rect.size, pygame.SRCALPHA)
+            pygame.draw.rect(shadow, (0, 0, 0, 70), shadow.get_rect(), border_radius=14)
+            surface.blit(shadow, rect.move(6, 8))
+
+        surface.blit(base, rect.topleft)
 
     def _render_suit_role_legend(self, surface: pygame.Surface) -> None:
         """Render suit-role mappings with drawn icons instead of font glyphs."""

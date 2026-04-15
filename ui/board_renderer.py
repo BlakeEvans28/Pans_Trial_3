@@ -30,11 +30,40 @@ class BoardRenderer:
     HOLE_COLOR = (20, 20, 20)
     PLAYER1_COLOR = (200, 50, 50)
     PLAYER2_COLOR = (50, 50, 200)
+    PLAYER_MARKER_RADIUS = 17
+    PLAYER_PORTRAIT_PATH = Path(__file__).resolve().parent.parent / "assets" / "player_portrait_micah.png"
     
     def __init__(self):
         """Initialize board renderer."""
         self.font_small = pygame.font.Font(None, 24)
         self.font_medium = pygame.font.Font(None, 32)
+        self.player_label_font = pygame.font.Font(None, 18)
+        self._player_portrait_base = self._load_player_portrait()
+        self._player_portrait_cache: dict[int, pygame.Surface] = {}
+
+    def _load_player_portrait(self) -> Optional[pygame.Surface]:
+        """Load the circular portrait asset used for player markers."""
+        if not self.PLAYER_PORTRAIT_PATH.exists():
+            return None
+        return pygame.image.load(str(self.PLAYER_PORTRAIT_PATH)).convert_alpha()
+
+    def _get_scaled_player_portrait(self, diameter: int) -> Optional[pygame.Surface]:
+        """Return a cached portrait surface sized for the current marker."""
+        if self._player_portrait_base is None:
+            return None
+        if diameter not in self._player_portrait_cache:
+            self._player_portrait_cache[diameter] = pygame.transform.smoothscale(
+                self._player_portrait_base,
+                (diameter, diameter),
+            )
+        return self._player_portrait_cache[diameter]
+
+    @classmethod
+    def get_player_x_offset(cls, player_id: int, sharing_tile: bool) -> int:
+        """Offset player markers only when both players occupy the same tile."""
+        if not sharing_tile:
+            return 0
+        return -cls.CELL_SIZE // 5 if player_id == 0 else cls.CELL_SIZE // 5
     
     def render(
         self,
@@ -126,23 +155,71 @@ class BoardRenderer:
     
     def _render_players(self, surface: pygame.Surface, board: Board) -> None:
         """Render player positions."""
+        shared_tile = (
+            board.get_player_position(0) is not None
+            and board.get_player_position(0) == board.get_player_position(1)
+        )
         for player_id in [0, 1]:
             pos = board.get_player_position(player_id)
             if pos is not None:
                 color = self.PLAYER1_COLOR if player_id == 0 else self.PLAYER2_COLOR
 
-                x_offset = -self.CELL_SIZE // 5 if player_id == 0 else self.CELL_SIZE // 5
+                x_offset = self.get_player_x_offset(player_id, shared_tile)
                 x = self.BOARD_X + pos.col * self.CELL_SIZE + self.CELL_SIZE // 2 + x_offset
                 y = self.BOARD_Y + pos.row * self.CELL_SIZE + self.CELL_SIZE // 2
-                radius = 15
+                self._render_player_marker(surface, player_id, color, x, y, shared_tile)
 
-                pygame.draw.circle(surface, (20, 20, 28), (x, y), radius)
-                pygame.draw.circle(surface, color, (x, y), radius, 3)
+    def _render_player_marker(
+        self,
+        surface: pygame.Surface,
+        player_id: int,
+        color: tuple[int, int, int],
+        x: int,
+        y: int,
+        shared_tile: bool,
+    ) -> None:
+        """Render a labeled portrait marker for one player."""
+        radius = self.PLAYER_MARKER_RADIUS - 2 if shared_tile else self.PLAYER_MARKER_RADIUS
+        center = (x, y + 6)
 
-                # Player label
-                label = self.font_small.render(f"P{player_id + 1}", True, color)
-                label_rect = label.get_rect(center=(x, y))
-                surface.blit(label, label_rect)
+        pygame.draw.circle(surface, (16, 18, 24), (center[0], center[1] + 2), radius + 1)
+
+        portrait = self._get_scaled_player_portrait(radius * 2)
+        if portrait is not None:
+            portrait_rect = portrait.get_rect(center=center)
+            surface.blit(portrait, portrait_rect)
+        else:
+            pygame.draw.circle(surface, (20, 20, 28), center, radius)
+
+        pygame.draw.circle(surface, color, center, radius, 3)
+        pygame.draw.circle(surface, (236, 236, 240), center, radius, 1)
+
+        self._render_player_label(surface, player_id, color, center, radius, shared_tile)
+
+    def _render_player_label(
+        self,
+        surface: pygame.Surface,
+        player_id: int,
+        color: tuple[int, int, int],
+        center: tuple[int, int],
+        radius: int,
+        shared_tile: bool,
+    ) -> None:
+        """Render the player name above the circular portrait."""
+        label = self.player_label_font.render(f"Player {player_id + 1}", True, (246, 246, 248))
+        label_rect = label.get_rect()
+        label_rect.inflate_ip(14, 8)
+
+        label_x = center[0]
+        if shared_tile:
+            label_x += -16 if player_id == 0 else 16
+
+        label_rect.midbottom = (label_x, center[1] - radius - 4)
+        chip = pygame.Surface(label_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(chip, (14, 16, 22, 220), chip.get_rect(), border_radius=10)
+        pygame.draw.rect(chip, (*color, 235), chip.get_rect(), 1, border_radius=10)
+        surface.blit(chip, label_rect.topleft)
+        surface.blit(label, label.get_rect(center=label_rect.center))
     
     def get_cell_at_mouse(self, mouse_pos: tuple[int, int]) -> Optional[Position]:
         """Get grid cell at mouse position."""
@@ -160,3 +237,12 @@ class BoardRenderer:
             return Position(row, col)
         
         return None
+
+    def get_cell_rect(self, pos: Position) -> pygame.Rect:
+        """Return the on-screen rect for a board cell."""
+        return pygame.Rect(
+            self.BOARD_X + pos.col * self.CELL_SIZE + 2,
+            self.BOARD_Y + pos.row * self.CELL_SIZE + 2,
+            self.CELL_SIZE - 4,
+            self.CELL_SIZE - 4,
+        )

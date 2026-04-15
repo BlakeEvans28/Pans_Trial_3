@@ -246,7 +246,7 @@ class GameState:
         return legal
 
     def can_pick_up_current_card(self, player_id: int) -> bool:
-        """Return True when the current tile contains a non-wall card that can be picked up."""
+        """Return True when the current tile can be interacted with using the current-tile action."""
         pos = self.board.get_player_position(player_id)
         if pos is None:
             return False
@@ -256,7 +256,13 @@ class GameState:
             return False
 
         role = self.suit_roles.get(card.suit)
-        return role != SuitRole.WALLS
+        if role == SuitRole.WALLS:
+            return False
+
+        if role == SuitRole.BALLISTA:
+            return bool(self._get_ballista_targets(player_id))
+
+        return True
 
     def can_play_card(self, player_id: int, card: Card) -> bool:
         """Check if player can play card."""
@@ -333,7 +339,7 @@ class GameState:
         return True
 
     def _handle_pick_up_current(self, action: PickupCurrentCardAction) -> bool:
-        """Handle spending a traversing move to collect the current tile."""
+        """Handle spending a traversing move to interact with the current tile."""
         if self.phase != GamePhase.TRAVERSING:
             return False
 
@@ -350,6 +356,9 @@ class GameState:
             return False
 
         self._pick_up_current_card(action.player_id)
+        if self.pending_ballista_player is not None:
+            self.combat_pending_transition = True
+            return True
         self._finish_traversing_move()
         return True
 
@@ -393,7 +402,7 @@ class GameState:
             self._start_ballista(player_id)
 
     def _pick_up_current_card(self, player_id: int) -> None:
-        """Collect the card underneath a player without moving."""
+        """Resolve the current-tile interaction without moving."""
         pos = self.board.get_player_position(player_id)
         if pos is None:
             return
@@ -404,6 +413,10 @@ class GameState:
 
         role = self.suit_roles.get(card.suit)
         if role == SuitRole.WALLS:
+            return
+
+        if role == SuitRole.BALLISTA:
+            self._start_ballista(player_id)
             return
 
         if role == SuitRole.TRAPS:
@@ -482,7 +495,7 @@ class GameState:
         return True
 
     def _resolve_ballista_shot(self, player_id: int, destination: Position) -> None:
-        """Move a player to a chosen ballista destination."""
+        """Move a player to a chosen ballista destination without triggering landing effects."""
         self.pending_ballista_player = None
         self.pending_ballista_targets = []
 
@@ -491,12 +504,6 @@ class GameState:
         opponent_id = 1 - player_id
         if self.board.get_player_position(opponent_id) == destination:
             self._start_combat(player_id, opponent_id)
-            return
-
-        card = self.board.get_card(destination)
-        if card is not None:
-            role = self.suit_roles.get(card.suit)
-            self._apply_card_effect(player_id, card, role)
 
     def _handle_choose_combat_card(self, action: ChooseCombatCardAction) -> bool:
         """Handle selecting a damage card during combat."""
@@ -850,6 +857,21 @@ class GameState:
         if len(action.positions) > len(self.pending_placement_cards):
             return False
 
+        if action.card_indices is None:
+            card_indices = list(range(len(action.positions)))
+        else:
+            card_indices = list(action.card_indices)
+
+        if len(card_indices) != len(action.positions):
+            return False
+
+        if len(set(card_indices)) != len(card_indices):
+            return False
+
+        for card_index in card_indices:
+            if card_index < 0 or card_index >= len(self.pending_placement_cards):
+                return False
+
         seen_positions = set()
         for pos in action.positions:
             if pos in seen_positions:
@@ -858,8 +880,15 @@ class GameState:
                 return False
             seen_positions.add(pos)
 
-        for pos in action.positions:
-            card = self.pending_placement_cards.pop(0)
+        selected_cards = [
+            self.pending_placement_cards[card_index]
+            for card_index in card_indices
+        ]
+
+        for card_index in sorted(card_indices, reverse=True):
+            self.pending_placement_cards.pop(card_index)
+
+        for pos, card in zip(action.positions, selected_cards):
             self.board.set_card(pos, card)
 
         self._return_unplaceable_cards_if_needed()
