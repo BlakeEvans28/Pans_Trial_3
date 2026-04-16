@@ -13,6 +13,13 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-04-16 - Brandt Homan
+Commit: `pending` - Added screen-fitting and resizable window layout
+Summary:
+- Made the game start at a size that fits the current display instead of assuming a fixed `1200x900` window.
+- Enabled native window resizing and added resize-event handling so screens recompute their layout when the window size changes.
+- Updated the board, menus, draft screen, gameplay overlays, legends, and popups to scale and stay aligned with the current window dimensions.
+
 ## 2026-04-15 - Blake Evans
 Commit: `pending` - Added portrait-based player markers
 Summary:
