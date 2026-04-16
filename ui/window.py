@@ -4,34 +4,96 @@ Pygame window and rendering setup for Pan's Trial UI.
 
 import pygame
 import pygame_gui
-from pygame_gui.elements import UIButton
-from typing import Optional, Callable
+from typing import Optional
 
 
 class GameWindow:
     """Main pygame window for Pan's Trial."""
-    
-    WINDOW_WIDTH = 1200
-    WINDOW_HEIGHT = 900
+
+    BASE_WINDOW_WIDTH = 1200
+    BASE_WINDOW_HEIGHT = 900
+    MIN_WINDOW_WIDTH = 860
+    MIN_WINDOW_HEIGHT = 640
+    SCREEN_MARGIN_X = 80
+    SCREEN_MARGIN_Y = 120
     FPS = 60
-    
+
     def __init__(self):
         """Initialize pygame window."""
         pygame.init()
-        
-        self.screen = pygame.display.set_mode((self.WINDOW_WIDTH, self.WINDOW_HEIGHT))
+
+        self.WINDOW_WIDTH, self.WINDOW_HEIGHT = self._get_initial_window_size()
+        self.minimum_resize_width = min(self.MIN_WINDOW_WIDTH, self.WINDOW_WIDTH)
+        self.minimum_resize_height = min(self.MIN_WINDOW_HEIGHT, self.WINDOW_HEIGHT)
+
+        self.screen = pygame.display.set_mode(
+            (self.WINDOW_WIDTH, self.WINDOW_HEIGHT),
+            pygame.RESIZABLE,
+        )
         pygame.display.set_caption("Pan's Trial")
-        
+
         self.clock = pygame.time.Clock()
         self.running = True
-        
+
         # UI Manager for pygame_gui
         self.ui_manager = pygame_gui.UIManager((self.WINDOW_WIDTH, self.WINDOW_HEIGHT))
-        
+
         # Game state
         self.time_delta = 0
         self.background = pygame.Surface((self.WINDOW_WIDTH, self.WINDOW_HEIGHT))
-        self.background.fill((20, 20, 30))  # Dark background
+        self._refresh_background()
+
+    def _get_initial_window_size(self) -> tuple[int, int]:
+        """Pick a starting size that fits on the current display."""
+        display_info = pygame.display.Info()
+        available_width = max(640, display_info.current_w - self.SCREEN_MARGIN_X)
+        available_height = max(480, display_info.current_h - self.SCREEN_MARGIN_Y)
+
+        width = min(self.BASE_WINDOW_WIDTH, available_width)
+        height = min(self.BASE_WINDOW_HEIGHT, available_height)
+
+        width = max(min(self.MIN_WINDOW_WIDTH, available_width), width)
+        height = max(min(self.MIN_WINDOW_HEIGHT, available_height), height)
+        return width, height
+
+    def _refresh_background(self) -> None:
+        """Rebuild the cached background surface for the current size."""
+        self.background = pygame.Surface((self.WINDOW_WIDTH, self.WINDOW_HEIGHT))
+        self.background.fill((20, 20, 30))
+
+    def resize(self, width: int, height: int) -> bool:
+        """Resize the window and UI manager. Returns True when size changed."""
+        width = max(self.minimum_resize_width, int(width))
+        height = max(self.minimum_resize_height, int(height))
+
+        if (width, height) == (self.WINDOW_WIDTH, self.WINDOW_HEIGHT):
+            return False
+
+        self.WINDOW_WIDTH = width
+        self.WINDOW_HEIGHT = height
+        self.screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
+        self.ui_manager.set_window_resolution((width, height))
+        self._refresh_background()
+        return True
+
+    def get_scale(self) -> float:
+        """Return the current UI scale relative to the original 1200x900 layout."""
+        return min(
+            self.WINDOW_WIDTH / self.BASE_WINDOW_WIDTH,
+            self.WINDOW_HEIGHT / self.BASE_WINDOW_HEIGHT,
+        )
+
+    def scale(self, value: int, minimum: int = 1) -> int:
+        """Scale an isotropic measurement using the current window size."""
+        return max(minimum, int(round(value * self.get_scale())))
+
+    def scale_x(self, value: int, minimum: int = 1) -> int:
+        """Scale a horizontal measurement."""
+        return max(minimum, int(round(value * self.WINDOW_WIDTH / self.BASE_WINDOW_WIDTH)))
+
+    def scale_y(self, value: int, minimum: int = 1) -> int:
+        """Scale a vertical measurement."""
+        return max(minimum, int(round(value * self.WINDOW_HEIGHT / self.BASE_WINDOW_HEIGHT)))
 
     def handle_events(self) -> bool:
         """

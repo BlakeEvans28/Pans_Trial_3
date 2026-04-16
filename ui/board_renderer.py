@@ -17,12 +17,11 @@ from engine import Board, Position, GamePhase
 class BoardRenderer:
     """Renders the game board in pygame."""
     
-    # Board rendering settings - centered in window
-    CELL_SIZE = 80  # Slightly smaller for better fit
+    BASE_CELL_SIZE = 80
+    MIN_CELL_SIZE = 56
+    MAX_CELL_SIZE = 104
     GRID_WIDTH = 6
     GRID_HEIGHT = 6
-    BOARD_WIDTH = CELL_SIZE * GRID_WIDTH
-    BOARD_HEIGHT = CELL_SIZE * GRID_HEIGHT
     
     # Colors
     GRID_COLOR = (100, 100, 120)
@@ -35,11 +34,23 @@ class BoardRenderer:
     
     def __init__(self):
         """Initialize board renderer."""
-        self.font_small = pygame.font.Font(None, 24)
-        self.font_medium = pygame.font.Font(None, 32)
-        self.player_label_font = pygame.font.Font(None, 18)
+        self.CELL_SIZE = self.BASE_CELL_SIZE
+        self.BOARD_WIDTH = self.CELL_SIZE * self.GRID_WIDTH
+        self.BOARD_HEIGHT = self.CELL_SIZE * self.GRID_HEIGHT
+        self.BOARD_X = 0
+        self.BOARD_Y = 0
+        self.font_small = None
+        self.font_medium = None
+        self.player_label_font = None
+        self._refresh_fonts()
         self._player_portrait_base = self._load_player_portrait()
         self._player_portrait_cache: dict[int, pygame.Surface] = {}
+
+    def _refresh_fonts(self) -> None:
+        """Refresh fonts to match the current cell size."""
+        self.font_small = pygame.font.Font(None, max(18, int(round(self.CELL_SIZE * 0.30))))
+        self.font_medium = pygame.font.Font(None, max(22, int(round(self.CELL_SIZE * 0.40))))
+        self.player_label_font = pygame.font.Font(None, max(16, int(round(self.CELL_SIZE * 0.22))))
 
     def _load_player_portrait(self) -> Optional[pygame.Surface]:
         """Load the circular portrait asset used for player markers."""
@@ -58,12 +69,43 @@ class BoardRenderer:
             )
         return self._player_portrait_cache[diameter]
 
-    @classmethod
-    def get_player_x_offset(cls, player_id: int, sharing_tile: bool) -> int:
+    def get_player_x_offset(self, player_id: int, sharing_tile: bool) -> int:
         """Offset player markers only when both players occupy the same tile."""
         if not sharing_tile:
             return 0
-        return -cls.CELL_SIZE // 5 if player_id == 0 else cls.CELL_SIZE // 5
+        return -self.CELL_SIZE // 5 if player_id == 0 else self.CELL_SIZE // 5
+
+    def update_layout(self, surface_width: int, surface_height: int) -> None:
+        """Recompute board metrics for the current window size."""
+        side_gutter = min(max(180, int(surface_width * 0.18)), surface_width // 4)
+        top_margin = max(86, int(surface_height * 0.11))
+        bottom_margin = max(190, int(surface_height * 0.20))
+
+        available_width = max(self.MIN_CELL_SIZE * self.GRID_WIDTH, surface_width - 2 * side_gutter)
+        available_height = max(self.MIN_CELL_SIZE * self.GRID_HEIGHT, surface_height - top_margin - bottom_margin)
+        cell_size = min(
+            self.MAX_CELL_SIZE,
+            max(
+                self.MIN_CELL_SIZE,
+                min(
+                    available_width // self.GRID_WIDTH,
+                    available_height // self.GRID_HEIGHT,
+                ),
+            ),
+        )
+
+        if cell_size != self.CELL_SIZE:
+            self.CELL_SIZE = cell_size
+            self._refresh_fonts()
+
+        self.BOARD_WIDTH = self.CELL_SIZE * self.GRID_WIDTH
+        self.BOARD_HEIGHT = self.CELL_SIZE * self.GRID_HEIGHT
+        self.BOARD_X = (surface_width - self.BOARD_WIDTH) // 2
+        self.BOARD_Y = max(top_margin, (surface_height - bottom_margin - self.BOARD_HEIGHT) // 2)
+
+    def get_board_rect(self) -> pygame.Rect:
+        """Return the board rect for the most recent layout."""
+        return pygame.Rect(self.BOARD_X, self.BOARD_Y, self.BOARD_WIDTH, self.BOARD_HEIGHT)
     
     def render(
         self,
@@ -74,14 +116,7 @@ class BoardRenderer:
         highlight_positions: Optional[set[Position]] = None,
     ) -> None:
         """Render the board to surface."""
-        # Calculate centered board position
-        surface_width = surface.get_width()
-        surface_height = surface.get_height()
-        
-        # Center horizontally, leaving room for the Pan's Favor strip above the board.
-        self.BOARD_X = (surface_width - self.BOARD_WIDTH) // 2
-        self.BOARD_Y = 110
-        
+        self.update_layout(surface.get_width(), surface.get_height())
         self._render_grid(surface)
         self._render_cells(surface, board, suit_roles, phase, highlight_positions or set())
         self._render_players(surface, board)

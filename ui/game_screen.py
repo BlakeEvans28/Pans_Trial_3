@@ -94,19 +94,33 @@ class GameScreen(Screen):
         self.damage_labels = []
         self.damage_buttons = {0: [], 1: []}
         self.jack_labels = []   # For displaying Jack suit roles/hierarchy
-        self.popup_title_font = pygame.font.Font(None, 38)
-        self.popup_body_font = pygame.font.Font(None, 28)
-        self.popup_small_font = pygame.font.Font(None, 22)
+        self.hand_labels = []
+        self.popup_title_font = None
+        self.popup_body_font = None
+        self.popup_small_font = None
         self.damage_popup_player = None
         self.selected_placement_card_index = None
         self.dragging_placement_card_index = None
         self.dragging_placement_card_pos = None
         self.hovered_placement_target = None
         
+        self._refresh_fonts()
         self._create_ui()
+        self.on_resize()
         
         # Start with all elements hidden (will be shown when screen is activated)
         self._hide_all_elements()
+
+    def _refresh_fonts(self) -> None:
+        """Refresh gameplay popup fonts after a resize."""
+        self.popup_title_font = pygame.font.Font(None, self.scale(38, 26))
+        self.popup_body_font = pygame.font.Font(None, self.scale(28, 20))
+        self.popup_small_font = pygame.font.Font(None, self.scale(22, 16))
+
+    def _apply_element_rect(self, element, rect: pygame.Rect) -> None:
+        """Resize and reposition one pygame_gui element."""
+        element.set_relative_position((rect.x, rect.y))
+        element.set_dimensions((rect.width, rect.height))
     
     def _create_ui(self):
         """Create UI elements."""
@@ -190,9 +204,6 @@ class GameScreen(Screen):
         self.card_buttons = []
         for i in range(10):
             card_x = MARGIN + i * (card_width + card_spacing)
-            if card_x + card_width > WINDOW_WIDTH - MARGIN:
-                break  # Don't go off screen
-            
             btn = pygame_gui.elements.UIButton(
                 relative_rect=pygame.Rect((card_x, card_area_y), (card_width, card_height)),
                 text=f"Card {i+1}",
@@ -292,6 +303,190 @@ class GameScreen(Screen):
                     object_id=f"damage_{player_id}_{index}"
                 )
                 self.damage_buttons[player_id].append(btn)
+
+    def on_resize(self) -> None:
+        """Relayout the gameplay UI when the window changes size."""
+        self._refresh_fonts()
+        self.renderer.update_layout(self.window.WINDOW_WIDTH, self.window.WINDOW_HEIGHT)
+        board_rect = self.renderer.get_board_rect()
+
+        margin = self.scale(20, 12)
+        button_width = max(
+            self.scale(110, 92),
+            min(self.scale(140, 108), board_rect.x - margin * 2, self.window.WINDOW_WIDTH - board_rect.right - margin * 2),
+        )
+        button_height = self.scale(40, 32)
+        status_height = self.scale(40, 32)
+        status_width = min(self.scale_x(520, 320), self.window.WINDOW_WIDTH - margin * 2)
+        info_width = min(self.scale_x(320, 220), self.window.WINDOW_WIDTH - margin * 2)
+
+        self._apply_element_rect(
+            self.status_label,
+            pygame.Rect(
+                (self.window.WINDOW_WIDTH - status_width) // 2,
+                margin,
+                status_width,
+                status_height,
+            ),
+        )
+        self._apply_element_rect(
+            self.info_label,
+            pygame.Rect(
+                self.window.WINDOW_WIDTH - info_width - margin,
+                margin,
+                info_width,
+                status_height,
+            ),
+        )
+
+        button_spacing = self.scale(10, 6)
+        total_button_height = 4 * button_height + 3 * button_spacing
+        left_panel_x = margin
+        right_panel_x = self.window.WINDOW_WIDTH - button_width - margin
+        move_start_y = board_rect.centery - total_button_height // 2
+
+        for index, (_, button) in enumerate(self.move_buttons):
+            self._apply_element_rect(
+                button,
+                pygame.Rect(
+                    left_panel_x,
+                    move_start_y + index * (button_height + button_spacing),
+                    button_width,
+                    button_height,
+                ),
+            )
+
+        self._apply_element_rect(
+            self.pickup_button,
+            pygame.Rect(
+                left_panel_x,
+                move_start_y + total_button_height + self.scale(20, 12),
+                button_width,
+                button_height,
+            ),
+        )
+
+        for index, (_, button) in enumerate(self.request_buttons):
+            self._apply_element_rect(
+                button,
+                pygame.Rect(
+                    right_panel_x,
+                    move_start_y + index * (button_height + button_spacing),
+                    button_width,
+                    button_height,
+                ),
+            )
+
+        card_spacing = self.scale(10, 4)
+        card_height = self.scale(40, 32)
+        bottom_margin = self.scale(26, 16)
+        card_row_y = self.window.WINDOW_HEIGHT - bottom_margin - card_height
+        card_width = max(
+            self.scale(72, 62),
+            min(
+                self.scale(110, 96),
+                (self.window.WINDOW_WIDTH - 2 * margin - (len(self.card_buttons) - 1) * card_spacing) // len(self.card_buttons),
+            ),
+        )
+        total_cards_width = len(self.card_buttons) * card_width + (len(self.card_buttons) - 1) * card_spacing
+        card_start_x = max(margin, (self.window.WINDOW_WIDTH - total_cards_width) // 2)
+
+        for index, button in enumerate(self.card_buttons):
+            self._apply_element_rect(
+                button,
+                pygame.Rect(
+                    card_start_x + index * (card_width + card_spacing),
+                    card_row_y,
+                    card_width,
+                    card_height,
+                ),
+            )
+
+        hand_label_x = card_start_x
+        hand_label_width = min(self.scale_x(260, 180), self.window.WINDOW_WIDTH - hand_label_x - margin)
+        for index, label in enumerate(self.hand_labels):
+            self._apply_element_rect(
+                label,
+                pygame.Rect(
+                    hand_label_x,
+                    card_row_y - self.scale(54, 38) + index * self.scale(28, 20),
+                    hand_label_width,
+                    self.scale(24, 18),
+                ),
+            )
+
+        jack_x = self.window.WINDOW_WIDTH - self.scale_x(150, 116)
+        jack_y_start = margin + self.scale(60, 42)
+        jack_spacing = self.scale(30, 22)
+        for index, label in enumerate(self.jack_labels):
+            self._apply_element_rect(
+                label,
+                pygame.Rect(
+                    jack_x,
+                    jack_y_start + index * jack_spacing,
+                    self.scale_x(130, 104),
+                    self.scale(25, 18),
+                ),
+            )
+
+        weapon_label_y = max(board_rect.top + self.scale(470, 310), move_start_y + total_button_height + self.scale(82, 54))
+        weapon_button_y = weapon_label_y + self.scale(30, 22)
+        weapon_button_height = self.scale(24, 20)
+        weapon_button_spacing = self.scale(4, 2)
+        self._apply_element_rect(
+            self.weapon_label,
+            pygame.Rect(right_panel_x, weapon_label_y, button_width, self.scale(24, 18)),
+        )
+        for index, button in enumerate(self.weapon_buttons):
+            self._apply_element_rect(
+                button,
+                pygame.Rect(
+                    right_panel_x,
+                    weapon_button_y + index * (weapon_button_height + weapon_button_spacing),
+                    button_width,
+                    weapon_button_height,
+                ),
+            )
+
+        restructure_y = board_rect.top + self.scale(250, 172)
+        restructure_height = self.scale(28, 22)
+        for index, button in enumerate(self.restructure_buttons):
+            self._apply_element_rect(
+                button,
+                pygame.Rect(
+                    right_panel_x,
+                    restructure_y + index * self.scale(32, 24),
+                    button_width,
+                    restructure_height,
+                ),
+            )
+
+        damage_label_y = margin + self.scale(64, 46)
+        damage_button_y = damage_label_y + self.scale(30, 22)
+        damage_button_height = self.scale(28, 22)
+        damage_button_spacing = self.scale(4, 2)
+        right_damage_x = max(
+            margin,
+            self.window.WINDOW_WIDTH - button_width - margin - self.scale_x(170, 126),
+        )
+
+        for player_id, label in enumerate(self.damage_labels):
+            damage_x = margin if player_id == 0 else right_damage_x
+            self._apply_element_rect(
+                label,
+                pygame.Rect(damage_x, damage_label_y, button_width, self.scale(24, 18)),
+            )
+
+            for index, button in enumerate(self.damage_buttons[player_id]):
+                self._apply_element_rect(
+                    button,
+                    pygame.Rect(
+                        damage_x,
+                        damage_button_y + index * (damage_button_height + damage_button_spacing),
+                        button_width,
+                        damage_button_height,
+                    ),
+                )
     
     def _hide_all_elements(self):
         """Hide all UI elements initially."""
@@ -721,6 +916,9 @@ class GameScreen(Screen):
 
     def _get_centered_panel_rect(self, width: int, height: int) -> pygame.Rect:
         """Return a centered popup rect."""
+        popup_margin = self.scale(20, 12)
+        width = min(width, self.window.WINDOW_WIDTH - popup_margin * 2)
+        height = min(height, self.window.WINDOW_HEIGHT - popup_margin * 2)
         return pygame.Rect(
             (self.window.WINDOW_WIDTH - width) // 2,
             (self.window.WINDOW_HEIGHT - height) // 2,
@@ -730,12 +928,14 @@ class GameScreen(Screen):
 
     def _get_damage_summary_rects(self) -> dict[int, pygame.Rect]:
         """Return the clickable top-right damage summary rects."""
-        width = 184
-        height = 32
-        x = 24
+        width = self.scale_x(184, 136)
+        height = self.scale(32, 24)
+        x = self.scale_x(24, 14)
+        top = self.scale_y(18, 10)
+        gap = self.scale_y(38, 28)
         return {
-            0: pygame.Rect(x, 18, width, height),
-            1: pygame.Rect(x, 56, width, height),
+            0: pygame.Rect(x, top, width, height),
+            1: pygame.Rect(x, top + gap, width, height),
         }
 
     def _get_request_popup_layout(self) -> tuple[pygame.Rect, list[tuple[str, pygame.Rect]]]:
@@ -743,10 +943,10 @@ class GameScreen(Screen):
         request_options = self._get_request_popup_options()
         cols = 2 if len(request_options) > 1 else 1
         rows = max(1, (len(request_options) + cols - 1) // cols)
-        button_width = 360 if cols == 2 else 420
-        button_height = 100
-        spacing_x = 20
-        spacing_y = 18
+        button_width = self.scale_x(360 if cols == 2 else 420, 220)
+        button_height = self.scale_y(100, 74)
+        spacing_x = self.scale(20, 12)
+        spacing_y = self.scale(18, 10)
         panel_width = cols * button_width + (cols - 1) * spacing_x + 60
         panel_height = rows * button_height + (rows - 1) * spacing_y + 110
         panel_rect = self._get_centered_panel_rect(panel_width, panel_height)
@@ -756,8 +956,8 @@ class GameScreen(Screen):
             row = index // cols
             col = index % cols
             rect = pygame.Rect(
-                panel_rect.x + 30 + col * (button_width + spacing_x),
-                panel_rect.y + 66 + row * (button_height + spacing_y),
+                panel_rect.x + self.scale(30, 18) + col * (button_width + spacing_x),
+                panel_rect.y + self.scale(66, 46) + row * (button_height + spacing_y),
                 button_width,
                 button_height,
             )
@@ -787,52 +987,52 @@ class GameScreen(Screen):
         left_cards = self.game.damage[0].cards
         right_cards = self.game.damage[1].cards
         rows = max(1, len(left_cards), len(right_cards))
-        panel_height = min(170 + rows * 36, 720)
-        panel_rect = self._get_centered_panel_rect(840, panel_height)
+        panel_height = min(self.scale_y(170, 132) + rows * self.scale(36, 28), self.window.WINDOW_HEIGHT - self.scale(40, 24))
+        panel_rect = self._get_centered_panel_rect(self.scale_x(840, 560), panel_height)
 
         rects = []
-        lane_width = 330
-        start_y = panel_rect.y + 126
-        left_x = panel_rect.x + 40
-        right_x = panel_rect.centerx + 20
+        lane_width = self.scale_x(330, 214)
+        start_y = panel_rect.y + self.scale(126, 92)
+        left_x = panel_rect.x + self.scale(40, 24)
+        right_x = panel_rect.centerx + self.scale(20, 12)
         for player_id, cards, x in [
             (0, left_cards, left_x),
             (1, right_cards, right_x),
         ]:
             for index, card in enumerate(cards):
-                rect = pygame.Rect(x, start_y + index * 36, lane_width, 30)
+                rect = pygame.Rect(x, start_y + index * self.scale(36, 28), lane_width, self.scale(30, 22))
                 rects.append((player_id, card, rect))
         return panel_rect, rects
 
     def _get_restructure_popup_layout(self) -> tuple[pygame.Rect, list[tuple[object, pygame.Rect]]]:
         """Return Restructure popup panel and suit button rects."""
-        panel_rect = self._get_centered_panel_rect(620, 258)
+        panel_rect = self._get_centered_panel_rect(self.scale_x(620, 420), self.scale_y(258, 196))
         rects = []
         for index, suit in enumerate(self.game.jack_order):
             row = index // 2
             col = index % 2
             rect = pygame.Rect(
-                panel_rect.x + 34 + col * 278,
-                panel_rect.y + 96 + row * 72,
-                244,
-                54,
+                panel_rect.x + self.scale(34, 22) + col * self.scale_x(278, 188),
+                panel_rect.y + self.scale(96, 72) + row * self.scale_y(72, 56),
+                self.scale_x(244, 170),
+                self.scale_y(54, 42),
             )
             rects.append((suit, rect))
         return panel_rect, rects
 
     def _get_plane_shift_popup_layout(self) -> tuple[pygame.Rect, list[tuple[str, pygame.Rect]]]:
         """Return Plane Shift direction popup panel and direction rects."""
-        panel_rect = self._get_centered_panel_rect(500, 246)
+        panel_rect = self._get_centered_panel_rect(self.scale_x(500, 360), self.scale_y(246, 186))
         directions = ["up", "left", "right", "down"]
         rects = []
         for index, direction in enumerate(directions):
             row = index // 2
             col = index % 2
             rect = pygame.Rect(
-                panel_rect.x + 36 + col * 214,
-                panel_rect.y + 92 + row * 66,
-                180,
-                46,
+                panel_rect.x + self.scale(36, 22) + col * self.scale_x(214, 150),
+                panel_rect.y + self.scale(92, 68) + row * self.scale_y(66, 50),
+                self.scale_x(180, 128),
+                self.scale_y(46, 36),
             )
             rects.append((direction, rect))
         return panel_rect, rects
@@ -842,22 +1042,25 @@ class GameScreen(Screen):
         cards = self.game.damage[player_id].cards
         cols = 2 if len(cards) > 8 else 1
         rows = max(1, (len(cards) + cols - 1) // cols)
-        panel_width = 580 if cols == 2 else 340
-        panel_height = min(128 + rows * 34, 720)
+        panel_width = self.scale_x(580 if cols == 2 else 340, 240)
+        panel_height = min(
+            self.scale_y(128, 100) + rows * self.scale(34, 26),
+            self.window.WINDOW_HEIGHT - self.scale(40, 24),
+        )
         panel_rect = self._get_centered_panel_rect(panel_width, panel_height)
 
         rects = []
-        col_width = 240
-        start_x = panel_rect.x + 26
-        start_y = panel_rect.y + 70
+        col_width = self.scale_x(240, 172)
+        start_x = panel_rect.x + self.scale(26, 16)
+        start_y = panel_rect.y + self.scale(70, 52)
         for index, card in enumerate(cards):
             col = index // rows
             row = index % rows
             rect = pygame.Rect(
-                start_x + col * (col_width + 24),
-                start_y + row * 34,
+                start_x + col * (col_width + self.scale(24, 14)),
+                start_y + row * self.scale(34, 26),
                 col_width,
-                28,
+                self.scale(28, 22),
             )
             rects.append((card, rect))
         return panel_rect, rects
@@ -1033,14 +1236,14 @@ class GameScreen(Screen):
         pygame.draw.rect(surface, (140, 146, 165), panel_rect, 2, border_radius=18)
 
         title = self.popup_title_font.render("Choose Pan's Request", True, (240, 236, 214))
-        surface.blit(title, (panel_rect.x + 28, panel_rect.y + 18))
+        surface.blit(title, (panel_rect.x + self.scale(28, 18), panel_rect.y + self.scale(18, 12)))
 
         subtitle = self.popup_small_font.render(
             f"Player {self.game.current_player + 1} chooses now.",
             True,
             (198, 198, 198),
         )
-        surface.blit(subtitle, (panel_rect.x + 30, panel_rect.y + 50))
+        surface.blit(subtitle, (panel_rect.x + self.scale(30, 18), panel_rect.y + self.scale(50, 36)))
 
         for request_type, rect in option_rects:
             copy = REQUEST_POPUP_COPY[request_type]
@@ -1055,15 +1258,20 @@ class GameScreen(Screen):
             pygame.draw.rect(surface, border, rect, 2, border_radius=14)
 
             title_surface = self.popup_body_font.render(copy["title"], True, title_color)
-            surface.blit(title_surface, (rect.x + 16, rect.y + 12))
+            surface.blit(title_surface, (rect.x + self.scale(16, 10), rect.y + self.scale(12, 8)))
 
             self._draw_wrapped_text(
                 surface,
                 copy["description"],
                 self.popup_small_font,
                 body_color,
-                pygame.Rect(rect.x + 16, rect.y + 42, rect.width - 32, 32),
-                line_height=18,
+                pygame.Rect(
+                    rect.x + self.scale(16, 10),
+                    rect.y + self.scale(42, 28),
+                    rect.width - self.scale(32, 20),
+                    self.scale(32, 24),
+                ),
+                line_height=self.scale(18, 14),
                 max_lines=2,
             )
             self._draw_wrapped_text(
@@ -1071,8 +1279,13 @@ class GameScreen(Screen):
                 disabled_reason if not enabled else "",
                 self.popup_small_font,
                 detail_color,
-                pygame.Rect(rect.x + 16, rect.y + 74, rect.width - 32, 18),
-                line_height=18,
+                pygame.Rect(
+                    rect.x + self.scale(16, 10),
+                    rect.y + self.scale(74, 54),
+                    rect.width - self.scale(32, 20),
+                    self.scale(18, 14),
+                ),
+                line_height=self.scale(18, 14),
                 max_lines=2,
             )
 
@@ -1087,7 +1300,7 @@ class GameScreen(Screen):
         pygame.draw.rect(surface, (146, 126, 112), panel_rect, 2, border_radius=18)
 
         title = self.popup_title_font.render("Steal Life", True, (240, 236, 214))
-        surface.blit(title, (panel_rect.x + 30, panel_rect.y + 18))
+        surface.blit(title, (panel_rect.x + self.scale(30, 18), panel_rect.y + self.scale(18, 12)))
 
         instruction = "Select your damage card first, then select the enemy card you want to steal."
         self._draw_wrapped_text(
@@ -1095,20 +1308,25 @@ class GameScreen(Screen):
             instruction,
             self.popup_small_font,
             (212, 212, 212),
-            pygame.Rect(panel_rect.x + 30, panel_rect.y + 54, panel_rect.width - 60, 36),
-            line_height=18,
+            pygame.Rect(
+                panel_rect.x + self.scale(30, 18),
+                panel_rect.y + self.scale(54, 38),
+                panel_rect.width - self.scale(60, 36),
+                self.scale(36, 28),
+            ),
+            line_height=self.scale(18, 14),
             max_lines=2,
         )
 
         headings = {
-            0: (panel_rect.x + 40, f"P1 Damage ({self.game.get_damage_total(0)})"),
-            1: (panel_rect.centerx + 20, f"P2 Damage ({self.game.get_damage_total(1)})"),
+            0: (panel_rect.x + self.scale(40, 24), f"P1 Damage ({self.game.get_damage_total(0)})"),
+            1: (panel_rect.centerx + self.scale(20, 12), f"P2 Damage ({self.game.get_damage_total(1)})"),
         }
         for player_id, (x, text) in headings.items():
             highlight = player_id == chooser if first_selection_pending else player_id != chooser
             color = (240, 220, 150) if highlight else (200, 200, 200)
             heading = self.popup_body_font.render(text, True, color)
-            surface.blit(heading, (x, panel_rect.y + 92))
+            surface.blit(heading, (x, panel_rect.y + self.scale(92, 68)))
 
         if not card_rects:
             empty = self.popup_body_font.render("No damage cards available.", True, (210, 210, 210))
@@ -1130,7 +1348,7 @@ class GameScreen(Screen):
                 True,
                 text_color,
             )
-            surface.blit(label, (rect.x + 12, rect.y + 6))
+            surface.blit(label, (rect.x + self.scale(12, 8), rect.y + self.scale(6, 4)))
 
     def _render_restructure_popup(self, surface: pygame.Surface) -> None:
         """Render the centered Restructure color selector."""
@@ -1141,14 +1359,14 @@ class GameScreen(Screen):
         pygame.draw.rect(surface, (128, 158, 188), panel_rect, 2, border_radius=18)
 
         title = self.popup_title_font.render("Restructure", True, (240, 236, 214))
-        surface.blit(title, (panel_rect.x + 30, panel_rect.y + 18))
+        surface.blit(title, (panel_rect.x + self.scale(30, 18), panel_rect.y + self.scale(18, 12)))
 
         subtitle = self.popup_small_font.render(
             "Choose two colors to swap their omen roles.",
             True,
             (210, 210, 210),
         )
-        surface.blit(subtitle, (panel_rect.x + 30, panel_rect.y + 56))
+        surface.blit(subtitle, (panel_rect.x + self.scale(30, 18), panel_rect.y + self.scale(56, 40)))
 
         for suit, rect in suit_rects:
             role = self.game.suit_roles.get(suit)
@@ -1158,13 +1376,13 @@ class GameScreen(Screen):
             pygame.draw.rect(surface, fill, rect, border_radius=12)
             pygame.draw.rect(surface, border, rect, 2, border_radius=12)
 
-            draw_suit_icon(surface, suit, (rect.x + 24, rect.centery), size=10)
+            draw_suit_icon(surface, suit, (rect.x + self.scale(24, 14), rect.centery), size=self.scale(10, 6))
             family = self.popup_body_font.render(get_family_name(suit), True, (238, 238, 238))
-            surface.blit(family, (rect.x + 44, rect.y + 8))
+            surface.blit(family, (rect.x + self.scale(44, 26), rect.y + self.scale(8, 6)))
 
             role_text = role.value.title() if role else "Unknown"
             detail = self.popup_small_font.render(role_text, True, (194, 204, 220))
-            surface.blit(detail, (rect.x + 46, rect.y + 31))
+            surface.blit(detail, (rect.x + self.scale(46, 28), rect.y + self.scale(31, 22)))
 
     def _render_plane_shift_direction_popup(self, surface: pygame.Surface) -> None:
         """Render the centered Plane Shift direction picker."""
@@ -1173,14 +1391,14 @@ class GameScreen(Screen):
         pygame.draw.rect(surface, (150, 138, 188), panel_rect, 2, border_radius=18)
 
         title = self.popup_title_font.render("Plane Shift", True, (240, 236, 214))
-        surface.blit(title, (panel_rect.x + 28, panel_rect.y + 18))
+        surface.blit(title, (panel_rect.x + self.scale(28, 18), panel_rect.y + self.scale(18, 12)))
 
         subtitle = self.popup_small_font.render(
             "Choose a direction first. Then click the row or column on the board.",
             True,
             (210, 210, 210),
         )
-        surface.blit(subtitle, (panel_rect.x + 28, panel_rect.y + 56))
+        surface.blit(subtitle, (panel_rect.x + self.scale(28, 18), panel_rect.y + self.scale(56, 40)))
 
         labels = {
             "up": "Shift Up",
@@ -1206,10 +1424,10 @@ class GameScreen(Screen):
             True,
             (240, 236, 214),
         )
-        surface.blit(title, (panel_rect.x + 24, panel_rect.y + 18))
+        surface.blit(title, (panel_rect.x + self.scale(24, 16), panel_rect.y + self.scale(18, 12)))
 
         subtitle = self.popup_small_font.render("Click outside this popup to close it.", True, (192, 192, 192))
-        surface.blit(subtitle, (panel_rect.x + 26, panel_rect.y + 50))
+        surface.blit(subtitle, (panel_rect.x + self.scale(26, 16), panel_rect.y + self.scale(50, 36)))
 
         if not card_rects:
             empty = self.popup_body_font.render("No damage cards yet.", True, (212, 212, 212))
@@ -1225,7 +1443,7 @@ class GameScreen(Screen):
                 True,
                 (236, 236, 236),
             )
-            surface.blit(label, (rect.x + 10, rect.y + 6))
+            surface.blit(label, (rect.x + self.scale(10, 6), rect.y + self.scale(6, 4)))
 
     def _get_pending_placement_card_rects(self) -> list[tuple[int, pygame.Rect]]:
         """Return the left-side card rects for pending hole placement."""
@@ -1233,11 +1451,11 @@ class GameScreen(Screen):
             return []
 
         summary_rects = self._get_damage_summary_rects()
-        top_y = max(rect.bottom for rect in summary_rects.values()) + 96
-        card_width = 182
-        card_height = 122
-        spacing = 18
-        x = 26
+        top_y = max(rect.bottom for rect in summary_rects.values()) + self.scale(96, 68)
+        card_width = self.scale_x(182, 130)
+        card_height = self.scale_y(122, 88)
+        spacing = self.scale(18, 10)
+        x = self.scale_x(26, 16)
         rects = []
         for index, _ in enumerate(self.game.get_pending_placement_cards()):
             rect = pygame.Rect(x, top_y + index * (card_height + spacing), card_width, card_height)
@@ -1322,7 +1540,8 @@ class GameScreen(Screen):
 
         rect = self.renderer.get_cell_rect(self.hovered_placement_target)
         color = (108, 235, 148) if self._is_valid_placement_target(self.hovered_placement_target) else (232, 112, 112)
-        pygame.draw.rect(surface, color, rect.inflate(-8, -8), 4, border_radius=10)
+        inset = self.scale(8, 4)
+        pygame.draw.rect(surface, color, rect.inflate(-inset, -inset), 4, border_radius=self.scale(10, 6))
 
     def _render_pending_placement_cards(self, surface: pygame.Surface) -> None:
         """Render draggable pending placement cards on the left side of the screen."""
@@ -1333,15 +1552,20 @@ class GameScreen(Screen):
         if not cards:
             return
 
-        header_rect = pygame.Rect(24, 104, 192, 34)
-        pygame.draw.rect(surface, (28, 32, 44), header_rect, border_radius=10)
-        pygame.draw.rect(surface, (98, 108, 126), header_rect, 1, border_radius=10)
+        header_rect = pygame.Rect(
+            self.scale_x(24, 14),
+            self.scale_y(104, 78),
+            self.scale_x(192, 144),
+            self.scale_y(34, 26),
+        )
+        pygame.draw.rect(surface, (28, 32, 44), header_rect, border_radius=self.scale(10, 6))
+        pygame.draw.rect(surface, (98, 108, 126), header_rect, 1, border_radius=self.scale(10, 6))
         header = self.popup_small_font.render("Drag a Played Card", True, (232, 232, 232))
         header_rect_text = header.get_rect(center=header_rect.center)
         surface.blit(header, header_rect_text)
 
         instructions = self.popup_small_font.render("Hold, drag to a hole, release.", True, (186, 186, 186))
-        surface.blit(instructions, (28, 146))
+        surface.blit(instructions, (self.scale_x(28, 16), self.scale_y(146, 108)))
 
         card_rects = self._get_pending_placement_card_rects()
         for index, rect in card_rects:
@@ -1356,7 +1580,7 @@ class GameScreen(Screen):
             and self.dragging_placement_card_pos is not None
             and self.dragging_placement_card_index < len(cards)
         ):
-            drag_rect = pygame.Rect(0, 0, 182, 122)
+            drag_rect = pygame.Rect(0, 0, self.scale_x(182, 130), self.scale_y(122, 88))
             drag_rect.center = self.dragging_placement_card_pos
             self._render_pending_card_face(
                 surface,
@@ -1387,40 +1611,40 @@ class GameScreen(Screen):
         pygame.draw.rect(base, border, base.get_rect(), 3, border_radius=14)
 
         rank = self.popup_body_font.render(get_rank_name(card.rank), True, text_color)
-        rank_rect = rank.get_rect(center=(rect.width // 2, 24))
+        rank_rect = rank.get_rect(center=(rect.width // 2, max(self.scale(24, 18), rect.height // 5)))
         base.blit(rank, rank_rect)
 
-        draw_suit_icon(base, card.suit, (rect.width // 2, 58), size=14)
+        draw_suit_icon(base, card.suit, (rect.width // 2, rect.height // 2 - self.scale(4, 2)), size=max(self.scale(14, 8), rect.width // 12))
 
         family = self.popup_small_font.render(get_family_name(card.suit), True, text_color)
-        family_rect = family.get_rect(center=(rect.width // 2, 86))
+        family_rect = family.get_rect(center=(rect.width // 2, rect.height - self.scale(36, 26)))
         base.blit(family, family_rect)
 
         note = self.popup_small_font.render("Drag to a hole", True, note_color)
-        note_rect = note.get_rect(center=(rect.width // 2, 104))
+        note_rect = note.get_rect(center=(rect.width // 2, rect.height - self.scale(18, 12)))
         base.blit(note, note_rect)
 
         if floating:
             shadow = pygame.Surface(rect.size, pygame.SRCALPHA)
             pygame.draw.rect(shadow, (0, 0, 0, 70), shadow.get_rect(), border_radius=14)
-            surface.blit(shadow, rect.move(6, 8))
+            surface.blit(shadow, rect.move(self.scale(6, 4), self.scale(8, 6)))
 
         surface.blit(base, rect.topleft)
 
     def _render_suit_role_legend(self, surface: pygame.Surface) -> None:
         """Render suit-role mappings with drawn icons instead of font glyphs."""
-        start_x = self.window.WINDOW_WIDTH - 215
-        start_y = 82
-        row_height = 30
+        start_x = self.window.WINDOW_WIDTH - self.scale_x(215, 156)
+        start_y = self.scale_y(82, 62)
+        row_height = self.scale(30, 22)
 
         for index, suit in enumerate(self.game.jack_order):
             role = self.game.suit_roles.get(suit)
             y = start_y + index * row_height
-            draw_suit_icon(surface, suit, (start_x + 12, y + 10), size=12)
+            draw_suit_icon(surface, suit, (start_x + self.scale(12, 8), y + self.scale(10, 6)), size=self.scale(12, 7))
             family = get_family_name(suit)
             text = f"{family}: {role.value.title()}" if role else f"{family}: Unknown"
             legend = self.renderer.font_small.render(text, True, (210, 210, 210))
-            surface.blit(legend, (start_x + 28, y))
+            surface.blit(legend, (start_x + self.scale(28, 18), y))
 
     def _render_color_hierarchy_strip(self, surface: pygame.Surface) -> None:
         """Show the reversed Omen color order used as the Phase 2 hierarchy reference."""
@@ -1429,32 +1653,37 @@ class GameScreen(Screen):
             return
 
         title = self.renderer.font_small.render("Phase 2 Colors (Strong -> Weak)", True, (225, 225, 225))
-        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, 66))
+        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(66, 48)))
         surface.blit(title, title_rect)
 
-        chip_width = 128
-        chip_height = 24
-        spacing = 10
+        chip_width = self.scale_x(128, 90)
+        chip_height = self.scale_y(24, 18)
+        spacing = self.scale(10, 6)
         total_width = len(hierarchy) * chip_width + (len(hierarchy) - 1) * spacing
         start_x = (self.window.WINDOW_WIDTH - total_width) // 2
-        y = 78
+        y = self.scale_y(78, 58)
 
         for index, suit in enumerate(hierarchy):
             rect = pygame.Rect(start_x + index * (chip_width + spacing), y, chip_width, chip_height)
-            pygame.draw.rect(surface, (42, 46, 60), rect, border_radius=12)
-            pygame.draw.rect(surface, (180, 180, 190), rect, 1, border_radius=12)
-            draw_suit_icon(surface, suit, (rect.x + 15, rect.centery), size=8)
+            pygame.draw.rect(surface, (42, 46, 60), rect, border_radius=self.scale(12, 8))
+            pygame.draw.rect(surface, (180, 180, 190), rect, 1, border_radius=self.scale(12, 8))
+            draw_suit_icon(surface, suit, (rect.x + self.scale(15, 10), rect.centery), size=self.scale(8, 5))
             label = self.renderer.font_small.render(get_family_name(suit), True, (225, 225, 225))
-            surface.blit(label, (rect.x + 30, rect.y + 3))
+            surface.blit(label, (rect.x + self.scale(30, 18), rect.y + self.scale(3, 2)))
 
     def _render_rank_guide(self, surface: pygame.Surface) -> None:
         """Show the themed high-rank mapping during every gameplay phase."""
-        panel_rect = pygame.Rect(self.window.WINDOW_WIDTH - 215, 225, 190, 122)
-        pygame.draw.rect(surface, (30, 34, 46), panel_rect, border_radius=12)
-        pygame.draw.rect(surface, (110, 115, 130), panel_rect, 1, border_radius=12)
+        panel_rect = pygame.Rect(
+            self.window.WINDOW_WIDTH - self.scale_x(215, 156),
+            self.scale_y(225, 168),
+            self.scale_x(190, 144),
+            self.scale_y(122, 92),
+        )
+        pygame.draw.rect(surface, (30, 34, 46), panel_rect, border_radius=self.scale(12, 8))
+        pygame.draw.rect(surface, (110, 115, 130), panel_rect, 1, border_radius=self.scale(12, 8))
 
         title = self.renderer.font_small.render("Card Ranks (Always)", True, (230, 230, 230))
-        surface.blit(title, (panel_rect.x + 12, panel_rect.y + 8))
+        surface.blit(title, (panel_rect.x + self.scale(12, 8), panel_rect.y + self.scale(8, 6)))
 
         lines = [
             get_rank_name_with_value(CardRank.KING),
@@ -1466,4 +1695,10 @@ class GameScreen(Screen):
 
         for index, text in enumerate(lines):
             line = self.renderer.font_small.render(text, True, (205, 205, 205))
-            surface.blit(line, (panel_rect.x + 12, panel_rect.y + 32 + index * 18))
+            surface.blit(
+                line,
+                (
+                    panel_rect.x + self.scale(12, 8),
+                    panel_rect.y + self.scale(32, 24) + index * self.scale(18, 14),
+                ),
+            )

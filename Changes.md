@@ -13,14 +13,14 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
-## 2026-04-15 - OpenAI Codex
+## 2026-04-15 - Blake Evans
 Commit: `pending` - Added portrait-based player markers
 Summary:
 - Created a circular portrait asset from `Micah.jpg` for use as the in-game player icon.
 - Replaced the board's text-only `P1` and `P2` markers with circular portrait markers that show `Player 1` or `Player 2` above the icon instead of inside it.
 - Added scaling, caching, and shared-tile label spacing so the new player markers render cleanly even when both players occupy the same space.
 
-## 2026-04-14 - OpenAI Codex
+## 2026-04-14 - Blake Evans
 Commit: `pending` - Updated gameplay popups and traversal interactions
 Summary:
 - Replaced the old side-button request flow with centered request, Steal Life, Restructure, and Plane Shift popups, and made the top damage totals clickable to open a damage-pile popup.
@@ -29,7 +29,7 @@ Summary:
 
 ## Entry Template
 
-## YYYY-MM-DD - Author Name
+## YYYY-MM-DD - Author Name (laptop owner, not codex)
 Commit: `short-hash` - Commit title
 Summary:
 - Short summary of the main change.

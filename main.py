@@ -91,6 +91,14 @@ def main():
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+
+                elif event.type in (pygame.VIDEORESIZE, pygame.WINDOWSIZECHANGED):
+                    if hasattr(event, "size"):
+                        resized = window.resize(*event.size)
+                    else:
+                        resized = window.resize(*window.screen.get_size())
+                    if resized:
+                        screen_manager.handle_resize()
                 
                 window.ui_manager.process_events(event)
                 
