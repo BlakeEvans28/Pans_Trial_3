@@ -1646,8 +1646,9 @@ class GameScreen(Screen):
             surface.blit(legend, (start_x + self.scale(28, 18), y))
 
     def _render_color_hierarchy_strip(self, surface: pygame.Surface) -> None:
-        """Show the explicit Phase 2 trump order from strongest to weakest."""
-        hierarchy = self.game.get_appeasing_hierarchy()
+        """Show the user-facing Phase 2 color strip across the top."""
+        # Keep the duel-resolution helper untouched and flip only the visual strip order.
+        hierarchy = list(reversed(self.game.get_appeasing_hierarchy()))
         if not hierarchy:
             return
 

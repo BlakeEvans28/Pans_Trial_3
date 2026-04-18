@@ -14,6 +14,12 @@ Use this file to track the most recent committed changes in reverse chronologica
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
 ## 2026-04-17 - Brandt Homan
+Commit: `pending` - Flipped the Appeasing Pan hierarchy strip order
+Summary:
+- Reversed only the top-of-screen Appeasing Pan color strip so the displayed order matches the intended player-facing presentation.
+- Left the underlying trump-resolution logic unchanged.
+
+## 2026-04-17 - Brandt Homan
 Commit: `pending` - Fixed reveal-card colors and explicit Appeasing Pan trump order
 Summary:
 - Updated the omen reveal screen so the two bottom hero/player cards now show their real family-color markers instead of black circles.
