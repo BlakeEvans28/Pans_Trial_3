@@ -481,6 +481,19 @@ def test_appeasing_stronger_color_beats_higher_rank(game_setup):
     assert game.current_request_winner == 1
 
 
+def test_appeasing_hierarchy_runs_weapons_to_walls(game_setup):
+    """Phase 2 trump order should be Weapons > Ballista > Traps > Walls."""
+    game = game_setup
+    game.setup_suit_roles([CardSuit.HEARTS, CardSuit.DIAMONDS, CardSuit.CLUBS, CardSuit.SPADES])
+
+    assert game.get_appeasing_hierarchy() == [
+        CardSuit.SPADES,
+        CardSuit.CLUBS,
+        CardSuit.DIAMONDS,
+        CardSuit.HEARTS,
+    ]
+
+
 def test_appeasing_same_suit_uses_rank(game_setup):
     """Cards of the same suit should be decided by their rank."""
     game = game_setup

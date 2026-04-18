@@ -729,7 +729,7 @@ class JackRevealScreen(Screen):
             card.suit,
             (rect.centerx, rect.y + self.scale(66, 48)),
             size=self.scale(14, 8),
-            color=(40, 40, 40),
+            color=get_family_color(card.suit),
         )
 
 

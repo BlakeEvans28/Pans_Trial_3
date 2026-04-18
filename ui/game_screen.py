@@ -16,7 +16,6 @@ from pan_theme import (
     get_family_name,
     get_rank_name,
     get_rank_name_with_value,
-    get_reversed_hierarchy,
 )
 from .screen_manager import Screen, ScreenType
 from .board_renderer import BoardRenderer
@@ -1647,8 +1646,8 @@ class GameScreen(Screen):
             surface.blit(legend, (start_x + self.scale(28, 18), y))
 
     def _render_color_hierarchy_strip(self, surface: pygame.Surface) -> None:
-        """Show the reversed Omen color order used as the Phase 2 hierarchy reference."""
-        hierarchy = get_reversed_hierarchy(self.game.jack_order)
+        """Show the explicit Phase 2 trump order from strongest to weakest."""
+        hierarchy = self.game.get_appeasing_hierarchy()
         if not hierarchy:
             return
 

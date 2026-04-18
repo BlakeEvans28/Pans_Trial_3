@@ -13,6 +13,13 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-04-17 - Brandt Homan
+Commit: `pending` - Fixed reveal-card colors and explicit Appeasing Pan trump order
+Summary:
+- Updated the omen reveal screen so the two bottom hero/player cards now show their real family-color markers instead of black circles.
+- Made Appeasing Pan use an explicit `Weapons > Ballista > Traps > Walls` trump hierarchy in both the winner-resolution logic and the on-screen hierarchy strip.
+- Replaced the completed AI todo items in `Future_Improvements.md`, added new improvement candidates for review, and fixed the shared-tile player-offset helper while locking the rules with a new regression test.
+
 ## 2026-04-16 - Brandt Homan
 Commit: `pending` - Added screen-fitting and resizable window layout
 Summary:

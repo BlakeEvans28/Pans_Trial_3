@@ -69,11 +69,17 @@ class BoardRenderer:
             )
         return self._player_portrait_cache[diameter]
 
-    def get_player_x_offset(self, player_id: int, sharing_tile: bool) -> int:
+    @staticmethod
+    def get_player_x_offset(
+        player_id: int,
+        sharing_tile: bool,
+        cell_size: int | None = None,
+    ) -> int:
         """Offset player markers only when both players occupy the same tile."""
         if not sharing_tile:
             return 0
-        return -self.CELL_SIZE // 5 if player_id == 0 else self.CELL_SIZE // 5
+        active_cell_size = cell_size if cell_size is not None else BoardRenderer.BASE_CELL_SIZE
+        return -active_cell_size // 5 if player_id == 0 else active_cell_size // 5
 
     def update_layout(self, surface_width: int, surface_height: int) -> None:
         """Recompute board metrics for the current window size."""
@@ -199,7 +205,7 @@ class BoardRenderer:
             if pos is not None:
                 color = self.PLAYER1_COLOR if player_id == 0 else self.PLAYER2_COLOR
 
-                x_offset = self.get_player_x_offset(player_id, shared_tile)
+                x_offset = self.get_player_x_offset(player_id, shared_tile, self.CELL_SIZE)
                 x = self.BOARD_X + pos.col * self.CELL_SIZE + self.CELL_SIZE // 2 + x_offset
                 y = self.BOARD_Y + pos.row * self.CELL_SIZE + self.CELL_SIZE // 2
                 self._render_player_marker(surface, player_id, color, x, y, shared_tile)

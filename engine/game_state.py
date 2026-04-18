@@ -79,6 +79,17 @@ class GameState:
         self.suit_roles = {suit: role for suit, role in zip(jack_suits, roles)}
         self.jack_order = jack_suits
 
+    def get_appeasing_hierarchy(self) -> list[CardSuit]:
+        """Return Phase 2 suits ordered from strongest trump to weakest."""
+        suits_by_role = {role: suit for suit, role in self.suit_roles.items()}
+        role_priority = [
+            SuitRole.WEAPONS,
+            SuitRole.BALLISTA,
+            SuitRole.TRAPS,
+            SuitRole.WALLS,
+        ]
+        return [suits_by_role[role] for role in role_priority if role in suits_by_role]
+
     def place_player(self, player_id: int, pos: Position) -> None:
         """Place player on board."""
         if player_id not in [0, 1]:
@@ -592,9 +603,10 @@ class GameState:
         if len(self.phase_started_cards) != 2:
             return
         
-        # Determine winner by suit hierarchy first; matching suits use card rank.
+        # Determine winner by the explicit Phase 2 role priority:
+        # Weapons > Ballista > Traps > Walls. Matching suits use card rank.
         (p1_id, card1), (p2_id, card2) = self.phase_started_cards
-        hierarchy = list(reversed(self.jack_order))
+        hierarchy = self.get_appeasing_hierarchy()
         strength = {suit: index for index, suit in enumerate(hierarchy)}
         suit1 = strength.get(card1.suit, len(hierarchy))
         suit2 = strength.get(card2.suit, len(hierarchy))
