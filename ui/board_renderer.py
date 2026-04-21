@@ -67,13 +67,14 @@ class BoardRenderer:
         paths = {
             "walls": self.ASSET_ROOT / "Stone_Wall.jpg",
             "ballista": self.ASSET_ROOT / "Ballista.png",
+            "traps": self.ASSET_ROOT / "Trap.png",
         }
         for key, path in paths.items():
             if path.exists():
                 art[key] = pygame.image.load(str(path)).convert_alpha()
 
         cards_dir = self.ASSET_ROOT / "cards"
-        for role, prefix in [("traps", "Trap"), ("weapons", "Weapon")]:
+        for role, prefix in [("weapons", "Weapon")]:
             for value in range(1, 13):
                 path = cards_dir / f"{prefix}{value:02}.png"
                 if path.exists():
@@ -99,8 +100,10 @@ class BoardRenderer:
             return "walls"
         if suit_role == "ballista":
             return "ballista"
-        if suit_role in {"traps", "weapons"}:
-            return f"{suit_role}_{self._get_card_art_value(card)}"
+        if suit_role == "traps":
+            return "traps"
+        if suit_role == "weapons":
+            return f"weapons_{self._get_card_art_value(card)}"
         return None
 
     def _get_scaled_player_portrait(self, diameter: int) -> Optional[pygame.Surface]:
@@ -231,7 +234,29 @@ class BoardRenderer:
                     self.render_card_tile(surface, card, suit_role, pygame.Rect(x, y, w, h), phase)
 
                 if pos in highlight_positions:
-                    pygame.draw.rect(surface, (245, 220, 120), (x + 6, y + 6, w - 12, h - 12), 3, border_radius=8)
+                    self.draw_value_safe_outline(
+                        surface,
+                        pygame.Rect(x + 6, y + 6, w - 12, h - 12),
+                        (245, 220, 120),
+                        3,
+                    )
+
+    def draw_value_safe_outline(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        color: tuple[int, int, int],
+        width: int = 3,
+    ) -> None:
+        """Draw a target outline while leaving top-left card values readable."""
+        label_gap = max(24, int(self.CELL_SIZE * 0.38))
+        top_start_x = min(rect.right, rect.left + label_gap)
+        left_start_y = min(rect.bottom, rect.top + label_gap)
+
+        pygame.draw.line(surface, color, (top_start_x, rect.top), (rect.right, rect.top), width)
+        pygame.draw.line(surface, color, (rect.right, rect.top), (rect.right, rect.bottom), width)
+        pygame.draw.line(surface, color, (rect.right, rect.bottom), (rect.left, rect.bottom), width)
+        pygame.draw.line(surface, color, (rect.left, rect.bottom), (rect.left, left_start_y), width)
 
     def render_card_tile(
         self,
@@ -263,7 +288,7 @@ class BoardRenderer:
         if art is not None:
             surface.blit(art, rect.topleft)
             pygame.draw.rect(surface, self.GRID_COLOR, rect, 2)
-            if suit_role in {"walls", "ballista"}:
+            if suit_role in {"walls", "ballista", "traps"}:
                 self._render_card_info(surface, card, rect.x + 5, rect.y + 5, suit_role, phase)
             return
 
@@ -271,8 +296,8 @@ class BoardRenderer:
     
     def _render_card_info(self, surface: pygame.Surface, card, x: int, y: int, suit_role: str, phase) -> None:
         """Render card rank only; tile color already communicates the role."""
-        label = str(card.combat_value()) if suit_role == "ballista" else card.rank.display_name
-        text_color = get_family_color(card.suit) if suit_role == "ballista" else (200, 200, 200)
+        label = str(card.combat_value()) if suit_role in {"walls", "ballista", "traps"} else card.rank.display_name
+        text_color = get_family_color(card.suit) if suit_role in {"walls", "ballista", "traps"} else (200, 200, 200)
         shadow = self.font_small.render(label, True, (8, 10, 14))
         surface.blit(shadow, (x + 1, y + 1))
         rank_text = self.font_small.render(label, True, text_color)

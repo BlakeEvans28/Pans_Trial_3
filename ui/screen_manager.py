@@ -456,6 +456,7 @@ class SettingsScreen(Screen):
         self.animation_button = None
         self.sound_button = None
         self.tutorial_button = None
+        self.tutorial_reset_button = None
         self.back_button = None
         self._refresh_fonts()
         self._create_ui()
@@ -500,6 +501,12 @@ class SettingsScreen(Screen):
             manager=self.ui_manager,
             object_id="settings_tutorial",
         )
+        self.tutorial_reset_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((0, 0), (1, 1)),
+            text="Reset Tutorial Cycle",
+            manager=self.ui_manager,
+            object_id="settings_tutorial_reset",
+        )
         self.back_button = pygame_gui.elements.UIButton(
             relative_rect=pygame.Rect((0, 0), (1, 1)),
             text="Back",
@@ -535,6 +542,7 @@ class SettingsScreen(Screen):
             self.animation_button,
             self.sound_button,
             self.tutorial_button,
+            self.tutorial_reset_button,
         ]
 
     def _hide_all_elements(self) -> None:
@@ -565,6 +573,7 @@ class SettingsScreen(Screen):
         )
         self.sound_button.set_text(f"Sound Volume: {self._label_for_value(self.SOUND_LEVELS, self.window.sound_volume)}")
         self.tutorial_button.set_text(f"Tutorial Tips: {'On' if self.window.tutorial_enabled else 'Off'}")
+        self.tutorial_reset_button.set_text("Reset First Tutorial")
 
     def handle_events(self, event: pygame.event.Event) -> bool:
         """Handle settings clicks."""
@@ -588,6 +597,8 @@ class SettingsScreen(Screen):
             self.window.audio.set_volume(self.window.sound_volume)
         elif event.ui_element == self.tutorial_button:
             self.window.tutorial_enabled = not self.window.tutorial_enabled
+        elif event.ui_element == self.tutorial_reset_button:
+            self.window.reset_tutorial_tips()
         self._refresh_button_text()
         return True
 
@@ -604,7 +615,7 @@ class SettingsScreen(Screen):
 
         lines = [
             "Use these controls to make the UI fit your device.",
-            "Sound volume controls combat, trap, and labyrinth ambience.",
+            "Reset First Tutorial turns the one-cycle tips back on.",
         ]
         for index, text in enumerate(lines):
             line = self.small_font.render(text, True, (190, 198, 210))

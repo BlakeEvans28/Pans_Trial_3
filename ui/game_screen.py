@@ -105,8 +105,10 @@ class GameScreen(Screen):
         self.hovered_placement_target = None
         self.pending_plane_shift_line = None
         self.hovered_plane_shift_line = None
+        self.pending_plane_shift_confirmation = None
         self.tutorial_toggle_rect = None
         self.hand_card_rects = []
+        self.inspected_hand_card_index = None
         self._tutorial_seen_appeasing_cycle = False
         self._last_tutorial_phase = self.game.phase
         self.notice_text = None
@@ -650,6 +652,15 @@ class GameScreen(Screen):
                 self.game.get_pending_request_type() == "plane_shift"
                 and self.game.get_pending_plane_shift_direction() is None
             ):
+                if self.pending_plane_shift_confirmation is not None:
+                    if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                        self._confirm_plane_shift()
+                        return True
+                    if event.key == pygame.K_ESCAPE:
+                        self.pending_plane_shift_confirmation = None
+                        return True
+                    return True
+
                 direction = DIRECTION_KEYS.get(event.key)
 
                 if direction:
@@ -684,17 +695,6 @@ class GameScreen(Screen):
                             print(f"Player {action.player_id + 1} played {card}")
                     return True
 
-            # Weapon pile buttons
-            for index, btn in enumerate(self.weapon_buttons):
-                if event.ui_element == btn:
-                    player_weapons = self.game.get_player_weapons(self.game.current_player)
-                    if index < len(player_weapons) and self.game.has_pending_combat():
-                        card = player_weapons[index]
-                        action = ChooseCombatCardAction(self.game.current_player, card)
-                        self._apply_action(action)
-                        print(f"Player {action.player_id + 1} used weapon card: {card}")
-                    return True
-        
         return False
 
     def _apply_action(self, action: Action) -> bool:
@@ -729,6 +729,12 @@ class GameScreen(Screen):
         self.window.tutorial_enabled = False
         self.tutorial_toggle_rect = None
         return True
+
+    def reset_tutorial_cycle(self) -> None:
+        """Let Settings restart the first Appeasing-cycle tutorial."""
+        self._tutorial_seen_appeasing_cycle = False
+        self._last_tutorial_phase = self.game.phase
+        self.tutorial_toggle_rect = None
 
     def _update_tutorial_cycle_state(self) -> None:
         """Turn tutorials off after the first full Appeasing Pan cycle finishes."""
@@ -774,6 +780,7 @@ class GameScreen(Screen):
         if pending_request_type != "plane_shift":
             self.pending_plane_shift_line = None
             self.hovered_plane_shift_line = None
+            self.pending_plane_shift_confirmation = None
         showing_request_selection = (
             self.game.phase == GamePhase.APPEASING
             and self.game.current_request_winner is not None
@@ -801,7 +808,10 @@ class GameScreen(Screen):
                 status_text = f"APPEASING PAN: {player} selects enemy damage, or another own card to change"
         elif pending_request_type == "plane_shift":
             direction = self.game.get_pending_plane_shift_direction()
-            if direction is None and self.pending_plane_shift_line is None:
+            if self.pending_plane_shift_confirmation is not None:
+                axis, index, confirm_direction = self.pending_plane_shift_confirmation
+                status_text = f"APPEASING PAN: {player} confirms {axis} {index + 1} shifts {confirm_direction}"
+            elif direction is None and self.pending_plane_shift_line is None:
                 status_text = f"APPEASING PAN: {player} clicks a numbered row or column"
             elif direction is None:
                 axis, index = self.pending_plane_shift_line
@@ -856,6 +866,9 @@ class GameScreen(Screen):
                 self.dragging_placement_card_pos = None
                 self.hovered_placement_target = None
 
+        if not self._is_hand_inspect_popup_active():
+            self.inspected_hand_card_index = None
+
         # Update the small turn indicator above the card buttons.
         for i, label in enumerate(self.hand_labels):
             label.set_text(f"Player {i+1} Turn")
@@ -884,24 +897,12 @@ class GameScreen(Screen):
             btn.disabled = True
             btn.hide()
 
-        # Update active player's combat-eligible weapon-color cards from their normal hand.
-        player_weapons = self.game.get_player_weapons(self.game.current_player)
-        self.weapon_label.set_text(f"P{self.game.current_player + 1} Weapon Cards ({len(player_weapons)})")
-        show_weapon_panel = self.game.has_pending_combat() or not self.is_compact_layout()
-        if show_weapon_panel:
-            self.weapon_label.show()
-        else:
-            self.weapon_label.hide()
-
-        for index, btn in enumerate(self.weapon_buttons):
-            if show_weapon_panel and index < len(player_weapons):
-                btn.set_text(self._format_card_label(player_weapons[index]))
-                btn.disabled = not self.game.has_pending_combat()
-                btn.show()
-            else:
-                btn.set_text("")
-                btn.disabled = True
-                btn.hide()
+        # Weapon cards are selected directly from the normal hand now.
+        self.weapon_label.hide()
+        for btn in self.weapon_buttons:
+            btn.set_text("")
+            btn.disabled = True
+            btn.hide()
 
         # Update Restructure suit/color selector.
         for index, btn in enumerate(self.restructure_buttons):
@@ -938,6 +939,12 @@ class GameScreen(Screen):
             and self.pending_plane_shift_line is not None
         ):
             highlight_positions = self._get_plane_shift_line_positions(self.pending_plane_shift_line)
+        elif (
+            self.game.get_pending_request_type() == "plane_shift"
+            and self.pending_plane_shift_confirmation is not None
+        ):
+            axis, index, _ = self.pending_plane_shift_confirmation
+            highlight_positions = self._get_plane_shift_line_positions((axis, index))
         elif self.game.get_pending_request_type() == "plane_shift" and self.hovered_plane_shift_line is not None:
             highlight_positions = self._get_plane_shift_line_positions(self.hovered_plane_shift_line)
         else:
@@ -975,9 +982,9 @@ class GameScreen(Screen):
             btn.hide()
         for btn in self.card_buttons:
             btn.show()
-        self.weapon_label.show()
+        self.weapon_label.hide()
         for btn in self.weapon_buttons:
-            btn.show()
+            btn.hide()
         for btn in self.restructure_buttons:
             btn.hide()
         for label in self.jack_labels:
@@ -1074,15 +1081,35 @@ class GameScreen(Screen):
             self.game.get_pending_request_type() == "plane_shift"
             and self.game.get_pending_plane_shift_direction() is None
             and self.pending_plane_shift_line is not None
+            and self.pending_plane_shift_confirmation is None
+        )
+
+    def _is_plane_shift_confirmation_popup_active(self) -> bool:
+        """Return True when Plane Shift is waiting for final confirmation."""
+        return (
+            self.game.get_pending_request_type() == "plane_shift"
+            and self.game.get_pending_plane_shift_direction() is None
+            and self.pending_plane_shift_confirmation is not None
+        )
+
+    def _is_hand_inspect_popup_active(self) -> bool:
+        """Return True when compact hand-card inspection is open."""
+        cards = self.game.get_player_hand(self.game.current_player)
+        return (
+            self.inspected_hand_card_index is not None
+            and self.is_compact_layout()
+            and 0 <= self.inspected_hand_card_index < len(cards)
         )
 
     def _has_center_popup(self) -> bool:
         """Return True when a centered modal popup is active."""
         return any([
+            self._is_hand_inspect_popup_active(),
             self._is_request_popup_active(),
             self._is_steal_life_popup_active(),
             self._is_restructure_popup_active(),
             self._is_plane_shift_direction_popup_active(),
+            self._is_plane_shift_confirmation_popup_active(),
         ])
 
     def _get_centered_panel_rect(self, width: int, height: int) -> pygame.Rect:
@@ -1191,17 +1218,69 @@ class GameScreen(Screen):
         return panel_rect, rects
 
     def _get_restructure_popup_layout(self) -> tuple[pygame.Rect, list[tuple[object, pygame.Rect]]]:
-        """Return Restructure popup panel and suit button rects."""
-        panel_rect = self._get_centered_panel_rect(self.scale_x(620, 420), self.scale_y(258, 196))
+        """Return Restructure side-panel and suit button rects without covering the maze."""
+        board_rect = self.renderer.get_board_rect()
+        margin = self.scale(16, 10)
+        gap = self.scale(12, 8)
+        compact = self.is_compact_layout()
+        button_height = self.scale_y(50, 38)
+        spacing_y = self.scale_y(8, 6)
+        header_height = self.scale_y(84, 62)
+        panel_height = header_height + 4 * button_height + 3 * spacing_y + self.scale_y(22, 16)
+
+        if board_rect.left >= self.scale_x(220, 170):
+            panel_width = min(self.scale_x(250, 190), board_rect.left - margin - gap)
+            panel_rect = pygame.Rect(
+                margin,
+                max(margin, board_rect.centery - panel_height // 2),
+                panel_width,
+                min(panel_height, self.window.WINDOW_HEIGHT - 2 * margin),
+            )
+        elif board_rect.right + self.scale_x(220, 170) + margin <= self.window.WINDOW_WIDTH:
+            panel_width = min(self.scale_x(250, 190), self.window.WINDOW_WIDTH - board_rect.right - margin - gap)
+            panel_rect = pygame.Rect(
+                board_rect.right + gap,
+                max(margin, board_rect.centery - panel_height // 2),
+                panel_width,
+                min(panel_height, self.window.WINDOW_HEIGHT - 2 * margin),
+            )
+        elif compact:
+            panel_width = min(self.window.WINDOW_WIDTH - 2 * margin, self.scale_x(360, 300))
+            panel_height = self.scale_y(154, 132)
+            y = board_rect.bottom + gap
+            if y + panel_height > self.window.WINDOW_HEIGHT - margin:
+                y = max(margin, board_rect.top - panel_height - gap)
+            panel_rect = pygame.Rect(
+                (self.window.WINDOW_WIDTH - panel_width) // 2,
+                y,
+                panel_width,
+                panel_height,
+            )
+        else:
+            panel_width = min(self.scale_x(250, 190), self.window.WINDOW_WIDTH - 2 * margin)
+            panel_rect = pygame.Rect(
+                margin,
+                max(margin, board_rect.top),
+                panel_width,
+                min(panel_height, self.window.WINDOW_HEIGHT - 2 * margin),
+            )
+
         rects = []
+        cols = 2 if compact and panel_rect.width >= self.scale_x(300, 260) else 1
+        button_width = (
+            (panel_rect.width - 2 * margin - (cols - 1) * gap) // cols
+            if cols > 1
+            else panel_rect.width - 2 * margin
+        )
+        start_y = panel_rect.y + (self.scale_y(74, 54) if cols == 1 else self.scale_y(72, 54))
         for index, suit in enumerate(self.game.jack_order):
-            row = index // 2
-            col = index % 2
+            row = index // cols
+            col = index % cols
             rect = pygame.Rect(
-                panel_rect.x + self.scale(34, 22) + col * self.scale_x(278, 188),
-                panel_rect.y + self.scale(96, 72) + row * self.scale_y(72, 56),
-                self.scale_x(244, 170),
-                self.scale_y(54, 42),
+                panel_rect.x + margin + col * (button_width + gap),
+                start_y + row * (button_height + spacing_y),
+                button_width,
+                button_height,
             )
             rects.append((suit, rect))
         return panel_rect, rects
@@ -1220,6 +1299,23 @@ class GameScreen(Screen):
             )
             rects.append((direction, rect))
         return panel_rect, rects
+
+    def _get_plane_shift_confirmation_layout(self) -> tuple[pygame.Rect, dict[str, pygame.Rect]]:
+        """Return Plane Shift confirmation popup and action button rects."""
+        panel_rect = self._get_centered_panel_rect(self.scale_x(560, 360), self.scale_y(218, 170))
+        button_width = (panel_rect.width - self.scale_x(76, 46)) // 2
+        button_height = self.scale_y(46, 36)
+        button_y = panel_rect.bottom - button_height - self.scale_y(24, 16)
+        buttons = {
+            "confirm": pygame.Rect(panel_rect.x + self.scale_x(24, 14), button_y, button_width, button_height),
+            "change": pygame.Rect(
+                panel_rect.right - self.scale_x(24, 14) - button_width,
+                button_y,
+                button_width,
+                button_height,
+            ),
+        }
+        return panel_rect, buttons
 
     def _get_plane_shift_direction_options(self) -> list[str]:
         """Return legal direction choices for the selected Plane Shift line."""
@@ -1255,6 +1351,29 @@ class GameScreen(Screen):
             )
             rects.append((card, rect))
         return panel_rect, rects
+
+    def _get_hand_inspect_popup_layout(self) -> tuple[pygame.Rect, pygame.Rect, pygame.Rect, pygame.Rect]:
+        """Return popup, enlarged card, play, and close rects for compact hand inspection."""
+        panel_rect = self._get_centered_panel_rect(self.scale_x(460, 330), self.scale_y(450, 350))
+        card_size = min(
+            panel_rect.width - self.scale_x(88, 54),
+            panel_rect.height - self.scale_y(178, 132),
+            self.scale(230, 150),
+        )
+        card_rect = pygame.Rect(0, 0, card_size, card_size)
+        card_rect.center = (panel_rect.centerx, panel_rect.y + self.scale_y(150, 112))
+
+        button_width = (panel_rect.width - self.scale_x(72, 44)) // 2
+        button_height = self.scale_y(46, 36)
+        button_y = panel_rect.bottom - button_height - self.scale_y(26, 18)
+        play_rect = pygame.Rect(panel_rect.x + self.scale_x(24, 14), button_y, button_width, button_height)
+        close_rect = pygame.Rect(
+            panel_rect.right - self.scale_x(24, 14) - button_width,
+            button_y,
+            button_width,
+            button_height,
+        )
+        return panel_rect, card_rect, play_rect, close_rect
 
     def _get_plane_shift_line_controls(self) -> list[tuple[str, int, pygame.Rect]]:
         """Return row and column number controls around the board."""
@@ -1294,6 +1413,8 @@ class GameScreen(Screen):
             return None
         if self.game.get_pending_plane_shift_direction() is not None:
             return None
+        if self.pending_plane_shift_confirmation is not None:
+            return None
 
         for axis, index, rect in self._get_plane_shift_line_controls():
             if rect.collidepoint(pos):
@@ -1327,23 +1448,33 @@ class GameScreen(Screen):
         return {Position(row, index) for row in range(6)}
 
     def _commit_plane_shift_direction(self, direction: str) -> bool:
-        """Apply direction and selected line as one Plane Shift interaction."""
+        """Queue a Plane Shift direction and show confirmation before changing the board."""
         if self.pending_plane_shift_line is None:
             return False
         if direction not in self._get_plane_shift_direction_options():
             return False
 
-        _, index = self.pending_plane_shift_line
+        axis, index = self.pending_plane_shift_line
+        self.pending_plane_shift_confirmation = (axis, index, direction)
+        return True
+
+    def _confirm_plane_shift(self) -> bool:
+        """Apply the selected Plane Shift after the confirmation popup."""
+        if self.pending_plane_shift_confirmation is None:
+            return False
+
+        _, index, direction = self.pending_plane_shift_confirmation
         if not self._apply_action(SelectPlaneShiftDirectionAction(self.game.current_player, direction)):
             return False
         resolved = self._apply_action(ResolvePlaneShiftAction(self.game.current_player, index))
         if resolved:
             self.pending_plane_shift_line = None
             self.hovered_plane_shift_line = None
+            self.pending_plane_shift_confirmation = None
         return resolved
 
-    def _can_play_hand_cards(self) -> bool:
-        """Return True when the active player's rendered hand cards are playable."""
+    def _can_play_appeasing_hand_cards(self) -> bool:
+        """Return True when the active player's hand cards can be played for Appeasing Pan."""
         return (
             self.game.phase == GamePhase.APPEASING
             and self.game.current_request_winner is None
@@ -1351,13 +1482,20 @@ class GameScreen(Screen):
             and not self.game.has_pending_card_placement()
         )
 
+    def _can_choose_hand_weapon(self) -> bool:
+        """Return True when combat is waiting on a weapon card from the normal hand."""
+        return self.game.has_pending_combat()
+
+    def _can_use_hand_card_now(self, card) -> bool:
+        """Return True when the clicked hand card has a valid immediate action."""
+        if self._can_play_appeasing_hand_cards():
+            return True
+        if self._can_choose_hand_weapon():
+            return self.game.can_use_weapon(self.game.current_player, card)
+        return False
+
     def _get_hand_card_rects(self) -> list[tuple[int, pygame.Rect]]:
         """Return active-hand card rects at the same size as board tiles."""
-        if self.game.has_pending_card_placement():
-            return []
-        if self.game.phase != GamePhase.APPEASING or self.game.current_request_winner is not None:
-            return []
-
         cards = self.game.get_player_hand(self.game.current_player)
         if not cards:
             return []
@@ -1373,7 +1511,12 @@ class GameScreen(Screen):
         total_width = columns * tile_size + (columns - 1) * gap
         start_x = max(margin, (self.window.WINDOW_WIDTH - total_width) // 2)
         bottom_margin = self.scale_y(16, 10)
-        start_y = self.window.WINDOW_HEIGHT - bottom_margin - rows * tile_size - (rows - 1) * gap
+        hand_bottom = self.window.WINDOW_HEIGHT - bottom_margin
+        if self.is_compact_layout() and self.game.has_pending_card_placement():
+            placement_rects = [rect for _, rect in self._get_pending_placement_card_rects()]
+            if placement_rects:
+                hand_bottom = min(rect.top for rect in placement_rects) - self.scale_y(42, 30)
+        start_y = hand_bottom - rows * tile_size - (rows - 1) * gap
 
         return [
             (
@@ -1389,22 +1532,62 @@ class GameScreen(Screen):
         ]
 
     def _handle_hand_card_click(self, pos: tuple[int, int]) -> bool:
-        """Play a manually rendered hand card."""
-        if not self._can_play_hand_cards():
-            return False
-
+        """Inspect or play a manually rendered hand card."""
         player_hand = self.game.get_player_hand(self.game.current_player)
         for index, rect in self._get_hand_card_rects():
             if rect.collidepoint(pos) and index < len(player_hand):
                 card = player_hand[index]
+                if self._can_choose_hand_weapon():
+                    if self.game.can_use_weapon(self.game.current_player, card):
+                        player_id = self.game.current_player
+                        if self._apply_action(ChooseCombatCardAction(player_id, card)):
+                            print(f"Player {player_id + 1} used weapon card: {card}")
+                    return True
+                if self.is_compact_layout():
+                    self.inspected_hand_card_index = index
+                    return True
+                if not self._can_play_appeasing_hand_cards():
+                    return True
                 player_id = self.game.current_player
                 if self._apply_action(PlayCardAction(player_id, card)):
                     print(f"Player {player_id + 1} played {card}")
                 return True
         return False
 
+    def _handle_hand_inspect_popup_click(self, pos: tuple[int, int]) -> bool:
+        """Handle compact enlarged hand-card popup actions."""
+        if not self._is_hand_inspect_popup_active():
+            return False
+
+        panel_rect, _, play_rect, close_rect = self._get_hand_inspect_popup_layout()
+        if close_rect.collidepoint(pos) or not panel_rect.collidepoint(pos):
+            self.inspected_hand_card_index = None
+            return True
+
+        if play_rect.collidepoint(pos):
+            player_hand = self.game.get_player_hand(self.game.current_player)
+            index = self.inspected_hand_card_index
+            if index is not None and index < len(player_hand):
+                card = player_hand[index]
+                if not self._can_use_hand_card_now(card):
+                    return True
+                player_id = self.game.current_player
+                self.inspected_hand_card_index = None
+                if self._can_choose_hand_weapon():
+                    if self._apply_action(ChooseCombatCardAction(player_id, card)):
+                        print(f"Player {player_id + 1} used weapon card: {card}")
+                elif self._can_play_appeasing_hand_cards():
+                    if self._apply_action(PlayCardAction(player_id, card)):
+                        print(f"Player {player_id + 1} played {card}")
+            return True
+
+        return True
+
     def _handle_center_popup_click(self, pos: tuple[int, int]) -> bool:
         """Handle clicks inside the centered modal popups."""
+        if self._handle_hand_inspect_popup_click(pos):
+            return True
+
         if self._is_request_popup_active():
             panel_rect, option_rects = self._get_request_popup_layout()
             option_states = {
@@ -1452,6 +1635,18 @@ class GameScreen(Screen):
                 if rect.collidepoint(pos):
                     self._commit_plane_shift_direction(direction)
                     return True
+            return True
+
+        if self._is_plane_shift_confirmation_popup_active():
+            panel_rect, buttons = self._get_plane_shift_confirmation_layout()
+            if not panel_rect.collidepoint(pos):
+                return True
+            if buttons["confirm"].collidepoint(pos):
+                self._confirm_plane_shift()
+                return True
+            if buttons["change"].collidepoint(pos):
+                self.pending_plane_shift_confirmation = None
+                return True
             return True
 
         return False
@@ -1566,12 +1761,11 @@ class GameScreen(Screen):
             pygame.draw.circle(glow, (116, 226, 156, 150), (rect.width // 2, rect.height // 2), max(7, rect.width // 8))
             pygame.draw.circle(glow, (218, 255, 225, 210), (rect.width // 2, rect.height // 2), max(3, rect.width // 18))
             surface.blit(glow, rect.topleft)
-            pygame.draw.rect(
+            self.renderer.draw_value_safe_outline(
                 surface,
-                (116, 226, 156),
                 rect.inflate(-self.scale(12, 8), -self.scale(12, 8)),
+                (116, 226, 156),
                 self.scale(2, 2),
-                border_radius=self.scale(10, 6),
             )
 
     def _render_plane_shift_line_controls(self, surface: pygame.Surface) -> None:
@@ -1613,7 +1807,8 @@ class GameScreen(Screen):
             return
 
         cards = self.game.get_player_hand(self.game.current_player)
-        playable = self._can_play_hand_cards()
+        can_play_appeasing = self._can_play_appeasing_hand_cards()
+        choosing_weapon = self._can_choose_hand_weapon()
         title_rect = pygame.Rect(
             rects[0][1].x,
             rects[0][1].y - self.scale_y(32, 24),
@@ -1622,7 +1817,12 @@ class GameScreen(Screen):
         )
         pygame.draw.rect(surface, (22, 26, 36), title_rect, border_radius=self.scale(9, 6))
         pygame.draw.rect(surface, (100, 108, 124), title_rect, 1, border_radius=self.scale(9, 6))
-        prompt = "Click a card to play" if playable else "Active Hand"
+        if choosing_weapon:
+            prompt = "Pick a weapon from hand"
+        elif can_play_appeasing:
+            prompt = "Click a card to play"
+        else:
+            prompt = "Active Hand"
         title = self.popup_small_font.render(f"P{self.game.current_player + 1} {prompt}", True, (232, 232, 232))
         surface.blit(title, title.get_rect(center=title_rect.center))
 
@@ -1640,10 +1840,11 @@ class GameScreen(Screen):
                 suit_role_render.get(card.suit),
                 rect,
                 self.game.phase,
-                dimmed=not playable and self.game.phase == GamePhase.APPEASING,
+                dimmed=choosing_weapon and not self.game.can_use_weapon(self.game.current_player, card),
             )
-            border = (252, 222, 104) if playable else (110, 116, 130)
-            pygame.draw.rect(surface, border, rect, self.scale(3 if playable else 2, 1), border_radius=self.scale(8, 5))
+            usable = self._can_use_hand_card_now(card)
+            border = (252, 222, 104) if usable else (110, 116, 130)
+            pygame.draw.rect(surface, border, rect, self.scale(3 if usable else 2, 1), border_radius=self.scale(8, 5))
 
     def _render_ballista_target_overlay(self, surface: pygame.Surface, targets: set[Position]) -> None:
         """Dim unreachable cells and draw Ballista launch paths."""
@@ -1675,7 +1876,12 @@ class GameScreen(Screen):
             center = rect.center
             pygame.draw.circle(surface, (255, 224, 104), center, self.scale(13, 8), 3)
             pygame.draw.circle(surface, (255, 246, 180), center, self.scale(5, 3))
-            pygame.draw.rect(surface, (255, 224, 104), rect.inflate(-self.scale(10, 6), -self.scale(10, 6)), 3, border_radius=self.scale(10, 6))
+            self.renderer.draw_value_safe_outline(
+                surface,
+                rect.inflate(-self.scale(10, 6), -self.scale(10, 6)),
+                (255, 224, 104),
+                3,
+            )
 
     def _get_ballista_target_paths(self, start: Position, targets: set[Position]) -> list[list[Position]]:
         """Return reachable Ballista paths grouped by launch direction."""
@@ -1904,6 +2110,10 @@ class GameScreen(Screen):
 
     def _get_active_popup_tutorial_target(self) -> tuple[pygame.Rect | None, str | None]:
         """Return the active modal rect so tutorial highlights do not cover it from behind."""
+        if self._is_hand_inspect_popup_active():
+            panel_rect, _, _, _ = self._get_hand_inspect_popup_layout()
+            return panel_rect, "Tutorial: inspect the enlarged card, then play it or close this view."
+
         if self._is_request_popup_active():
             panel_rect, _ = self._get_request_popup_layout()
             return (
@@ -1923,6 +2133,10 @@ class GameScreen(Screen):
             panel_rect, _ = self._get_plane_shift_popup_layout()
             return panel_rect, "Tutorial: choose the Plane Shift direction for the selected row or column."
 
+        if self._is_plane_shift_confirmation_popup_active():
+            panel_rect, _ = self._get_plane_shift_confirmation_layout()
+            return panel_rect, "Tutorial: confirm Plane Shift only after checking the highlighted row or column."
+
         if self.damage_popup_player is not None:
             panel_rect, _ = self._get_damage_popup_layout(self.damage_popup_player)
             return panel_rect, "Tutorial: review this damage pile, then click outside the popup to close it."
@@ -1931,6 +2145,11 @@ class GameScreen(Screen):
 
     def _render_active_popups(self, surface: pygame.Surface) -> None:
         """Render whichever modal popup is currently active."""
+        if self._is_hand_inspect_popup_active():
+            self._render_popup_backdrop(surface)
+            self._render_hand_inspect_popup(surface)
+            return
+
         if self._is_request_popup_active():
             self._render_popup_backdrop(surface)
             self._render_request_popup(surface)
@@ -1942,13 +2161,17 @@ class GameScreen(Screen):
             return
 
         if self._is_restructure_popup_active():
-            self._render_popup_backdrop(surface)
             self._render_restructure_popup(surface)
             return
 
         if self._is_plane_shift_direction_popup_active():
             self._render_popup_backdrop(surface)
             self._render_plane_shift_direction_popup(surface)
+            return
+
+        if self._is_plane_shift_confirmation_popup_active():
+            self._render_popup_backdrop(surface)
+            self._render_plane_shift_confirmation_popup(surface)
             return
 
         if self.damage_popup_player is not None:
@@ -2019,6 +2242,47 @@ class GameScreen(Screen):
                 max_lines=2,
             )
 
+    def _render_hand_inspect_popup(self, surface: pygame.Surface) -> None:
+        """Render a compact-layout enlarged hand-card inspection popup."""
+        if not self._is_hand_inspect_popup_active():
+            return
+
+        player_hand = self.game.get_player_hand(self.game.current_player)
+        card = player_hand[self.inspected_hand_card_index]
+        panel_rect, card_rect, play_rect, close_rect = self._get_hand_inspect_popup_layout()
+
+        pygame.draw.rect(surface, (20, 24, 34), panel_rect, border_radius=18)
+        pygame.draw.rect(surface, (252, 222, 104), panel_rect, 2, border_radius=18)
+
+        title = self.popup_title_font.render("Inspect Card", True, (240, 236, 214))
+        surface.blit(title, (panel_rect.x + self.scale(26, 16), panel_rect.y + self.scale(18, 12)))
+
+        subtitle = self.popup_small_font.render(
+            f"P{self.game.current_player + 1}: {self._format_card_label(card)} - {self._get_card_role_name(card)}",
+            True,
+            (210, 210, 210),
+        )
+        surface.blit(subtitle, (panel_rect.x + self.scale(28, 18), panel_rect.y + self.scale(56, 40)))
+
+        role = self.game.suit_roles.get(card.suit)
+        self.renderer.render_card_tile(surface, card, role.value if role else None, card_rect, self.game.phase)
+        pygame.draw.rect(surface, (252, 222, 104), card_rect, 3, border_radius=self.scale(10, 6))
+
+        can_use = self._can_use_hand_card_now(card)
+        action_label = "Use Weapon" if self._can_choose_hand_weapon() else "Play Card"
+        buttons = [
+            (play_rect, action_label, can_use),
+            (close_rect, "Close", True),
+        ]
+        for rect, label, enabled in buttons:
+            fill = (54, 68, 86) if enabled else (36, 40, 50)
+            border = (252, 222, 104) if enabled else (88, 92, 104)
+            color = (242, 238, 220) if enabled else (150, 150, 158)
+            pygame.draw.rect(surface, fill, rect, border_radius=self.scale(10, 6))
+            pygame.draw.rect(surface, border, rect, 2, border_radius=self.scale(10, 6))
+            text = self.popup_small_font.render(label, True, color)
+            surface.blit(text, text.get_rect(center=rect.center))
+
     def _render_steal_life_popup(self, surface: pygame.Surface) -> None:
         """Render the centered Steal Life selector."""
         panel_rect, card_rects = self._get_steal_life_popup_layout()
@@ -2081,22 +2345,33 @@ class GameScreen(Screen):
             surface.blit(label, (rect.x + self.scale(12, 8), rect.y + self.scale(6, 4)))
 
     def _render_restructure_popup(self, surface: pygame.Surface) -> None:
-        """Render the centered Restructure color selector."""
+        """Render the off-board Restructure color selector."""
         panel_rect, suit_rects = self._get_restructure_popup_layout()
         selected_suits = set(self.game.get_pending_restructure_suits())
 
+        shadow = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(shadow, (0, 0, 0, 110), shadow.get_rect(), border_radius=18)
+        surface.blit(shadow, panel_rect.move(self.scale(5, 3), self.scale(7, 4)).topleft)
         pygame.draw.rect(surface, (20, 24, 34), panel_rect, border_radius=18)
         pygame.draw.rect(surface, (128, 158, 188), panel_rect, 2, border_radius=18)
 
         title = self.popup_title_font.render("Restructure", True, (240, 236, 214))
-        surface.blit(title, (panel_rect.x + self.scale(30, 18), panel_rect.y + self.scale(18, 12)))
+        surface.blit(title, (panel_rect.x + self.scale(18, 12), panel_rect.y + self.scale(14, 10)))
 
-        subtitle = self.popup_small_font.render(
-            "Choose two colors to swap their omen roles.",
-            True,
+        self._draw_wrapped_text(
+            surface,
+            "Choose two colors to swap. The maze stays visible for planning.",
+            self.popup_small_font,
             (210, 210, 210),
+            pygame.Rect(
+                panel_rect.x + self.scale(18, 12),
+                panel_rect.y + self.scale(44, 32),
+                panel_rect.width - self.scale(36, 24),
+                self.scale_y(34, 26),
+            ),
+            self.scale_y(16, 12),
+            2,
         )
-        surface.blit(subtitle, (panel_rect.x + self.scale(30, 18), panel_rect.y + self.scale(56, 40)))
 
         for suit, rect in suit_rects:
             role = self.game.suit_roles.get(suit)
@@ -2106,13 +2381,14 @@ class GameScreen(Screen):
             pygame.draw.rect(surface, fill, rect, border_radius=12)
             pygame.draw.rect(surface, border, rect, 2, border_radius=12)
 
-            draw_suit_icon(surface, suit, (rect.x + self.scale(24, 14), rect.centery), size=self.scale(10, 6))
+            icon_x = rect.x + self.scale(18, 12)
+            draw_suit_icon(surface, suit, (icon_x, rect.centery), size=self.scale(10, 6))
             family = self.popup_body_font.render(get_family_name(suit), True, (238, 238, 238))
-            surface.blit(family, (rect.x + self.scale(44, 26), rect.y + self.scale(8, 6)))
+            surface.blit(family, (rect.x + self.scale(36, 24), rect.y + self.scale(6, 4)))
 
             role_text = role.value.title() if role else "Unknown"
             detail = self.popup_small_font.render(role_text, True, (194, 204, 220))
-            surface.blit(detail, (rect.x + self.scale(46, 28), rect.y + self.scale(31, 22)))
+            surface.blit(detail, (rect.x + self.scale(38, 24), rect.y + self.scale(28, 20)))
 
     def _render_plane_shift_direction_popup(self, surface: pygame.Surface) -> None:
         """Render the centered Plane Shift direction picker."""
@@ -2147,6 +2423,45 @@ class GameScreen(Screen):
             label = self.popup_body_font.render(labels[direction], True, (236, 236, 236))
             label_rect = label.get_rect(center=rect.center)
             surface.blit(label, label_rect)
+
+    def _render_plane_shift_confirmation_popup(self, surface: pygame.Surface) -> None:
+        """Render final confirmation before Plane Shift changes the board."""
+        if self.pending_plane_shift_confirmation is None:
+            return
+
+        axis, index, direction = self.pending_plane_shift_confirmation
+        panel_rect, buttons = self._get_plane_shift_confirmation_layout()
+        pygame.draw.rect(surface, (20, 24, 34), panel_rect, border_radius=18)
+        pygame.draw.rect(surface, (252, 222, 104), panel_rect, 2, border_radius=18)
+
+        title = self.popup_title_font.render("Confirm Plane Shift", True, (240, 236, 214))
+        surface.blit(title, (panel_rect.x + self.scale(28, 18), panel_rect.y + self.scale(18, 12)))
+
+        line_name = f"{axis.title()} {index + 1}"
+        detail = f"{line_name} will shift {direction}. This moves the row/column immediately."
+        self._draw_wrapped_text(
+            surface,
+            detail,
+            self.popup_small_font,
+            (218, 218, 218),
+            pygame.Rect(
+                panel_rect.x + self.scale(28, 18),
+                panel_rect.y + self.scale(60, 42),
+                panel_rect.width - self.scale(56, 36),
+                self.scale_y(50, 38),
+            ),
+            self.scale_y(18, 14),
+            2,
+        )
+
+        for key, label in [("confirm", "Apply Shift"), ("change", "Change Direction")]:
+            rect = buttons[key]
+            fill = (56, 68, 86) if key == "confirm" else (40, 46, 60)
+            border = (252, 222, 104) if key == "confirm" else (120, 128, 146)
+            pygame.draw.rect(surface, fill, rect, border_radius=self.scale(10, 6))
+            pygame.draw.rect(surface, border, rect, 2, border_radius=self.scale(10, 6))
+            text = self.popup_small_font.render(label, True, (240, 236, 214))
+            surface.blit(text, text.get_rect(center=rect.center))
 
     def _render_damage_popup(self, surface: pygame.Surface, player_id: int) -> None:
         """Render a centered popup listing one player's damage pile."""

@@ -188,3 +188,10 @@ class GameWindow:
     def set_background_color(self, color: tuple[int, int, int]) -> None:
         """Set background color."""
         self.background.fill(color)
+
+    def reset_tutorial_tips(self) -> None:
+        """Re-enable first-cycle tutorial tips and reset gameplay tutorial state."""
+        self.tutorial_enabled = True
+        game_screen = getattr(self, "game_screen_ref", None)
+        if game_screen is not None and hasattr(game_screen, "reset_tutorial_cycle"):
+            game_screen.reset_tutorial_cycle()

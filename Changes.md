@@ -14,6 +14,35 @@ Use this file to track the most recent committed changes in reverse chronologica
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
 ## 2026-04-21 - Brandt Homan
+Commit: `pending` - Kept move and Ballista highlights clear of card numbers
+Summary:
+- Changed legal-move, Ballista-target, and board-cell highlight outlines so they leave the top-left card value visible.
+
+## 2026-04-21 - Brandt Homan
+Commit: `pending` - Pick combat weapons from the normal hand
+Summary:
+- Removed the visible right-side weapon subhand from gameplay and made combat weapon selection happen directly from the active player's normal hand cards.
+- Highlighted usable weapon cards during combat and changed compact Inspect actions to use legal weapon cards from the hand.
+
+## 2026-04-21 - Brandt Homan
+Commit: `pending` - Moved Restructure controls beside the maze
+Summary:
+- Changed the Restructure color-swap selector from a centered modal into an off-board side panel so the maze remains visible while choosing which omen roles to swap.
+
+## 2026-04-21 - Brandt Homan
+Commit: `pending` - Kept hand cards visible outside Appeasing Pan
+Summary:
+- Made the active player's hand cards render during normal gameplay instead of only during Appeasing Pan card play.
+- Changed Wall tile labels to show colored combat-value numbers like Trap and Ballista tiles.
+
+## 2026-04-21 - Brandt Homan
+Commit: `pending` - Added card inspect, Plane Shift confirmation, and shared trap art
+Summary:
+- Added compact hand-card Inspect popups so small screens can enlarge a card before choosing to play it.
+- Added a Plane Shift confirmation popup before the selected row or column moves, plus a Settings button to reset the first tutorial cycle.
+- Switched trap tiles to the shared `Trap.png` artwork and rendered trap card numbers in the current trap-family color.
+
+## 2026-04-21 - Brandt Homan
 Commit: `pending` - Added audio, same-size cards, and clearer Plane Shift UI
 Summary:
 - Added generated combat, trap, and spooky labyrinth audio tied to the existing sound-volume setting with graceful fallback when audio is unavailable.
