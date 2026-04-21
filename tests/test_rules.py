@@ -549,6 +549,33 @@ def test_steal_life_swaps_selected_damage_cards(game_setup):
     assert not game.has_pending_request_resolution()
 
 
+def test_steal_life_allows_changing_own_card_before_enemy_pick(game_setup):
+    """Steal Life should let the chooser change their own selected card before locking the swap."""
+    game = game_setup
+    first_own = Card(CardRank.TEN, CardSuit.HEARTS)
+    second_own = Card(CardRank.NINE, CardSuit.DIAMONDS)
+    opponent_card = Card(CardRank.QUEEN, CardSuit.SPADES)
+    game.damage[0].add_card(first_own)
+    game.damage[0].add_card(second_own)
+    game.damage[1].add_card(opponent_card)
+    game.phase = GamePhase.APPEASING
+    game.current_request_winner = 0
+    game.pending_request_players = [0]
+    game.current_player = 0
+    game.traversing_resume_player = 1
+
+    assert game.choose_request(0, "steal_life")
+    assert game.apply_action(SelectDamageCardAction(0, 0, first_own))
+    assert game.get_pending_steal_life_card() == first_own
+    assert game.apply_action(SelectDamageCardAction(0, 0, second_own))
+    assert game.get_pending_steal_life_card() == second_own
+    assert game.apply_action(SelectDamageCardAction(0, 1, opponent_card))
+
+    assert first_own in game.damage[0].cards
+    assert opponent_card in game.damage[0].cards
+    assert second_own in game.damage[1].cards
+
+
 def test_plane_shift_shifts_selected_row_and_moves_players(game_setup):
     """Plane Shift should shift the chosen row and carry players on it."""
     game = game_setup

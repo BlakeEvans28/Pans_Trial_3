@@ -6,6 +6,8 @@ import pygame
 import pygame_gui
 from typing import Optional
 
+from .audio_manager import AudioManager
+
 
 class GameWindow:
     """Main pygame window for Pan's Trial."""
@@ -20,6 +22,7 @@ class GameWindow:
 
     def __init__(self):
         """Initialize pygame window."""
+        pygame.mixer.pre_init(44100, -16, 1, 512)
         pygame.init()
 
         self.WINDOW_WIDTH, self.WINDOW_HEIGHT = self._get_initial_window_size()
@@ -31,6 +34,8 @@ class GameWindow:
         self.animation_speed = 1.0
         self.sound_volume = 0.5
         self.tutorial_enabled = True
+        self.audio = AudioManager()
+        self.audio.set_volume(self.sound_volume)
 
         self.screen = pygame.display.set_mode(
             (self.WINDOW_WIDTH, self.WINDOW_HEIGHT),

@@ -3,8 +3,10 @@ Find a picture/ token for both players besides the circle
 Find pictures for walls, traps, ballista and weapons (Potential changes for trap size, weapon size)
 
 # For AI
-- Save settings between game launches so fullscreen, text size, animation speed, volume, and tutorial preference do not reset every time.
-- Add actual sound effects and music, then connect them to the sound-volume setting that already exists.
-- Improve the tutorial tips with step-by-step Next/Back controls instead of always showing the current contextual tip while tutorials are on.
-- Add a visual asset loading fallback screen or warning if any required card art file is missing.
-- Add a mobile touch pass for very small screens, especially larger tap targets and optional landscape-mode guidance.
+- Save settings between launches so fullscreen, text size, volume, animation speed, and tutorial preference persist after closing the game.
+- Add a sound settings test screen or preview buttons so players can hear combat, trap, and ambience volume before starting a match.
+- Add an optional zoom/inspect view for hand cards on very small screens so the same-size labyrinth cards can be enlarged on demand.
+- Add a short Plane Shift confirmation or undo step before the row/column moves, because shifting the wrong line is a big mistake.
+- Add clearer visual feedback when generated audio is unavailable, such as a small muted/speaker-off indicator in Settings.
+- Add a first-run tutorial reset button in Settings so players can re-enable the one-cycle tutorial without restarting or editing files.
+- Use the new trap picture and place the number the certain card is in the top left of the card, have it be the color that traps are in the heirarchy. No need to use the 12 different trap cards anymore, just the one new one. Its just called Trap.png. (Dont remove since you haven't done yet.)

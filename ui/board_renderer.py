@@ -228,17 +228,33 @@ class BoardRenderer:
                 else:
                     card = cell_content.card
                     suit_role = suit_roles.get(card.suit)
-                    
-                    # Color the labyrinth tile with the currently assigned family color
-                    # so the board always matches the omen legend on the right.
-                    color = get_family_color(card.suit) if suit_role in ["walls", "traps", "ballista", "weapons"] else self.CELL_COLOR
-                    
-                    pygame.draw.rect(surface, color, (x, y, w, h))
-                    pygame.draw.rect(surface, self.GRID_COLOR, (x, y, w, h), 2)
-                    self._render_card_art(surface, card, suit_role, pygame.Rect(x, y, w, h), phase)
+                    self.render_card_tile(surface, card, suit_role, pygame.Rect(x, y, w, h), phase)
 
                 if pos in highlight_positions:
                     pygame.draw.rect(surface, (245, 220, 120), (x + 6, y + 6, w - 12, h - 12), 3, border_radius=8)
+
+    def render_card_tile(
+        self,
+        surface: pygame.Surface,
+        card,
+        suit_role: str | None,
+        rect: pygame.Rect,
+        phase=None,
+        dimmed: bool = False,
+    ) -> None:
+        """Render a card exactly like a labyrinth tile, reusable for hands and dragging."""
+        if suit_role is not None and not isinstance(suit_role, str):
+            suit_role = suit_role.value
+
+        color = get_family_color(card.suit) if suit_role in ["walls", "traps", "ballista", "weapons"] else self.CELL_COLOR
+        pygame.draw.rect(surface, color, rect)
+        pygame.draw.rect(surface, self.GRID_COLOR, rect, 2)
+        self._render_card_art(surface, card, suit_role, rect, phase)
+
+        if dimmed:
+            veil = pygame.Surface(rect.size, pygame.SRCALPHA)
+            veil.fill((6, 8, 12, 150))
+            surface.blit(veil, rect.topleft)
 
     def _render_card_art(self, surface: pygame.Surface, card, suit_role: str, rect: pygame.Rect, phase) -> None:
         """Render role artwork for a labyrinth card."""
@@ -255,7 +271,11 @@ class BoardRenderer:
     
     def _render_card_info(self, surface: pygame.Surface, card, x: int, y: int, suit_role: str, phase) -> None:
         """Render card rank only; tile color already communicates the role."""
-        rank_text = self.font_small.render(card.rank.display_name, True, (200, 200, 200))
+        label = str(card.combat_value()) if suit_role == "ballista" else card.rank.display_name
+        text_color = get_family_color(card.suit) if suit_role == "ballista" else (200, 200, 200)
+        shadow = self.font_small.render(label, True, (8, 10, 14))
+        surface.blit(shadow, (x + 1, y + 1))
+        rank_text = self.font_small.render(label, True, text_color)
         surface.blit(rank_text, (x, y))
     
     def _render_players(self, surface: pygame.Surface, board: Board) -> None:

@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from .window import GameWindow
+from .audio_manager import AudioManager
 from .board_renderer import BoardRenderer
 from .screen_manager import (
     Screen,
@@ -27,7 +28,7 @@ from .game_screen import GameScreen
 from .input_handler import InputHandler
 
 __all__ = [
-    "GameWindow", "BoardRenderer", 
+    "GameWindow", "AudioManager", "BoardRenderer",
     "Screen", "ScreenManager", "ScreenType", "StartScreen", "HowToPlayScreen", "SettingsScreen",
     "CoinFlipScreen", "DraftScreen", "JackRevealScreen",
     "GameOverScreen", "GameScreen",

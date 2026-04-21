@@ -813,6 +813,10 @@ class GameState:
             pending["selected_own"] = action.card
             return True
 
+        if action.pile_owner == chooser_id:
+            pending["selected_own"] = action.card
+            return True
+
         if action.pile_owner != opponent_id:
             return False
 

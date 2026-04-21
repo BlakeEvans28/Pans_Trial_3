@@ -585,6 +585,7 @@ class SettingsScreen(Screen):
             self.window.animation_speed = self._cycle_value(self.ANIMATION_SPEEDS, self.window.animation_speed)
         elif event.ui_element == self.sound_button:
             self.window.sound_volume = self._cycle_value(self.SOUND_LEVELS, self.window.sound_volume)
+            self.window.audio.set_volume(self.window.sound_volume)
         elif event.ui_element == self.tutorial_button:
             self.window.tutorial_enabled = not self.window.tutorial_enabled
         self._refresh_button_text()
@@ -603,7 +604,7 @@ class SettingsScreen(Screen):
 
         lines = [
             "Use these controls to make the UI fit your device.",
-            "Sound volume is stored now and will apply once sound effects are added.",
+            "Sound volume controls combat, trap, and labyrinth ambience.",
         ]
         for index, text in enumerate(lines):
             line = self.small_font.render(text, True, (190, 198, 210))
@@ -732,6 +733,7 @@ class DraftScreen(Screen):
         self.kings_drafted = 0
         self.player_cards = []
         self.draft_grid_bottom = 0
+        self.tutorial_toggle_rect = None
         self._refresh_fonts()
         self._create_ui()
         self.on_resize()
@@ -793,6 +795,15 @@ class DraftScreen(Screen):
         """Handle draft card picks."""
         if event.type != pygame.MOUSEBUTTONDOWN:
             return False
+
+        if (
+            self.window.tutorial_enabled
+            and self.tutorial_toggle_rect is not None
+            and self.tutorial_toggle_rect.collidepoint(event.pos)
+        ):
+            self.window.tutorial_enabled = False
+            self.tutorial_toggle_rect = None
+            return True
 
         for index, rect in enumerate(self.card_rects):
             if rect.collidepoint(event.pos):
@@ -916,6 +927,7 @@ class DraftScreen(Screen):
     def _render_tutorial_overlay(self, surface: pygame.Surface) -> None:
         """Show optional draft tutorial guidance."""
         if not self.window.tutorial_enabled or not self.card_rects:
+            self.tutorial_toggle_rect = None
             return
 
         grid_rect = self.card_rects[0].copy()
@@ -932,6 +944,19 @@ class DraftScreen(Screen):
         )
         pygame.draw.rect(surface, (24, 28, 40), panel_rect, border_radius=self.scale(10, 6))
         pygame.draw.rect(surface, (252, 222, 104), panel_rect, 2, border_radius=self.scale(10, 6))
+        button_width = min(self.scale_x(132, 92), max(self.scale_x(86, 72), panel_rect.width // 4))
+        button_height = max(self.scale_y(24, 20), panel_rect.height - self.scale_y(12, 8))
+        self.tutorial_toggle_rect = pygame.Rect(
+            panel_rect.right - button_width - self.scale_x(8, 5),
+            panel_rect.centery - button_height // 2,
+            button_width,
+            button_height,
+        )
+        pygame.draw.rect(surface, (52, 58, 72), self.tutorial_toggle_rect, border_radius=self.scale(8, 5))
+        pygame.draw.rect(surface, (252, 222, 104), self.tutorial_toggle_rect, 1, border_radius=self.scale(8, 5))
+        off_label = self.small_font.render("Tips Off", True, (240, 236, 214))
+        surface.blit(off_label, off_label.get_rect(center=self.tutorial_toggle_rect.center))
+
         line = self.small_font.render(text, True, (238, 238, 238))
         surface.blit(line, (panel_rect.x + self.scale(12, 8), panel_rect.y + self.scale(11, 7)))
 

@@ -14,6 +14,18 @@ Use this file to track the most recent committed changes in reverse chronologica
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
 ## 2026-04-21 - Brandt Homan
+Commit: `pending` - Added audio, same-size cards, and clearer Plane Shift UI
+Summary:
+- Added generated combat, trap, and spooky labyrinth audio tied to the existing sound-volume setting with graceful fallback when audio is unavailable.
+- Updated tutorial tips to turn off after one Appeasing Pan cycle and added in-overlay Tips Off controls for draft and gameplay tutorials.
+- Made hand and Appeasing placement cards render at labyrinth tile size with matching artwork, added active-player movement highlights, redesigned Plane Shift with numbered rows/columns and direction popups, allowed Steal Life reselection, and colored Ballista tile numbers by the Ballista family color.
+
+## 2026-04-21 - Brandt Homan
+Commit: `pending` - Fixed tutorial highlight over Appeasing popups
+Summary:
+- Changed tutorial highlighting so active popups are highlighted directly instead of drawing the board highlight through the Appeasing Pan request popup.
+
+## 2026-04-21 - Brandt Homan
 Commit: `pending` - Added settings, tutorial, coin flip, art, and match summary
 Summary:
 - Added Settings and Coin Flip screens, including fullscreen/windowed mode, text size, animation speed, sound-volume storage, tutorial toggles, and randomized draft-start order.
