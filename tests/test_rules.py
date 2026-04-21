@@ -647,6 +647,10 @@ def test_appeasing_cards_return_to_loser_when_no_holes_exist(game_setup):
     assert not game.has_pending_card_placement()
     assert card_a in game.get_player_hand(1)
     assert card_b in game.get_player_hand(1)
+    assert game.consume_appeasing_return_notice() == (
+        "No open holes remained, so 2 played cards returned to P2's hand."
+    )
+    assert game.consume_appeasing_return_notice() is None
 
 
 def test_hole_positions_exclude_tiles_currently_occupied_by_players(game_setup):

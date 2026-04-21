@@ -50,6 +50,7 @@ class GameState:
         self.pending_request_resolution: Optional[dict] = None
         self.pending_placement_player: Optional[int] = None
         self.pending_placement_cards: list[Card] = []
+        self.appeasing_return_notice: Optional[str] = None
         self.pending_ballista_player: Optional[int] = None
         self.pending_ballista_targets: list[Position] = []
         self.pending_combat_players: list[int] = []
@@ -209,6 +210,12 @@ class GameState:
     def get_pending_placement_cards(self) -> list[Card]:
         """Return the played cards still waiting to be placed or returned."""
         return list(self.pending_placement_cards)
+
+    def consume_appeasing_return_notice(self) -> Optional[str]:
+        """Return and clear the latest auto-return notice from Appeasing Pan."""
+        notice = self.appeasing_return_notice
+        self.appeasing_return_notice = None
+        return notice
 
     def is_player_on_position(self, pos: Position) -> bool:
         """Return True when either player is currently standing on the position."""
@@ -729,8 +736,16 @@ class GameState:
         if holes and self.pending_placement_cards:
             return
 
+        returned_count = len(self.pending_placement_cards)
+        returned_player = self.pending_placement_player
         for card in self.pending_placement_cards:
             self.hands[self.pending_placement_player].add_card(card)
+        if returned_count:
+            plural = "s" if returned_count != 1 else ""
+            self.appeasing_return_notice = (
+                f"No open holes remained, so {returned_count} played card{plural} "
+                f"returned to P{returned_player + 1}'s hand."
+            )
         self.pending_placement_cards = []
         self.pending_placement_player = None
         self._mark_players_trapped_from_requests()

@@ -3,7 +3,7 @@ Find a picture/ token for both players besides the circle
 Find pictures for walls, traps, ballista and weapons (Potential changes for trap size, weapon size)
 
 # For AI
-- After both players reveal their Appeasing Pan cards, show a short result banner that explains which card won and whether it won by stronger color or by higher rank.
-- On the bottom hand bar, show each card's current role (`Walls`, `Traps`, `Ballista`, or `Weapons`) in addition to its family color so players do not have to keep cross-checking the omen legend.
-- Make Ballista targeting more obvious by drawing the full launch line and dimming unreachable tiles, especially when the shot wraps across a toroidal edge.
-- Show a clearer message when played cards return to the loser's hand because there are not enough open holes, so that phase result is easier to understand.
+- Add an optional first-game tutorial overlay that highlights what to click during Draft, Traversing, Ballista targeting, Appeasing Pan, and hole placement.
+- Add a settings page for fullscreen/windowed mode, text size, animation speed, and optional sound volume once sounds are added.
+- Add a match summary screen after Game Over that lists final damage cards, Appeasing Pan winners, chosen requests, and major turning points.
+- Add clearer hover text for each request option so players can preview what Restructure, Steal Life, Ignore Us, and Plane Shift will do before clicking.

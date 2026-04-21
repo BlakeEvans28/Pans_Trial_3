@@ -26,6 +26,7 @@ from .suit_icons import draw_suit_icon
 class ScreenType(Enum):
     """Different screens in the game."""
     START = "start"
+    HOW_TO_PLAY = "how_to_play"
     DRAFT = "draft"
     JACK_REVEAL = "jack_reveal"
     GAME = "game"
@@ -85,6 +86,7 @@ class StartScreen(Screen):
         self.subtitle_font = None
         self.info_font = None
         self.play_button = None
+        self.how_to_button = None
         self.quit_button = None
         self._refresh_fonts()
         self._create_ui()
@@ -107,6 +109,13 @@ class StartScreen(Screen):
             manager=self.ui_manager,
             object_id="play_button"
         )
+
+        self.how_to_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((0, 0), (1, 1)),
+            text="How To Play",
+            manager=self.ui_manager,
+            object_id="how_to_play_button"
+        )
         
         self.quit_button = pygame_gui.elements.UIButton(
             relative_rect=pygame.Rect((0, 0), (1, 1)),
@@ -119,12 +128,16 @@ class StartScreen(Screen):
         """Lay out menu buttons for the current window size."""
         button_width = self.scale_x(300, 220)
         button_height = self.scale_y(60, 44)
+        button_gap = self.scale_y(16, 10)
         center_x = (self.window.WINDOW_WIDTH - button_width) // 2
-        play_y = self.window.WINDOW_HEIGHT // 2 - button_height - self.scale_y(20, 12)
-        quit_y = self.window.WINDOW_HEIGHT // 2 + self.scale_y(20, 12)
+        total_height = button_height * 3 + button_gap * 2
+        play_y = self.window.WINDOW_HEIGHT // 2 - total_height // 2
+        how_y = play_y + button_height + button_gap
+        quit_y = how_y + button_height + button_gap
 
         for button, y in [
             (self.play_button, play_y),
+            (self.how_to_button, how_y),
             (self.quit_button, quit_y),
         ]:
             button.set_relative_position((center_x, y))
@@ -133,6 +146,7 @@ class StartScreen(Screen):
     def _hide_all_elements(self):
         """Hide all UI elements initially."""
         self.play_button.hide()
+        self.how_to_button.hide()
         self.quit_button.hide()
     
     def handle_events(self, event: pygame.event.Event) -> bool:
@@ -140,6 +154,8 @@ class StartScreen(Screen):
         if event.type == pygame_gui.UI_BUTTON_PRESSED:
             if event.ui_element == self.play_button:
                 return "PLAY"
+            elif event.ui_element == self.how_to_button:
+                return "HOW_TO_PLAY"
             elif event.ui_element == self.quit_button:
                 return "QUIT"
         return False
@@ -181,15 +197,199 @@ class StartScreen(Screen):
         
         # Show start screen elements
         self.play_button.show()
+        self.how_to_button.show()
         self.quit_button.show()
     
     def on_exit(self) -> None:
         """Deactivate start screen."""
         self.play_button.hide()
+        self.how_to_button.hide()
         self.quit_button.hide()
 
     def on_resize(self) -> None:
         """Resize fonts and button positions."""
+        self._refresh_fonts()
+        self._layout_ui()
+
+
+class HowToPlayScreen(Screen):
+    """How-to-play screen reachable from the home page."""
+
+    SECTIONS = [
+        (
+            "Goal",
+            "Force the other player to 25 or more damage while keeping your own damage lower.",
+        ),
+        (
+            "Draft",
+            "Players draft Satyrs (10), Oracles (11), and Heroes (12). The two undrafted Heroes become the player cards.",
+        ),
+        (
+            "Omens",
+            "The four Omens assign each color family to a role: Walls, Traps, Ballista, or Weapons.",
+        ),
+        (
+            "Traversing",
+            "Move around the 6x6 toroidal labyrinth. Walls block, Traps add damage, Weapons enter your hand, and Ballista tiles launch you in a straight line.",
+        ),
+        (
+            "Appeasing Pan",
+            "After six movement turns, both players play one hand card. Color role strength decides first; matching colors use rank.",
+        ),
+        (
+            "Requests",
+            "The Appeasing winner chooses first from Restructure, Steal Life, Ignore Us, or Plane Shift. The loser chooses second unless Ignore Us ends the phase.",
+        ),
+        (
+            "Holes",
+            "After requests, the Appeasing loser places the two played cards into open holes. If holes run out, the remaining cards return to that loser's hand.",
+        ),
+    ]
+
+    def __init__(self, window: "GameWindow"):
+        super().__init__(window)
+        self.title_font = None
+        self.heading_font = None
+        self.body_font = None
+        self.small_font = None
+        self.back_button = None
+        self._refresh_fonts()
+        self._create_ui()
+        self.on_resize()
+        self._hide_all_elements()
+
+    def _refresh_fonts(self) -> None:
+        """Refresh fonts for the current window scale."""
+        self.title_font = pygame.font.Font(None, self.scale(64, 38))
+        self.heading_font = pygame.font.Font(None, self.scale(30, 22))
+        self.body_font = pygame.font.Font(None, self.scale(24, 17))
+        self.small_font = pygame.font.Font(None, self.scale(22, 16))
+
+    def _create_ui(self) -> None:
+        """Create How To Play UI controls."""
+        self.back_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((0, 0), (1, 1)),
+            text="Back",
+            manager=self.ui_manager,
+            object_id="how_to_back_button",
+        )
+
+    def _layout_ui(self) -> None:
+        """Lay out the back button for the current window size."""
+        button_width = self.scale_x(220, 160)
+        button_height = self.scale_y(52, 40)
+        self.back_button.set_relative_position(
+            (
+                (self.window.WINDOW_WIDTH - button_width) // 2,
+                self.window.WINDOW_HEIGHT - button_height - self.scale_y(30, 20),
+            )
+        )
+        self.back_button.set_dimensions((button_width, button_height))
+
+    def _hide_all_elements(self) -> None:
+        """Hide all How To Play controls."""
+        self.back_button.hide()
+
+    def handle_events(self, event: pygame.event.Event) -> bool:
+        """Handle How To Play events."""
+        if event.type == pygame_gui.UI_BUTTON_PRESSED and event.ui_element == self.back_button:
+            return "MENU"
+        return False
+
+    def update(self, time_delta: float) -> None:
+        """How To Play has no timed state."""
+        pass
+
+    def render(self, surface: pygame.Surface) -> None:
+        """Render the How To Play page."""
+        surface.fill((16, 20, 30))
+
+        title = self.title_font.render("HOW TO PLAY", True, (238, 214, 142))
+        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(76, 54)))
+        surface.blit(title, title_rect)
+
+        subtitle = self.small_font.render(
+            "A quick guide to the draft, labyrinth, and Appeasing Pan.",
+            True,
+            (190, 198, 210),
+        )
+        subtitle_rect = subtitle.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(122, 88)))
+        surface.blit(subtitle, subtitle_rect)
+
+        content_rect = pygame.Rect(
+            self.scale_x(48, 24),
+            self.scale_y(160, 118),
+            self.window.WINDOW_WIDTH - 2 * self.scale_x(48, 24),
+            self.window.WINDOW_HEIGHT - self.scale_y(280, 204),
+        )
+        columns = 2 if self.window.WINDOW_WIDTH >= 900 else 1
+        rows = (len(self.SECTIONS) + columns - 1) // columns
+        gap = self.scale(14, 8)
+        card_width = (content_rect.width - gap * (columns - 1)) // columns
+        card_height = max(self.scale_y(76, 58), (content_rect.height - gap * (rows - 1)) // rows)
+
+        for index, (heading, body) in enumerate(self.SECTIONS):
+            col = index // rows
+            row = index % rows
+            card_rect = pygame.Rect(
+                content_rect.x + col * (card_width + gap),
+                content_rect.y + row * (card_height + gap),
+                card_width,
+                card_height,
+            )
+            pygame.draw.rect(surface, (28, 34, 48), card_rect, border_radius=self.scale(14, 8))
+            pygame.draw.rect(surface, (96, 112, 136), card_rect, 1, border_radius=self.scale(14, 8))
+
+            heading_surface = self.heading_font.render(heading, True, (244, 226, 164))
+            surface.blit(heading_surface, (card_rect.x + self.scale(18, 10), card_rect.y + self.scale(10, 7)))
+
+            body_rect = pygame.Rect(
+                card_rect.x + self.scale(18, 10),
+                card_rect.y + self.scale(42, 30),
+                card_rect.width - self.scale(36, 20),
+                card_rect.height - self.scale(50, 36),
+            )
+            self._draw_wrapped_text(surface, body, self.body_font, (222, 226, 232), body_rect, self.scale(22, 15), 4)
+
+    def _draw_wrapped_text(
+        self,
+        surface: pygame.Surface,
+        text: str,
+        font: pygame.font.Font,
+        color: tuple[int, int, int],
+        rect: pygame.Rect,
+        line_height: int,
+        max_lines: int,
+    ) -> None:
+        """Draw wrapped text clipped to a fixed number of lines."""
+        words = text.split()
+        lines = []
+        current = ""
+        for word in words:
+            candidate = word if not current else f"{current} {word}"
+            if font.size(candidate)[0] <= rect.width:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+
+        for index, line in enumerate(lines[:max_lines]):
+            line_surface = font.render(line, True, color)
+            surface.blit(line_surface, (rect.x, rect.y + index * line_height))
+
+    def on_enter(self) -> None:
+        """Activate the How To Play screen."""
+        self.back_button.show()
+
+    def on_exit(self) -> None:
+        """Deactivate the How To Play screen."""
+        self.back_button.hide()
+
+    def on_resize(self) -> None:
+        """Refresh fonts and layout after resize."""
         self._refresh_fonts()
         self._layout_ui()
 

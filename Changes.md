@@ -13,6 +13,13 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-04-21 - Brandt Homan
+Commit: `pending` - Added How To Play and gameplay clarity updates
+Summary:
+- Added a How To Play page that is reachable from the home screen and explains the draft, Omens, Traversing, Appeasing Pan, requests, and hole placement.
+- Added Appeasing Pan result and card-return notice banners, role labels on bottom hand cards, and a clearer Ballista targeting overlay with path lines and dimmed unreachable tiles.
+- Replaced the completed AI todo items in `Future_Improvements.md` with new improvement ideas for review and added regression coverage for automatic card-return notices.
+
 ## 2026-04-17 - Brandt Homan
 Commit: `pending` - Flipped the Appeasing Pan hierarchy strip order
 Summary:

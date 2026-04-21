@@ -12,6 +12,7 @@ from ui import (
     ScreenManager,
     ScreenType,
     StartScreen,
+    HowToPlayScreen,
     DraftScreen,
     JackRevealScreen,
     GameOverScreen,
@@ -60,6 +61,7 @@ def main():
     
     # Create screens
     start_screen = StartScreen(window)
+    how_to_play_screen = HowToPlayScreen(window)
     draft_screen = DraftScreen(window)
     jack_reveal_screen = JackRevealScreen(window)
     game_over_screen = GameOverScreen(window)
@@ -69,6 +71,7 @@ def main():
     
     # Add screens to manager
     screen_manager.add_screen(ScreenType.START, start_screen)
+    screen_manager.add_screen(ScreenType.HOW_TO_PLAY, how_to_play_screen)
     screen_manager.add_screen(ScreenType.DRAFT, draft_screen)
     screen_manager.add_screen(ScreenType.JACK_REVEAL, jack_reveal_screen)
     screen_manager.add_screen(ScreenType.GAME_OVER, game_over_screen)
@@ -116,6 +119,9 @@ def main():
                     }
                     draft_screen.start_draft(draft_cards)
                     screen_manager.set_screen(ScreenType.DRAFT)
+
+                elif result == "HOW_TO_PLAY":
+                    screen_manager.set_screen(ScreenType.HOW_TO_PLAY)
 
                 elif result == "DRAFT_COMPLETE":
                     p0_hand, p1_hand, player_cards = draft_screen.get_draft_result()

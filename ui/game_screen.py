@@ -102,6 +102,8 @@ class GameScreen(Screen):
         self.dragging_placement_card_index = None
         self.dragging_placement_card_pos = None
         self.hovered_placement_target = None
+        self.notice_text = None
+        self.notice_timer = 0.0
         
         self._refresh_fonts()
         self._create_ui()
@@ -634,6 +636,15 @@ class GameScreen(Screen):
             if not self.game.advance_forced_traversing():
                 break
 
+        if self.notice_timer > 0:
+            self.notice_timer = max(0.0, self.notice_timer - time_delta)
+            if self.notice_timer == 0:
+                self.notice_text = None
+
+        return_notice = self.game.consume_appeasing_return_notice()
+        if return_notice:
+            self._show_notice(return_notice)
+
         # Update status
         player = f"P{self.game.current_player + 1}"
         pending_request_type = self.game.get_pending_request_type()
@@ -740,7 +751,7 @@ class GameScreen(Screen):
         for i, btn in enumerate(self.card_buttons):
             if i < len(player_hand):
                 card = player_hand[i]
-                btn.set_text(self._format_card_label(card))
+                btn.set_text(self._format_card_role_label(card))
                 btn.disabled = not (
                     (
                         self.game.phase == GamePhase.APPEASING
@@ -814,6 +825,8 @@ class GameScreen(Screen):
         
         # Render board
         self.renderer.render(surface, self.game.board, suit_role_render, self.game.phase, highlight_positions)
+        if self.game.has_pending_ballista():
+            self._render_ballista_target_overlay(surface, highlight_positions)
         self._render_pending_placement_hover(surface)
         self._render_suit_role_legend(surface)
         self._render_rank_guide(surface)
@@ -822,6 +835,8 @@ class GameScreen(Screen):
         if self.game.phase == GamePhase.APPEASING:
             self._render_color_hierarchy_strip(surface)
         self._render_active_popups(surface)
+        self._render_appeasing_result_banner(surface)
+        self._render_notice_banner(surface)
     
     def on_enter(self) -> None:
         """Activate game screen."""
@@ -879,6 +894,20 @@ class GameScreen(Screen):
     def _format_card_label(self, card) -> str:
         """Render a compact label for a hand or damage card."""
         return f"{get_rank_name(card.rank)} {get_family_code(card.suit)}"
+
+    def _get_card_role_name(self, card) -> str:
+        """Return the current labyrinth role name for a card."""
+        role = self.game.suit_roles.get(card.suit)
+        return role.value.title() if role else "Unknown"
+
+    def _format_card_role_label(self, card) -> str:
+        """Render a compact card label with its current Omen role."""
+        return f"{self._format_card_label(card)} | {self._get_card_role_name(card)}"
+
+    def _show_notice(self, text: str, seconds: float = 4.5) -> None:
+        """Show a short gameplay notice banner."""
+        self.notice_text = text
+        self.notice_timer = seconds
 
     def _is_request_popup_active(self) -> bool:
         """Return True when the centered request chooser should be visible."""
@@ -1197,6 +1226,187 @@ class GameScreen(Screen):
             )
             label_rect = label.get_rect(center=rect.center)
             surface.blit(label, label_rect)
+
+    def _render_ballista_target_overlay(self, surface: pygame.Surface, targets: set[Position]) -> None:
+        """Dim unreachable cells and draw Ballista launch paths."""
+        if not targets:
+            return
+
+        start = self.game.board.get_player_position(self.game.current_player)
+        if start is None:
+            return
+
+        dim = pygame.Surface((self.window.WINDOW_WIDTH, self.window.WINDOW_HEIGHT), pygame.SRCALPHA)
+        for row in range(6):
+            for col in range(6):
+                pos = Position(row, col)
+                if pos == start or pos in targets:
+                    continue
+                pygame.draw.rect(dim, (4, 6, 12, 132), self.renderer.get_cell_rect(pos), border_radius=self.scale(8, 5))
+        surface.blit(dim, (0, 0))
+
+        line_color = (255, 218, 96)
+        for path in self._get_ballista_target_paths(start, targets):
+            previous = start
+            for target in path:
+                self._draw_ballista_segment(surface, previous, target, line_color)
+                previous = target
+
+        for pos in targets:
+            rect = self.renderer.get_cell_rect(pos)
+            center = rect.center
+            pygame.draw.circle(surface, (255, 224, 104), center, self.scale(13, 8), 3)
+            pygame.draw.circle(surface, (255, 246, 180), center, self.scale(5, 3))
+            pygame.draw.rect(surface, (255, 224, 104), rect.inflate(-self.scale(10, 6), -self.scale(10, 6)), 3, border_radius=self.scale(10, 6))
+
+    def _get_ballista_target_paths(self, start: Position, targets: set[Position]) -> list[list[Position]]:
+        """Return reachable Ballista paths grouped by launch direction."""
+        movements = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        paths = []
+        for dr, dc in movements:
+            current = start
+            path = []
+            for _ in range(5):
+                candidate = Position((current.row + dr) % 6, (current.col + dc) % 6)
+                if candidate not in targets:
+                    break
+                path.append(candidate)
+                current = candidate
+            if path:
+                paths.append(path)
+        return paths
+
+    def _draw_ballista_segment(
+        self,
+        surface: pygame.Surface,
+        start: Position,
+        end: Position,
+        color: tuple[int, int, int],
+    ) -> None:
+        """Draw one Ballista path segment, splitting edge-wrap jumps."""
+        start_rect = self.renderer.get_cell_rect(start)
+        end_rect = self.renderer.get_cell_rect(end)
+        start_center = start_rect.center
+        end_center = end_rect.center
+        width = max(3, self.scale(4, 3))
+
+        if start.row == end.row and abs(start.col - end.col) == 5:
+            y = start_center[1]
+            if start.col == 0 and end.col == 5:
+                pygame.draw.line(surface, color, start_center, (start_rect.left, y), width)
+                pygame.draw.line(surface, color, (end_rect.right, y), end_center, width)
+            else:
+                pygame.draw.line(surface, color, start_center, (start_rect.right, y), width)
+                pygame.draw.line(surface, color, (end_rect.left, y), end_center, width)
+            return
+
+        if start.col == end.col and abs(start.row - end.row) == 5:
+            x = start_center[0]
+            if start.row == 0 and end.row == 5:
+                pygame.draw.line(surface, color, start_center, (x, start_rect.top), width)
+                pygame.draw.line(surface, color, (x, end_rect.bottom), end_center, width)
+            else:
+                pygame.draw.line(surface, color, start_center, (x, start_rect.bottom), width)
+                pygame.draw.line(surface, color, (x, end_rect.top), end_center, width)
+            return
+
+        pygame.draw.line(surface, color, start_center, end_center, width)
+
+    def _render_appeasing_result_banner(self, surface: pygame.Surface) -> None:
+        """Render a short explanation of the latest Appeasing Pan duel result."""
+        if (
+            self.game.phase != GamePhase.APPEASING
+            or self.game.current_request_winner is None
+            or len(self.game.phase_started_cards) != 2
+        ):
+            return
+
+        played_cards = {player_id: card for player_id, card in self.game.phase_started_cards}
+        winner = self.game.current_request_winner
+        loser = 1 - winner
+        if winner not in played_cards or loser not in played_cards:
+            return
+
+        winner_card = played_cards[winner]
+        loser_card = played_cards[loser]
+        title = f"P{winner + 1} wins Appeasing Pan"
+        detail = (
+            f"{self._format_card_role_label(winner_card)} beats "
+            f"{self._format_card_role_label(loser_card)} - "
+            f"{self._describe_appeasing_win(winner, winner_card, loser_card)}"
+        )
+
+        rect = pygame.Rect(
+            self.window.WINDOW_WIDTH // 2 - self.scale_x(330, 230),
+            self.scale_y(112, 82),
+            self.scale_x(660, 460),
+            self.scale_y(62, 48),
+        )
+        pygame.draw.rect(surface, (31, 36, 48), rect, border_radius=self.scale(14, 9))
+        pygame.draw.rect(surface, (226, 198, 102), rect, 2, border_radius=self.scale(14, 9))
+
+        title_surface = self.popup_body_font.render(title, True, (246, 232, 172))
+        surface.blit(title_surface, (rect.x + self.scale(18, 12), rect.y + self.scale(8, 5)))
+        detail_rect = pygame.Rect(
+            rect.x + self.scale(18, 12),
+            rect.y + self.scale(32, 24),
+            rect.width - self.scale(36, 24),
+            rect.height - self.scale(36, 26),
+        )
+        self._draw_wrapped_text(
+            surface,
+            detail,
+            self.popup_small_font,
+            (228, 228, 228),
+            detail_rect,
+            self.scale(18, 13),
+            2,
+        )
+
+    def _describe_appeasing_win(self, winner: int, winner_card, loser_card) -> str:
+        """Describe whether the Appeasing duel was won by role strength or rank."""
+        if winner_card.suit != loser_card.suit:
+            return (
+                f"stronger color role ({self._get_card_role_name(winner_card)} "
+                f"beats {self._get_card_role_name(loser_card)})."
+            )
+
+        winner_value = winner_card.combat_value()
+        loser_value = loser_card.combat_value()
+        if winner_value != loser_value:
+            return f"higher rank ({winner_value} beats {loser_value})."
+
+        return f"exact tie; P{winner + 1} keeps the request choice."
+
+    def _render_notice_banner(self, surface: pygame.Surface) -> None:
+        """Render a transient gameplay notice if one is active."""
+        if not self.notice_text or self.notice_timer <= 0:
+            return
+
+        result_banner_active = (
+            self.game.phase == GamePhase.APPEASING
+            and self.game.current_request_winner is not None
+            and len(self.game.phase_started_cards) == 2
+        )
+        y = self.scale_y(184, 136) if result_banner_active else self.scale_y(112, 82)
+        rect = pygame.Rect(
+            self.window.WINDOW_WIDTH // 2 - self.scale_x(300, 210),
+            y,
+            self.scale_x(600, 420),
+            self.scale_y(44, 34),
+        )
+        pygame.draw.rect(surface, (44, 52, 66), rect, border_radius=self.scale(12, 8))
+        pygame.draw.rect(surface, (154, 188, 218), rect, 2, border_radius=self.scale(12, 8))
+        text_rect = rect.inflate(-self.scale(24, 16), -self.scale(8, 6))
+        self._draw_wrapped_text(
+            surface,
+            self.notice_text,
+            self.popup_small_font,
+            (236, 238, 240),
+            text_rect,
+            self.scale(18, 13),
+            2,
+        )
 
     def _render_active_popups(self, surface: pygame.Surface) -> None:
         """Render whichever modal popup is currently active."""

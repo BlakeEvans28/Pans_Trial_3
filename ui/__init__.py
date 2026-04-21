@@ -16,6 +16,7 @@ from .screen_manager import (
     ScreenManager,
     ScreenType,
     StartScreen,
+    HowToPlayScreen,
     DraftScreen,
     JackRevealScreen,
     GameOverScreen,
@@ -25,7 +26,7 @@ from .input_handler import InputHandler
 
 __all__ = [
     "GameWindow", "BoardRenderer", 
-    "Screen", "ScreenManager", "ScreenType", "StartScreen", "DraftScreen", "JackRevealScreen",
+    "Screen", "ScreenManager", "ScreenType", "StartScreen", "HowToPlayScreen", "DraftScreen", "JackRevealScreen",
     "GameOverScreen", "GameScreen",
     "InputHandler"
 ]
