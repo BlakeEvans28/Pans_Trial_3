@@ -4,7 +4,7 @@ Initializes game and runs the game loop.
 """
 
 import sys
-from random import shuffle
+from random import choice, shuffle
 import pygame
 from engine import GameState, GamePhase, Position
 from ui import (
@@ -13,6 +13,8 @@ from ui import (
     ScreenType,
     StartScreen,
     HowToPlayScreen,
+    SettingsScreen,
+    CoinFlipScreen,
     DraftScreen,
     JackRevealScreen,
     GameOverScreen,
@@ -62,6 +64,8 @@ def main():
     # Create screens
     start_screen = StartScreen(window)
     how_to_play_screen = HowToPlayScreen(window)
+    settings_screen = SettingsScreen(window)
+    coin_flip_screen = CoinFlipScreen(window)
     draft_screen = DraftScreen(window)
     jack_reveal_screen = JackRevealScreen(window)
     game_over_screen = GameOverScreen(window)
@@ -72,6 +76,8 @@ def main():
     # Add screens to manager
     screen_manager.add_screen(ScreenType.START, start_screen)
     screen_manager.add_screen(ScreenType.HOW_TO_PLAY, how_to_play_screen)
+    screen_manager.add_screen(ScreenType.SETTINGS, settings_screen)
+    screen_manager.add_screen(ScreenType.COIN_FLIP, coin_flip_screen)
     screen_manager.add_screen(ScreenType.DRAFT, draft_screen)
     screen_manager.add_screen(ScreenType.JACK_REVEAL, jack_reveal_screen)
     screen_manager.add_screen(ScreenType.GAME_OVER, game_over_screen)
@@ -112,16 +118,24 @@ def main():
                     labyrinth_cards, draft_cards, jack_cards = setup_pregame_cards()
                     pregame_setup = {
                         "labyrinth_cards": labyrinth_cards,
+                        "draft_cards": draft_cards,
                         "jack_cards": jack_cards,
                         "hands": ([], []),
                         "player_cards": [],
+                        "draft_starting_player": choice([0, 1]),
                         "starting_player": 1,
                     }
-                    draft_screen.start_draft(draft_cards)
-                    screen_manager.set_screen(ScreenType.DRAFT)
+                    coin_flip_screen.start_flip(pregame_setup["draft_starting_player"])
+                    screen_manager.set_screen(ScreenType.COIN_FLIP)
 
                 elif result == "HOW_TO_PLAY":
                     screen_manager.set_screen(ScreenType.HOW_TO_PLAY)
+
+                elif result == "SETTINGS":
+                    screen_manager.set_screen(ScreenType.SETTINGS)
+
+                elif result == "RESIZED":
+                    screen_manager.handle_resize()
 
                 elif result == "DRAFT_COMPLETE":
                     p0_hand, p1_hand, player_cards = draft_screen.get_draft_result()
@@ -159,6 +173,15 @@ def main():
                     else:
                         game_screen.game = game
                     screen_manager.set_screen(ScreenType.GAME)
+
+            elif screen_manager.current_screen == ScreenType.COIN_FLIP:
+                draft_starting_player = coin_flip_screen.consume_result()
+                if draft_starting_player is not None and pregame_setup is not None:
+                    draft_screen.start_draft(
+                        pregame_setup["draft_cards"],
+                        starting_player=draft_starting_player,
+                    )
+                    screen_manager.set_screen(ScreenType.DRAFT)
             
             # Render
             window.screen.blit(window.background, (0, 0))
@@ -178,6 +201,7 @@ def main():
                     game.winner,
                     game.get_damage_total(0),
                     game.get_damage_total(1),
+                    game.get_match_summary(),
                 )
                 screen_manager.set_screen(ScreenType.GAME_OVER)
     

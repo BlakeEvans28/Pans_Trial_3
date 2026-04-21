@@ -25,6 +25,12 @@ class GameWindow:
         self.WINDOW_WIDTH, self.WINDOW_HEIGHT = self._get_initial_window_size()
         self.minimum_resize_width = min(self.MIN_WINDOW_WIDTH, self.WINDOW_WIDTH)
         self.minimum_resize_height = min(self.MIN_WINDOW_HEIGHT, self.WINDOW_HEIGHT)
+        self.windowed_size = (self.WINDOW_WIDTH, self.WINDOW_HEIGHT)
+        self.fullscreen = False
+        self.text_scale = 1.0
+        self.animation_speed = 1.0
+        self.sound_volume = 0.5
+        self.tutorial_enabled = True
 
         self.screen = pygame.display.set_mode(
             (self.WINDOW_WIDTH, self.WINDOW_HEIGHT),
@@ -63,6 +69,9 @@ class GameWindow:
 
     def resize(self, width: int, height: int) -> bool:
         """Resize the window and UI manager. Returns True when size changed."""
+        if self.fullscreen:
+            return False
+
         width = max(self.minimum_resize_width, int(width))
         height = max(self.minimum_resize_height, int(height))
 
@@ -73,6 +82,23 @@ class GameWindow:
         self.WINDOW_HEIGHT = height
         self.screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
         self.ui_manager.set_window_resolution((width, height))
+        self._refresh_background()
+        return True
+
+    def toggle_fullscreen(self) -> bool:
+        """Toggle fullscreen mode and return True when the window size changed."""
+        self.fullscreen = not self.fullscreen
+        if self.fullscreen:
+            self.windowed_size = (self.WINDOW_WIDTH, self.WINDOW_HEIGHT)
+            display_info = pygame.display.Info()
+            self.WINDOW_WIDTH = display_info.current_w
+            self.WINDOW_HEIGHT = display_info.current_h
+            self.screen = pygame.display.set_mode((self.WINDOW_WIDTH, self.WINDOW_HEIGHT), pygame.FULLSCREEN)
+        else:
+            self.WINDOW_WIDTH, self.WINDOW_HEIGHT = self.windowed_size
+            self.screen = pygame.display.set_mode((self.WINDOW_WIDTH, self.WINDOW_HEIGHT), pygame.RESIZABLE)
+
+        self.ui_manager.set_window_resolution((self.WINDOW_WIDTH, self.WINDOW_HEIGHT))
         self._refresh_background()
         return True
 
@@ -98,6 +124,10 @@ class GameWindow:
     def scale(self, value: int, minimum: int = 1) -> int:
         """Scale an isotropic measurement using the current window size."""
         return max(minimum, int(round(value * self.get_scale())))
+
+    def font_size(self, value: int, minimum: int = 1) -> int:
+        """Scale a font size using the current window and text-size setting."""
+        return max(minimum, int(round(value * self.get_scale() * self.text_scale)))
 
     def scale_x(self, value: int, minimum: int = 1) -> int:
         """Scale a horizontal measurement."""

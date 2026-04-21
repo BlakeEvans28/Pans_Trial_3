@@ -61,6 +61,9 @@ class GameState:
         
         # Game history
         self.winner: Optional[int] = None
+        self.appeasing_history: list[str] = []
+        self.request_history: list[str] = []
+        self.major_events: list[str] = []
 
     def setup_board(self, grid_cards: list[list[Card]]) -> None:
         """Set up the initial 6x6 board."""
@@ -125,6 +128,24 @@ class GameState:
     def get_damage_total(self, player_id: int) -> int:
         """Get total damage for player."""
         return self.damage[player_id].total_damage()
+
+    def _record_event(self, text: str) -> None:
+        """Record a concise major match event for the final summary."""
+        self.major_events.append(text)
+        if len(self.major_events) > 12:
+            self.major_events = self.major_events[-12:]
+
+    def get_match_summary(self) -> dict:
+        """Return final match summary details for the Game Over screen."""
+        return {
+            "damage_cards": {
+                0: list(self.damage[0].cards),
+                1: list(self.damage[1].cards),
+            },
+            "appeasing": list(self.appeasing_history[-6:]),
+            "requests": list(self.request_history[-8:]),
+            "events": list(self.major_events[-8:]),
+        }
 
     def can_choose_request(self, player_id: int) -> bool:
         """Check if this player is next to choose an Appeasing Pan request."""
@@ -410,14 +431,17 @@ class GameState:
             # Take damage
             self.damage[player_id].add_card(card)
             self.board.set_card(self.board.get_player_position(player_id), None)
+            self._record_event(f"P{player_id + 1} triggered trap {card}.")
         
         elif role == SuitRole.WEAPONS:
             # Weapons stay in the normal hand; their current role controls combat eligibility.
             self.hands[player_id].add_card(card)
             self.board.set_card(self.board.get_player_position(player_id), None)
+            self._record_event(f"P{player_id + 1} collected weapon {card}.")
         
         elif role == SuitRole.BALLISTA:
             self._start_ballista(player_id)
+            self._record_event(f"P{player_id + 1} started a Ballista launch.")
 
     def _pick_up_current_card(self, player_id: int) -> None:
         """Resolve the current-tile interaction without moving."""
@@ -439,8 +463,10 @@ class GameState:
 
         if role == SuitRole.TRAPS:
             self.damage[player_id].add_card(card)
+            self._record_event(f"P{player_id + 1} picked up trap damage {card}.")
         else:
             self.hands[player_id].add_card(card)
+            self._record_event(f"P{player_id + 1} picked up {card}.")
 
         self.board.set_card(pos, None)
 
@@ -448,6 +474,7 @@ class GameState:
         """Start combat when players land on the same tile."""
         self.pending_combat_players = []
         self.combat_moving_player = attacker_id
+        self._record_event(f"P{attacker_id + 1} started combat with P{defender_id + 1}.")
 
         if self.get_player_weapons(attacker_id):
             self.pending_combat_players.append(attacker_id)
@@ -518,6 +545,7 @@ class GameState:
         self.pending_ballista_targets = []
 
         self.board.place_player(player_id, destination)
+        self._record_event(f"P{player_id + 1} launched by Ballista to ({destination.row + 1}, {destination.col + 1}).")
 
         opponent_id = 1 - player_id
         if self.board.get_player_position(opponent_id) == destination:
@@ -540,6 +568,7 @@ class GameState:
         opponent_id = 1 - action.player_id
         self.hands[action.player_id].remove_card(action.card)
         self.damage[opponent_id].add_card(action.card)
+        self._record_event(f"P{action.player_id + 1} hit P{opponent_id + 1} with {action.card}.")
         self.pending_combat_players.pop(0)
 
         if self.pending_combat_players:
@@ -637,6 +666,11 @@ class GameState:
         self.traversing_resume_player = loser
         self.pending_request_players = [self.current_request_winner, loser]
         self.current_player = self.current_request_winner
+        winner_card = card1 if self.current_request_winner == p1_id else card2
+        loser_card = card2 if self.current_request_winner == p1_id else card1
+        self.appeasing_history.append(
+            f"P{self.current_request_winner + 1} beat P{loser + 1}: {winner_card} over {loser_card}."
+        )
 
     def choose_request(self, player_id: int, request_type: str) -> bool:
         """Player chooses a request to execute."""
@@ -659,6 +693,9 @@ class GameState:
             return False
 
         opponent_id = 1 - chooser_id
+        request_label = request_type.replace("_", " ").title()
+        self.request_history.append(f"P{chooser_id + 1} chose {request_label}.")
+        self._record_event(f"P{chooser_id + 1} chose {request_label}.")
         
         if request_type == "restructure":
             selected_suits = params.get("suits") or []
@@ -746,6 +783,7 @@ class GameState:
                 f"No open holes remained, so {returned_count} played card{plural} "
                 f"returned to P{returned_player + 1}'s hand."
             )
+            self._record_event(self.appeasing_return_notice)
         self.pending_placement_cards = []
         self.pending_placement_player = None
         self._mark_players_trapped_from_requests()
@@ -1003,9 +1041,11 @@ class GameState:
         if self.is_defeated(0):
             self.winner = 1
             self.phase = GamePhase.GAME_OVER
+            self._record_event("P1 reached 25 or more damage.")
             return True
         elif self.is_defeated(1):
             self.winner = 0
             self.phase = GamePhase.GAME_OVER
+            self._record_event("P2 reached 25 or more damage.")
             return True
         return False

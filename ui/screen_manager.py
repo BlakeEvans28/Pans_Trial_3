@@ -27,6 +27,8 @@ class ScreenType(Enum):
     """Different screens in the game."""
     START = "start"
     HOW_TO_PLAY = "how_to_play"
+    SETTINGS = "settings"
+    COIN_FLIP = "coin_flip"
     DRAFT = "draft"
     JACK_REVEAL = "jack_reveal"
     GAME = "game"
@@ -55,6 +57,10 @@ class Screen:
     def is_compact_layout(self) -> bool:
         """Return True when the active window should use phone-style layouts."""
         return self.window.is_compact_layout()
+
+    def font_size(self, value: int, minimum: int = 1) -> int:
+        """Scale a font size using the active text-size setting."""
+        return self.window.font_size(value, minimum)
     
     def handle_events(self, event: pygame.event.Event) -> bool:
         """Handle event. Return True if event was consumed."""
@@ -91,6 +97,7 @@ class StartScreen(Screen):
         self.info_font = None
         self.play_button = None
         self.how_to_button = None
+        self.settings_button = None
         self.quit_button = None
         self._refresh_fonts()
         self._create_ui()
@@ -101,9 +108,9 @@ class StartScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh cached fonts for the current window scale."""
-        self.title_font = pygame.font.Font(None, self.scale(72, 42))
-        self.subtitle_font = pygame.font.Font(None, self.scale(36, 24))
-        self.info_font = pygame.font.Font(None, self.scale(24, 18))
+        self.title_font = pygame.font.Font(None, self.font_size(72, 42))
+        self.subtitle_font = pygame.font.Font(None, self.font_size(36, 24))
+        self.info_font = pygame.font.Font(None, self.font_size(24, 18))
     
     def _create_ui(self):
         """Create UI elements."""
@@ -120,6 +127,13 @@ class StartScreen(Screen):
             manager=self.ui_manager,
             object_id="how_to_play_button"
         )
+
+        self.settings_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((0, 0), (1, 1)),
+            text="Settings",
+            manager=self.ui_manager,
+            object_id="settings_button"
+        )
         
         self.quit_button = pygame_gui.elements.UIButton(
             relative_rect=pygame.Rect((0, 0), (1, 1)),
@@ -134,14 +148,16 @@ class StartScreen(Screen):
         button_height = self.scale_y(60, 44)
         button_gap = self.scale_y(16, 10)
         center_x = (self.window.WINDOW_WIDTH - button_width) // 2
-        total_height = button_height * 3 + button_gap * 2
+        total_height = button_height * 4 + button_gap * 3
         play_y = self.window.WINDOW_HEIGHT // 2 - total_height // 2
         how_y = play_y + button_height + button_gap
-        quit_y = how_y + button_height + button_gap
+        settings_y = how_y + button_height + button_gap
+        quit_y = settings_y + button_height + button_gap
 
         for button, y in [
             (self.play_button, play_y),
             (self.how_to_button, how_y),
+            (self.settings_button, settings_y),
             (self.quit_button, quit_y),
         ]:
             button.set_relative_position((center_x, y))
@@ -151,6 +167,7 @@ class StartScreen(Screen):
         """Hide all UI elements initially."""
         self.play_button.hide()
         self.how_to_button.hide()
+        self.settings_button.hide()
         self.quit_button.hide()
     
     def handle_events(self, event: pygame.event.Event) -> bool:
@@ -160,6 +177,8 @@ class StartScreen(Screen):
                 return "PLAY"
             elif event.ui_element == self.how_to_button:
                 return "HOW_TO_PLAY"
+            elif event.ui_element == self.settings_button:
+                return "SETTINGS"
             elif event.ui_element == self.quit_button:
                 return "QUIT"
         return False
@@ -202,12 +221,14 @@ class StartScreen(Screen):
         # Show start screen elements
         self.play_button.show()
         self.how_to_button.show()
+        self.settings_button.show()
         self.quit_button.show()
     
     def on_exit(self) -> None:
         """Deactivate start screen."""
         self.play_button.hide()
         self.how_to_button.hide()
+        self.settings_button.hide()
         self.quit_button.hide()
 
     def on_resize(self) -> None:
@@ -266,10 +287,10 @@ class HowToPlayScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh fonts for the current window scale."""
-        self.title_font = pygame.font.Font(None, self.scale(64, 38))
-        self.heading_font = pygame.font.Font(None, self.scale(30, 22))
-        self.body_font = pygame.font.Font(None, self.scale(24, 17))
-        self.small_font = pygame.font.Font(None, self.scale(22, 16))
+        self.title_font = pygame.font.Font(None, self.font_size(64, 38))
+        self.heading_font = pygame.font.Font(None, self.font_size(30, 22))
+        self.body_font = pygame.font.Font(None, self.font_size(24, 17))
+        self.small_font = pygame.font.Font(None, self.font_size(22, 16))
 
     def _create_ui(self) -> None:
         """Create How To Play UI controls."""
@@ -418,6 +439,281 @@ class HowToPlayScreen(Screen):
         self._layout_ui()
 
 
+class SettingsScreen(Screen):
+    """Game settings screen for display, text, animation, sound, and tutorial options."""
+
+    TEXT_SCALES = [("Small", 0.9), ("Normal", 1.0), ("Large", 1.18)]
+    ANIMATION_SPEEDS = [("Slow", 0.75), ("Normal", 1.0), ("Fast", 1.35)]
+    SOUND_LEVELS = [("Muted", 0.0), ("50%", 0.5), ("100%", 1.0)]
+
+    def __init__(self, window: "GameWindow"):
+        super().__init__(window)
+        self.title_font = None
+        self.body_font = None
+        self.small_font = None
+        self.fullscreen_button = None
+        self.text_button = None
+        self.animation_button = None
+        self.sound_button = None
+        self.tutorial_button = None
+        self.back_button = None
+        self._refresh_fonts()
+        self._create_ui()
+        self.on_resize()
+        self._hide_all_elements()
+
+    def _refresh_fonts(self) -> None:
+        """Refresh fonts for the current text-size setting."""
+        self.title_font = pygame.font.Font(None, self.font_size(64, 38))
+        self.body_font = pygame.font.Font(None, self.font_size(28, 20))
+        self.small_font = pygame.font.Font(None, self.font_size(22, 16))
+
+    def _create_ui(self) -> None:
+        """Create settings buttons."""
+        self.fullscreen_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((0, 0), (1, 1)),
+            text="",
+            manager=self.ui_manager,
+            object_id="settings_fullscreen",
+        )
+        self.text_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((0, 0), (1, 1)),
+            text="",
+            manager=self.ui_manager,
+            object_id="settings_text",
+        )
+        self.animation_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((0, 0), (1, 1)),
+            text="",
+            manager=self.ui_manager,
+            object_id="settings_animation",
+        )
+        self.sound_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((0, 0), (1, 1)),
+            text="",
+            manager=self.ui_manager,
+            object_id="settings_sound",
+        )
+        self.tutorial_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((0, 0), (1, 1)),
+            text="",
+            manager=self.ui_manager,
+            object_id="settings_tutorial",
+        )
+        self.back_button = pygame_gui.elements.UIButton(
+            relative_rect=pygame.Rect((0, 0), (1, 1)),
+            text="Back",
+            manager=self.ui_manager,
+            object_id="settings_back",
+        )
+
+    def _layout_ui(self) -> None:
+        """Lay out settings controls."""
+        button_width = min(self.scale_x(420, 260), self.window.WINDOW_WIDTH - 2 * self.scale_x(40, 18))
+        button_height = self.scale_y(54, 42)
+        gap = self.scale_y(14, 10)
+        start_y = self.scale_y(210, 150)
+        center_x = (self.window.WINDOW_WIDTH - button_width) // 2
+
+        for index, button in enumerate(self._setting_buttons()):
+            button.set_relative_position((center_x, start_y + index * (button_height + gap)))
+            button.set_dimensions((button_width, button_height))
+
+        self.back_button.set_relative_position(
+            (
+                center_x,
+                start_y + len(self._setting_buttons()) * (button_height + gap) + self.scale_y(18, 12),
+            )
+        )
+        self.back_button.set_dimensions((button_width, button_height))
+
+    def _setting_buttons(self) -> list:
+        """Return only the setting-control buttons."""
+        return [
+            self.fullscreen_button,
+            self.text_button,
+            self.animation_button,
+            self.sound_button,
+            self.tutorial_button,
+        ]
+
+    def _hide_all_elements(self) -> None:
+        """Hide settings controls."""
+        for button in self._setting_buttons() + [self.back_button]:
+            button.hide()
+
+    def _cycle_value(self, options: list[tuple[str, float]], current: float) -> float:
+        """Return the next value from a list of labeled numeric options."""
+        values = [value for _, value in options]
+        if current not in values:
+            return values[0]
+        return values[(values.index(current) + 1) % len(values)]
+
+    def _label_for_value(self, options: list[tuple[str, float]], current: float) -> str:
+        """Return the label that matches a numeric setting value."""
+        for label, value in options:
+            if value == current:
+                return label
+        return options[0][0]
+
+    def _refresh_button_text(self) -> None:
+        """Refresh settings button labels."""
+        self.fullscreen_button.set_text(f"Display: {'Fullscreen' if self.window.fullscreen else 'Windowed'}")
+        self.text_button.set_text(f"Text Size: {self._label_for_value(self.TEXT_SCALES, self.window.text_scale)}")
+        self.animation_button.set_text(
+            f"Animation Speed: {self._label_for_value(self.ANIMATION_SPEEDS, self.window.animation_speed)}"
+        )
+        self.sound_button.set_text(f"Sound Volume: {self._label_for_value(self.SOUND_LEVELS, self.window.sound_volume)}")
+        self.tutorial_button.set_text(f"Tutorial Tips: {'On' if self.window.tutorial_enabled else 'Off'}")
+
+    def handle_events(self, event: pygame.event.Event) -> bool:
+        """Handle settings clicks."""
+        if event.type != pygame_gui.UI_BUTTON_PRESSED:
+            return False
+
+        if event.ui_element == self.back_button:
+            return "MENU"
+        if event.ui_element == self.fullscreen_button:
+            self.window.toggle_fullscreen()
+            self.on_resize()
+            return "RESIZED"
+        if event.ui_element == self.text_button:
+            self.window.text_scale = self._cycle_value(self.TEXT_SCALES, self.window.text_scale)
+            self.on_resize()
+            return "RESIZED"
+        if event.ui_element == self.animation_button:
+            self.window.animation_speed = self._cycle_value(self.ANIMATION_SPEEDS, self.window.animation_speed)
+        elif event.ui_element == self.sound_button:
+            self.window.sound_volume = self._cycle_value(self.SOUND_LEVELS, self.window.sound_volume)
+        elif event.ui_element == self.tutorial_button:
+            self.window.tutorial_enabled = not self.window.tutorial_enabled
+        self._refresh_button_text()
+        return True
+
+    def update(self, time_delta: float) -> None:
+        """Settings have no timed state."""
+        pass
+
+    def render(self, surface: pygame.Surface) -> None:
+        """Render the settings page."""
+        surface.fill((18, 22, 32))
+        title = self.title_font.render("SETTINGS", True, (238, 214, 142))
+        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(84, 58)))
+        surface.blit(title, title_rect)
+
+        lines = [
+            "Use these controls to make the UI fit your device.",
+            "Sound volume is stored now and will apply once sound effects are added.",
+        ]
+        for index, text in enumerate(lines):
+            line = self.small_font.render(text, True, (190, 198, 210))
+            line_rect = line.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(132 + index * 28, 92 + index * 18)))
+            surface.blit(line, line_rect)
+
+    def on_enter(self) -> None:
+        """Activate settings controls."""
+        self._refresh_button_text()
+        for button in self._setting_buttons() + [self.back_button]:
+            button.show()
+
+    def on_exit(self) -> None:
+        """Deactivate settings controls."""
+        self._hide_all_elements()
+
+    def on_resize(self) -> None:
+        """Refresh fonts and layout when size or text scale changes."""
+        self._refresh_fonts()
+        self._layout_ui()
+        self._refresh_button_text()
+
+
+class CoinFlipScreen(Screen):
+    """Animated coin flip that chooses the first drafter."""
+
+    def __init__(self, window: "GameWindow"):
+        super().__init__(window)
+        self.title_font = None
+        self.body_font = None
+        self.small_font = None
+        self.elapsed = 0.0
+        self.first_player = 0
+        self.finished = False
+        self._consumed = False
+        self._refresh_fonts()
+
+    def _refresh_fonts(self) -> None:
+        """Refresh coin-flip fonts."""
+        self.title_font = pygame.font.Font(None, self.font_size(64, 38))
+        self.body_font = pygame.font.Font(None, self.font_size(34, 24))
+        self.small_font = pygame.font.Font(None, self.font_size(24, 16))
+
+    def start_flip(self, first_player: int) -> None:
+        """Start a new flip animation for the chosen first drafter."""
+        self.first_player = first_player
+        self.elapsed = 0.0
+        self.finished = False
+        self._consumed = False
+
+    def handle_events(self, event: pygame.event.Event) -> bool:
+        """The coin flip is automatic."""
+        return False
+
+    def update(self, time_delta: float) -> None:
+        """Advance the flip timer."""
+        self.elapsed += time_delta * self.window.animation_speed
+        if self.elapsed >= 2.0:
+            self.finished = True
+
+    def render(self, surface: pygame.Surface) -> None:
+        """Render the coin flip screen."""
+        surface.fill((14, 18, 28))
+        title = self.title_font.render("COIN FLIP", True, (238, 214, 142))
+        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(110, 78)))
+        surface.blit(title, title_rect)
+
+        center = (self.window.WINDOW_WIDTH // 2, self.window.WINDOW_HEIGHT // 2 - self.scale_y(18, 12))
+        radius = self.scale(82, 54)
+        flipping = not self.finished and int(self.elapsed * 10) % 2 == 0
+        label = "P1" if (flipping or self.first_player == 0) else "P2"
+        fill = (208, 84, 84) if label == "P1" else (84, 118, 216)
+        pygame.draw.circle(surface, fill, center, radius)
+        pygame.draw.circle(surface, (248, 232, 166), center, radius, self.scale(5, 3))
+        coin_text = self.title_font.render(label, True, (24, 24, 30))
+        surface.blit(coin_text, coin_text.get_rect(center=center))
+
+        result = (
+            f"Player {self.first_player + 1} drafts first."
+            if self.finished
+            else "Flipping to decide who drafts first..."
+        )
+        result_text = self.body_font.render(result, True, (228, 228, 228))
+        result_rect = result_text.get_rect(center=(self.window.WINDOW_WIDTH // 2, center[1] + radius + self.scale_y(60, 42)))
+        surface.blit(result_text, result_rect)
+
+        hint = self.small_font.render("The draft starts automatically.", True, (160, 168, 180))
+        hint_rect = hint.get_rect(center=(self.window.WINDOW_WIDTH // 2, result_rect.bottom + self.scale_y(32, 22)))
+        surface.blit(hint, hint_rect)
+
+    def on_enter(self) -> None:
+        """Coin flip has no UI elements."""
+        pass
+
+    def on_exit(self) -> None:
+        """Coin flip has no UI elements."""
+        pass
+
+    def on_resize(self) -> None:
+        """Refresh fonts after resize."""
+        self._refresh_fonts()
+
+    def consume_result(self):
+        """Return the chosen first drafter once the animation finishes."""
+        if not self.finished or self._consumed:
+            return None
+        self._consumed = True
+        return self.first_player
+
+
 class DraftScreen(Screen):
     """Pregame drafting screen for the 12-card face-card pool."""
 
@@ -443,10 +739,10 @@ class DraftScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh all draft-phase fonts."""
-        self.title_font = pygame.font.Font(None, self.scale(64, 38))
-        self.body_font = pygame.font.Font(None, self.scale(30, 20))
-        self.small_font = pygame.font.Font(None, self.scale(24, 16))
-        self.card_font = pygame.font.Font(None, self.scale(34, 22))
+        self.title_font = pygame.font.Font(None, self.font_size(64, 38))
+        self.body_font = pygame.font.Font(None, self.font_size(30, 20))
+        self.small_font = pygame.font.Font(None, self.font_size(24, 16))
+        self.card_font = pygame.font.Font(None, self.font_size(34, 22))
 
     def _create_ui(self):
         """Create the 6x2 grid of draft card hitboxes."""
@@ -483,12 +779,12 @@ class DraftScreen(Screen):
         """Draft cards are rendered manually; no UI elements to hide."""
         pass
 
-    def start_draft(self, draft_cards: list) -> None:
+    def start_draft(self, draft_cards: list, starting_player: int = 0) -> None:
         """Reset the screen with a fresh shuffled draft pool."""
         self.draft_cards = list(draft_cards)
         self.available_cards = list(draft_cards)
         self.player_hands = {0: [], 1: []}
-        self.current_player = 0
+        self.current_player = starting_player
         self.kings_drafted = 0
         self.player_cards = []
         self._update_buttons()
@@ -615,6 +911,29 @@ class DraftScreen(Screen):
 
         self._render_hand_panel(surface, panel_rects[0], "Player 1 Trial Hand", self.player_hands[0], (210, 120, 120))
         self._render_hand_panel(surface, panel_rects[1], "Player 2 Trial Hand", self.player_hands[1], (120, 160, 230))
+        self._render_tutorial_overlay(surface)
+
+    def _render_tutorial_overlay(self, surface: pygame.Surface) -> None:
+        """Show optional draft tutorial guidance."""
+        if not self.window.tutorial_enabled or not self.card_rects:
+            return
+
+        grid_rect = self.card_rects[0].copy()
+        for rect in self.card_rects[1:]:
+            grid_rect.union_ip(rect)
+        pygame.draw.rect(surface, (252, 222, 104), grid_rect.inflate(self.scale(10, 6), self.scale(10, 6)), 3, border_radius=10)
+
+        text = "Tutorial: click a draft card. Draft all Satyrs and Oracles, but only two Heroes."
+        panel_rect = pygame.Rect(
+            self.scale_x(22, 14),
+            max(self.scale_y(152, 112), grid_rect.top - self.scale_y(58, 42)),
+            min(self.scale_x(720, 320), self.window.WINDOW_WIDTH - 2 * self.scale_x(22, 14)),
+            self.scale_y(42, 34),
+        )
+        pygame.draw.rect(surface, (24, 28, 40), panel_rect, border_radius=self.scale(10, 6))
+        pygame.draw.rect(surface, (252, 222, 104), panel_rect, 2, border_radius=self.scale(10, 6))
+        line = self.small_font.render(text, True, (238, 238, 238))
+        surface.blit(line, (panel_rect.x + self.scale(12, 8), panel_rect.y + self.scale(11, 7)))
 
     def on_enter(self) -> None:
         """Manual card rendering needs no UI activation."""
@@ -641,6 +960,13 @@ class DraftScreen(Screen):
         """Render a compact card label without glyph icons."""
         return get_card_display(card)
 
+    def _muted_family_color(self, suit, enabled: bool = True) -> tuple[int, int, int]:
+        """Return a readable pastel version of a family color for draft cards."""
+        base = get_family_color(suit)
+        target = (238, 236, 220) if enabled else (166, 166, 158)
+        amount = 0.58 if enabled else 0.72
+        return tuple(int(channel * (1 - amount) + target[index] * amount) for index, channel in enumerate(base))
+
     def _render_draft_card(self, surface: pygame.Surface, rect: pygame.Rect, card) -> None:
         """Draw one draft card with a vector suit icon."""
         if card is None:
@@ -653,8 +979,8 @@ class DraftScreen(Screen):
             return
 
         enabled = self._can_pick_card(card)
-        fill = (245, 245, 235) if enabled else (155, 155, 150)
-        border = (205, 180, 120) if enabled else (95, 95, 95)
+        fill = self._muted_family_color(card.suit, enabled)
+        border = get_family_color(card.suit) if enabled else (95, 95, 95)
         text_color = (35, 35, 35)
 
         radius = self.scale(12, 8)
@@ -665,16 +991,8 @@ class DraftScreen(Screen):
         rank_rect = rank.get_rect(center=(rect.centerx, rect.y + self.scale(28, 18)))
         surface.blit(rank, rank_rect)
 
-        draw_suit_icon(
-            surface,
-            card.suit,
-            (rect.centerx, rect.centery + self.scale(8, 4)),
-            size=self.scale(20, 12),
-            color=get_family_color(card.suit),
-        )
-
         suit_name = self.small_font.render(get_family_name(card.suit), True, text_color)
-        suit_rect = suit_name.get_rect(center=(rect.centerx, rect.bottom - self.scale(18, 12)))
+        suit_rect = suit_name.get_rect(center=(rect.centerx, rect.centery + self.scale(10, 6)))
         surface.blit(suit_name, suit_rect)
 
     def _render_hand_panel(
@@ -747,23 +1065,15 @@ class DraftScreen(Screen):
     ) -> None:
         """Draw one drafted hand card in the bottom hand display."""
         radius = self.scale(10, 6)
-        pygame.draw.rect(surface, (243, 243, 236), rect, border_radius=radius)
+        pygame.draw.rect(surface, self._muted_family_color(card.suit), rect, border_radius=radius)
         pygame.draw.rect(surface, accent, rect, 3, border_radius=radius)
 
         rank = self.small_font.render(get_rank_name(card.rank), True, (35, 35, 35))
         rank_rect = rank.get_rect(center=(rect.centerx, rect.y + self.scale(22, 16)))
         surface.blit(rank, rank_rect)
 
-        draw_suit_icon(
-            surface,
-            card.suit,
-            (rect.centerx, rect.centery - self.scale(4, 2)),
-            size=self.scale(18, 10),
-            color=get_family_color(card.suit),
-        )
-
         suit_name = self.small_font.render(get_family_name(card.suit), True, (35, 35, 35))
-        suit_rect = suit_name.get_rect(center=(rect.centerx, rect.bottom - self.scale(18, 12)))
+        suit_rect = suit_name.get_rect(center=(rect.centerx, rect.centery + self.scale(8, 4)))
         surface.blit(suit_name, suit_rect)
 
     def _render_value_legend(self, surface: pygame.Surface) -> None:
@@ -822,10 +1132,10 @@ class JackRevealScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh reveal fonts after a resize."""
-        self.title_font = pygame.font.Font(None, self.scale(62, 36))
-        self.body_font = pygame.font.Font(None, self.scale(30, 20))
-        self.card_font = pygame.font.Font(None, self.scale(42, 24))
-        self.small_font = pygame.font.Font(None, self.scale(24, 16))
+        self.title_font = pygame.font.Font(None, self.font_size(62, 36))
+        self.body_font = pygame.font.Font(None, self.font_size(30, 20))
+        self.card_font = pygame.font.Font(None, self.font_size(42, 24))
+        self.small_font = pygame.font.Font(None, self.font_size(24, 16))
 
     def start_reveal(self, jack_cards: list, player_cards: list | None = None) -> None:
         """Begin a new autonomous Jack reveal animation."""
@@ -1018,9 +1328,11 @@ class GameOverScreen(Screen):
         self.title_font = None
         self.subtitle_font = None
         self.body_font = None
+        self.small_font = None
 
         self.winner_text = "Player 1 Wins!"
         self.damage_text = "Final damage - P1: 0 | P2: 0"
+        self.match_summary = {}
 
         self.play_again_button = None
         self.menu_button = None
@@ -1031,9 +1343,10 @@ class GameOverScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh game-over fonts after a resize."""
-        self.title_font = pygame.font.Font(None, self.scale(72, 42))
-        self.subtitle_font = pygame.font.Font(None, self.scale(40, 26))
-        self.body_font = pygame.font.Font(None, self.scale(32, 22))
+        self.title_font = pygame.font.Font(None, self.font_size(72, 42))
+        self.subtitle_font = pygame.font.Font(None, self.font_size(40, 26))
+        self.body_font = pygame.font.Font(None, self.font_size(32, 22))
+        self.small_font = pygame.font.Font(None, self.font_size(21, 15))
 
     def _create_ui(self):
         """Create UI elements."""
@@ -1056,8 +1369,9 @@ class GameOverScreen(Screen):
         button_width = self.scale_x(300, 220)
         button_height = self.scale_y(60, 44)
         center_x = (self.window.WINDOW_WIDTH - button_width) // 2
-        play_again_y = self.window.WINDOW_HEIGHT // 2 + self.scale_y(80, 56)
-        menu_y = play_again_y + self.scale_y(90, 62)
+        gap = self.scale_y(14, 10)
+        menu_y = self.window.WINDOW_HEIGHT - button_height - self.scale_y(28, 18)
+        play_again_y = menu_y - button_height - gap
 
         for button, y in [
             (self.play_again_button, play_again_y),
@@ -1066,10 +1380,11 @@ class GameOverScreen(Screen):
             button.set_relative_position((center_x, y))
             button.set_dimensions((button_width, button_height))
 
-    def set_result(self, winner: int, p1_damage: int, p2_damage: int) -> None:
+    def set_result(self, winner: int, p1_damage: int, p2_damage: int, match_summary: dict | None = None) -> None:
         """Set winner screen text."""
         self.winner_text = f"Player {winner + 1} Wins!"
         self.damage_text = f"Final damage - P1: {p1_damage} | P2: {p2_damage}"
+        self.match_summary = match_summary or {}
 
     def _hide_all_elements(self):
         """Hide all UI elements initially."""
@@ -1102,12 +1417,85 @@ class GameOverScreen(Screen):
         surface.blit(winner, winner_rect)
 
         damage = self.body_font.render(self.damage_text, True, (170, 170, 170))
-        damage_rect = damage.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(330, 242)))
+        damage_rect = damage.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(318, 232)))
         surface.blit(damage, damage_rect)
 
+        self._render_match_summary(surface, damage_rect.bottom + self.scale_y(20, 14))
+
         prompt = self.body_font.render("Choose what to do next.", True, (140, 140, 140))
-        prompt_rect = prompt.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(390, 286)))
+        prompt_rect = prompt.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.window.WINDOW_HEIGHT - self.scale_y(156, 110)))
         surface.blit(prompt, prompt_rect)
+
+    def _render_match_summary(self, surface: pygame.Surface, start_y: int) -> None:
+        """Render final damage cards, recent requests, and major events."""
+        if not self.match_summary:
+            return
+
+        margin = self.scale_x(56, 20)
+        panel_rect = pygame.Rect(
+            margin,
+            start_y,
+            self.window.WINDOW_WIDTH - 2 * margin,
+            min(self.scale_y(220, 160), self.window.WINDOW_HEIGHT - start_y - self.scale_y(210, 150)),
+        )
+        if panel_rect.height < self.scale_y(120, 88):
+            return
+
+        pygame.draw.rect(surface, (28, 32, 44), panel_rect, border_radius=self.scale(14, 8))
+        pygame.draw.rect(surface, (104, 114, 138), panel_rect, 1, border_radius=self.scale(14, 8))
+
+        title = self.body_font.render("Match Summary", True, (238, 214, 142))
+        surface.blit(title, (panel_rect.x + self.scale(18, 10), panel_rect.y + self.scale(10, 7)))
+
+        damage_cards = self.match_summary.get("damage_cards", {})
+        p1_cards = ", ".join(get_card_display(card, compact=True) for card in damage_cards.get(0, [])[-6:]) or "None"
+        p2_cards = ", ".join(get_card_display(card, compact=True) for card in damage_cards.get(1, [])[-6:]) or "None"
+        lines = [
+            f"P1 damage: {p1_cards}",
+            f"P2 damage: {p2_cards}",
+        ]
+        lines.extend(self.match_summary.get("appeasing", [])[-2:])
+        lines.extend(self.match_summary.get("requests", [])[-2:])
+        lines.extend(self.match_summary.get("events", [])[-3:])
+
+        text_rect = pygame.Rect(
+            panel_rect.x + self.scale(18, 10),
+            panel_rect.y + self.scale(48, 34),
+            panel_rect.width - self.scale(36, 20),
+            panel_rect.height - self.scale(58, 40),
+        )
+        self._draw_wrapped_summary(surface, lines, text_rect, max_lines=8)
+
+    def _draw_wrapped_summary(
+        self,
+        surface: pygame.Surface,
+        lines: list[str],
+        rect: pygame.Rect,
+        max_lines: int,
+    ) -> None:
+        """Draw a wrapped summary list."""
+        y = rect.y
+        line_height = self.scale_y(21, 15)
+        rendered = 0
+        for line in lines:
+            words = line.split()
+            current = ""
+            for word in words:
+                candidate = word if not current else f"{current} {word}"
+                if self.small_font.size(candidate)[0] <= rect.width:
+                    current = candidate
+                else:
+                    if current and rendered < max_lines:
+                        surface.blit(self.small_font.render(current, True, (222, 226, 232)), (rect.x, y))
+                        y += line_height
+                        rendered += 1
+                    current = word
+            if current and rendered < max_lines:
+                surface.blit(self.small_font.render(current, True, (222, 226, 232)), (rect.x, y))
+                y += line_height
+                rendered += 1
+            if rendered >= max_lines:
+                break
 
     def on_enter(self) -> None:
         """Activate game-over screen."""

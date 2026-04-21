@@ -114,9 +114,9 @@ class GameScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh gameplay popup fonts after a resize."""
-        self.popup_title_font = pygame.font.Font(None, self.scale(38, 26))
-        self.popup_body_font = pygame.font.Font(None, self.scale(28, 20))
-        self.popup_small_font = pygame.font.Font(None, self.scale(22, 16))
+        self.popup_title_font = pygame.font.Font(None, self.font_size(38, 26))
+        self.popup_body_font = pygame.font.Font(None, self.font_size(28, 20))
+        self.popup_small_font = pygame.font.Font(None, self.font_size(22, 16))
 
     def _apply_element_rect(self, element, rect: pygame.Rect) -> None:
         """Resize and reposition one pygame_gui element."""
@@ -380,7 +380,7 @@ class GameScreen(Screen):
             )
 
         card_spacing = self.scale(10, 4)
-        card_height = self.scale_y(36, 30) if compact else self.scale(40, 32)
+        card_height = self.scale_y(58, 48) if compact else self.scale_y(72, 60)
         bottom_margin = self.scale_y(18, 12) if compact else self.scale(26, 16)
         if compact:
             card_columns = 5
@@ -897,6 +897,7 @@ class GameScreen(Screen):
         self._render_active_popups(surface)
         self._render_appeasing_result_banner(surface)
         self._render_notice_banner(surface)
+        self._render_tutorial_overlay(surface)
     
     def on_enter(self) -> None:
         """Activate game screen."""
@@ -975,8 +976,8 @@ class GameScreen(Screen):
     def _format_card_role_label(self, card) -> str:
         """Render a compact card label with its current Omen role."""
         if self.is_compact_layout():
-            return f"{get_rank_name(card.rank)}{get_family_code(card.suit)} {self._get_card_role_short_name(card)}"
-        return f"{self._format_card_label(card)} | {self._get_card_role_short_name(card)}"
+            return f"{get_rank_name(card.rank)} {get_family_code(card.suit)}\n{self._get_card_role_short_name(card)}"
+        return f"{self._format_card_label(card)}\n{self._get_card_role_name(card)}"
 
     def _show_notice(self, text: str, seconds: float = 4.5) -> None:
         """Show a short gameplay notice banner."""
@@ -1494,6 +1495,55 @@ class GameScreen(Screen):
             (236, 238, 240),
             text_rect,
             self.scale(18, 13),
+            2,
+        )
+
+    def _render_tutorial_overlay(self, surface: pygame.Surface) -> None:
+        """Render optional context-sensitive tutorial guidance."""
+        if not self.window.tutorial_enabled:
+            return
+
+        board_rect = self.renderer.get_board_rect()
+        target_rect = board_rect
+        if self.game.has_pending_ballista():
+            text = "Tutorial: click one of the glowing Ballista targets. The yellow line shows the launch path."
+        elif self.game.has_pending_card_placement():
+            text = "Tutorial: drag each played card onto an open hole. Occupied spaces are not valid holes."
+            card_rects = [rect for _, rect in self._get_pending_placement_card_rects()]
+            if card_rects:
+                target_rect = card_rects[0].copy()
+                for rect in card_rects[1:]:
+                    target_rect.union_ip(rect)
+        elif self.game.phase == GamePhase.APPEASING and self.game.current_request_winner is None:
+            text = "Tutorial: play one hand card for Appeasing Pan. Color role wins first, then rank breaks ties."
+            visible_buttons = [button.rect for button in self.card_buttons if button.visible]
+            if visible_buttons:
+                target_rect = visible_buttons[0].copy()
+                for rect in visible_buttons[1:]:
+                    target_rect.union_ip(rect)
+        elif self.game.phase == GamePhase.APPEASING:
+            text = "Tutorial: choose a request. The winner chooses first; the loser chooses second unless Ignore Us is picked."
+        elif self.game.phase == GamePhase.TRAVERSING:
+            text = "Tutorial: click an adjacent board space to move. The board wraps around its edges."
+        else:
+            return
+
+        pygame.draw.rect(surface, (252, 222, 104), target_rect.inflate(self.scale(10, 6), self.scale(10, 6)), 3, border_radius=10)
+        panel_width = min(self.scale_x(720, 330), self.window.WINDOW_WIDTH - 2 * self.scale_x(20, 12))
+        panel_height = self.scale_y(46, 36)
+        panel_y = self.scale_y(132, 96)
+        if target_rect.top < self.window.WINDOW_HEIGHT // 2:
+            panel_y = min(self.window.WINDOW_HEIGHT - panel_height - self.scale_y(16, 10), target_rect.bottom + self.scale_y(12, 8))
+        panel_rect = pygame.Rect((self.window.WINDOW_WIDTH - panel_width) // 2, panel_y, panel_width, panel_height)
+        pygame.draw.rect(surface, (24, 28, 40), panel_rect, border_radius=self.scale(10, 6))
+        pygame.draw.rect(surface, (252, 222, 104), panel_rect, 2, border_radius=self.scale(10, 6))
+        self._draw_wrapped_text(
+            surface,
+            text,
+            self.popup_small_font,
+            (238, 238, 238),
+            panel_rect.inflate(-self.scale(20, 12), -self.scale(8, 6)),
+            self.scale_y(18, 13),
             2,
         )
 

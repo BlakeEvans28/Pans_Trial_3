@@ -14,6 +14,13 @@ Use this file to track the most recent committed changes in reverse chronologica
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
 ## 2026-04-21 - Brandt Homan
+Commit: `pending` - Added settings, tutorial, coin flip, art, and match summary
+Summary:
+- Added Settings and Coin Flip screens, including fullscreen/windowed mode, text size, animation speed, sound-volume storage, tutorial toggles, and randomized draft-start order.
+- Added optional tutorial overlays, Game Over match summaries, event tracking, and board artwork that updates by each card's current Walls, Traps, Ballista, or Weapons role.
+- Updated Draft cards to use readable muted family-color backgrounds, changed hand buttons to stacked card/role labels, and refreshed `Future_Improvements.md` with new review items.
+
+## 2026-04-21 - Brandt Homan
 Commit: `pending` - Added How To Play and gameplay clarity updates
 Summary:
 - Added a How To Play page that is reachable from the home screen and explains the draft, Omens, Traversing, Appeasing Pan, requests, and hole placement.

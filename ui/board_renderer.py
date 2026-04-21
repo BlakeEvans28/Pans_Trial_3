@@ -30,6 +30,7 @@ class BoardRenderer:
     PLAYER1_COLOR = (200, 50, 50)
     PLAYER2_COLOR = (50, 50, 200)
     PLAYER_MARKER_RADIUS = 17
+    ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
     PLAYER_PORTRAIT_PATH = Path(__file__).resolve().parent.parent / "assets" / "player_portrait_micah.png"
     
     def __init__(self):
@@ -45,6 +46,8 @@ class BoardRenderer:
         self._refresh_fonts()
         self._player_portrait_base = self._load_player_portrait()
         self._player_portrait_cache: dict[int, pygame.Surface] = {}
+        self._tile_art_base = self._load_tile_art()
+        self._tile_art_cache: dict[tuple[str, int], pygame.Surface] = {}
 
     def _refresh_fonts(self) -> None:
         """Refresh fonts to match the current cell size."""
@@ -57,6 +60,48 @@ class BoardRenderer:
         if not self.PLAYER_PORTRAIT_PATH.exists():
             return None
         return pygame.image.load(str(self.PLAYER_PORTRAIT_PATH)).convert_alpha()
+
+    def _load_tile_art(self) -> dict[str, pygame.Surface]:
+        """Load labyrinth role artwork from assets."""
+        art = {}
+        paths = {
+            "walls": self.ASSET_ROOT / "Stone_Wall.jpg",
+            "ballista": self.ASSET_ROOT / "Ballista.png",
+        }
+        for key, path in paths.items():
+            if path.exists():
+                art[key] = pygame.image.load(str(path)).convert_alpha()
+
+        cards_dir = self.ASSET_ROOT / "cards"
+        for role, prefix in [("traps", "Trap"), ("weapons", "Weapon")]:
+            for value in range(1, 13):
+                path = cards_dir / f"{prefix}{value:02}.png"
+                if path.exists():
+                    art[f"{role}_{value}"] = pygame.image.load(str(path)).convert_alpha()
+        return art
+
+    def _get_scaled_tile_art(self, key: str, size: tuple[int, int]) -> Optional[pygame.Surface]:
+        """Return cached artwork scaled to one board cell."""
+        if key not in self._tile_art_base:
+            return None
+        cache_key = (key, size[0])
+        if cache_key not in self._tile_art_cache:
+            self._tile_art_cache[cache_key] = pygame.transform.smoothscale(self._tile_art_base[key], size)
+        return self._tile_art_cache[cache_key]
+
+    def _get_card_art_value(self, card) -> int:
+        """Return the 1-12 value used for numbered tile art."""
+        return max(1, min(12, card.combat_value()))
+
+    def _get_card_art_key(self, card, suit_role: str | None) -> str | None:
+        """Return the asset key for a card in its current labyrinth role."""
+        if suit_role == "walls":
+            return "walls"
+        if suit_role == "ballista":
+            return "ballista"
+        if suit_role in {"traps", "weapons"}:
+            return f"{suit_role}_{self._get_card_art_value(card)}"
+        return None
 
     def _get_scaled_player_portrait(self, diameter: int) -> Optional[pygame.Surface]:
         """Return a cached portrait surface sized for the current marker."""
@@ -190,12 +235,23 @@ class BoardRenderer:
                     
                     pygame.draw.rect(surface, color, (x, y, w, h))
                     pygame.draw.rect(surface, self.GRID_COLOR, (x, y, w, h), 2)
-                    
-                    # Draw card info
-                    self._render_card_info(surface, card, x + 5, y + 5, suit_role, phase)
+                    self._render_card_art(surface, card, suit_role, pygame.Rect(x, y, w, h), phase)
 
                 if pos in highlight_positions:
                     pygame.draw.rect(surface, (245, 220, 120), (x + 6, y + 6, w - 12, h - 12), 3, border_radius=8)
+
+    def _render_card_art(self, surface: pygame.Surface, card, suit_role: str, rect: pygame.Rect, phase) -> None:
+        """Render role artwork for a labyrinth card."""
+        art_key = self._get_card_art_key(card, suit_role)
+        art = self._get_scaled_tile_art(art_key, rect.size) if art_key else None
+        if art is not None:
+            surface.blit(art, rect.topleft)
+            pygame.draw.rect(surface, self.GRID_COLOR, rect, 2)
+            if suit_role in {"walls", "ballista"}:
+                self._render_card_info(surface, card, rect.x + 5, rect.y + 5, suit_role, phase)
+            return
+
+        self._render_card_info(surface, card, rect.x + 5, rect.y + 5, suit_role, phase)
     
     def _render_card_info(self, surface: pygame.Surface, card, x: int, y: int, suit_role: str, phase) -> None:
         """Render card rank only; tile color already communicates the role."""
