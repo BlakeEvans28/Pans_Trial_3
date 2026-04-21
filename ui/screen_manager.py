@@ -51,6 +51,10 @@ class Screen:
     def scale_y(self, value: int, minimum: int = 1) -> int:
         """Scale a vertical measurement from the base layout."""
         return self.window.scale_y(value, minimum)
+
+    def is_compact_layout(self) -> bool:
+        """Return True when the active window should use phone-style layouts."""
+        return self.window.is_compact_layout()
     
     def handle_events(self, event: pygame.event.Event) -> bool:
         """Handle event. Return True if event was consumed."""
@@ -253,6 +257,8 @@ class HowToPlayScreen(Screen):
         self.body_font = None
         self.small_font = None
         self.back_button = None
+        self.scroll_offset = 0
+        self.max_scroll = 0
         self._refresh_fonts()
         self._create_ui()
         self.on_resize()
@@ -294,6 +300,9 @@ class HowToPlayScreen(Screen):
         """Handle How To Play events."""
         if event.type == pygame_gui.UI_BUTTON_PRESSED and event.ui_element == self.back_button:
             return "MENU"
+        if event.type == pygame.MOUSEWHEEL:
+            self.scroll_offset = max(0, min(self.max_scroll, self.scroll_offset - event.y * self.scale(48, 32)))
+            return True
         return False
 
     def update(self, time_delta: float) -> None:
@@ -316,7 +325,7 @@ class HowToPlayScreen(Screen):
         subtitle_rect = subtitle.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(122, 88)))
         surface.blit(subtitle, subtitle_rect)
 
-        content_rect = pygame.Rect(
+        viewport_rect = pygame.Rect(
             self.scale_x(48, 24),
             self.scale_y(160, 118),
             self.window.WINDOW_WIDTH - 2 * self.scale_x(48, 24),
@@ -325,18 +334,32 @@ class HowToPlayScreen(Screen):
         columns = 2 if self.window.WINDOW_WIDTH >= 900 else 1
         rows = (len(self.SECTIONS) + columns - 1) // columns
         gap = self.scale(14, 8)
-        card_width = (content_rect.width - gap * (columns - 1)) // columns
-        card_height = max(self.scale_y(76, 58), (content_rect.height - gap * (rows - 1)) // rows)
+        card_width = (viewport_rect.width - gap * (columns - 1)) // columns
+        card_height = max(
+            self.scale_y(112, 86) if columns == 1 else self.scale_y(76, 58),
+            (viewport_rect.height - gap * (rows - 1)) // rows if columns > 1 else 0,
+        )
+        content_height = rows * card_height + (rows - 1) * gap
+        self.max_scroll = max(0, content_height - viewport_rect.height)
+        self.scroll_offset = min(self.scroll_offset, self.max_scroll)
 
+        if self.max_scroll:
+            hint = self.small_font.render("Mouse wheel scrolls this guide.", True, (150, 158, 170))
+            surface.blit(hint, (viewport_rect.x, viewport_rect.bottom + self.scale_y(8, 5)))
+
+        old_clip = surface.get_clip()
+        surface.set_clip(viewport_rect)
         for index, (heading, body) in enumerate(self.SECTIONS):
             col = index // rows
             row = index % rows
             card_rect = pygame.Rect(
-                content_rect.x + col * (card_width + gap),
-                content_rect.y + row * (card_height + gap),
+                viewport_rect.x + col * (card_width + gap),
+                viewport_rect.y + row * (card_height + gap) - self.scroll_offset,
                 card_width,
                 card_height,
             )
+            if card_rect.bottom < viewport_rect.top or card_rect.top > viewport_rect.bottom:
+                continue
             pygame.draw.rect(surface, (28, 34, 48), card_rect, border_radius=self.scale(14, 8))
             pygame.draw.rect(surface, (96, 112, 136), card_rect, 1, border_radius=self.scale(14, 8))
 
@@ -350,6 +373,7 @@ class HowToPlayScreen(Screen):
                 card_rect.height - self.scale(50, 36),
             )
             self._draw_wrapped_text(surface, body, self.body_font, (222, 226, 232), body_rect, self.scale(22, 15), 4)
+        surface.set_clip(old_clip)
 
     def _draw_wrapped_text(
         self,
@@ -411,6 +435,7 @@ class DraftScreen(Screen):
         self.current_player = 0
         self.kings_drafted = 0
         self.player_cards = []
+        self.draft_grid_bottom = 0
         self._refresh_fonts()
         self._create_ui()
         self.on_resize()
@@ -429,21 +454,30 @@ class DraftScreen(Screen):
 
     def _layout_card_rects(self) -> None:
         """Lay out the 6x2 draft grid for the current window size."""
-        button_width = self.scale(150, 92)
-        button_height = self.scale(96, 62)
+        compact = self.is_compact_layout()
+        columns = 3 if compact else 6
+        rows = (12 + columns - 1) // columns
+        margin = self.scale_x(34, 16)
         col_spacing = self.scale(12, 6)
-        row_spacing = self.scale(18, 10)
-        grid_width = 6 * button_width + 5 * col_spacing
+        row_spacing = self.scale(18, 8)
+        available_width = self.window.WINDOW_WIDTH - 2 * margin
+        button_width = min(
+            self.scale(150, 92),
+            (available_width - (columns - 1) * col_spacing) // columns,
+        )
+        button_height = self.scale_y(74, 54) if compact else self.scale(96, 62)
+        grid_width = columns * button_width + (columns - 1) * col_spacing
         start_x = (self.window.WINDOW_WIDTH - grid_width) // 2
-        start_y = self.scale_y(255, 180)
+        start_y = self.scale_y(230, 158) if compact else self.scale_y(255, 180)
 
         self.card_rects = []
         for index in range(12):
-            row = index // 6
-            col = index % 6
+            row = index // columns
+            col = index % columns
             x = start_x + col * (button_width + col_spacing)
             y = start_y + row * (button_height + row_spacing)
             self.card_rects.append(pygame.Rect((x, y), (button_width, button_height)))
+        self.draft_grid_bottom = start_y + rows * button_height + (rows - 1) * row_spacing
 
     def _hide_all_elements(self):
         """Draft cards are rendered manually; no UI elements to hide."""
@@ -511,9 +545,10 @@ class DraftScreen(Screen):
         """Render draft instructions and current picks."""
         surface.fill((16, 18, 28))
         self._render_value_legend(surface)
+        compact = self.is_compact_layout()
 
         title = self.title_font.render("INITIAL DRAFT", True, (235, 225, 190))
-        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(90, 64)))
+        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(62, 44) if compact else self.scale_y(90, 64)))
         surface.blit(title, title_rect)
 
         prompt = self.body_font.render(
@@ -521,58 +556,65 @@ class DraftScreen(Screen):
             True,
             (220, 220, 220),
         )
-        prompt_rect = prompt.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(150, 112)))
+        prompt_rect = prompt.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(104, 76) if compact else self.scale_y(150, 112)))
         surface.blit(prompt, prompt_rect)
 
-        rules = [
-            "Draft all 4 Satyrs, all 4 Oracles, and only 2 Heroes.",
-            "The 2 Heroes left behind become the player cards.",
-        ]
+        rules = (
+            ["Draft 8 Satyrs/Oracles + 2 Heroes. Remaining Heroes become player cards."]
+            if compact
+            else [
+                "Draft all 4 Satyrs, all 4 Oracles, and only 2 Heroes.",
+                "The 2 Heroes left behind become the player cards.",
+            ]
+        )
         for index, text in enumerate(rules):
             line = self.small_font.render(text, True, (150, 150, 150))
             line_rect = line.get_rect(
                 center=(
                     self.window.WINDOW_WIDTH // 2,
-                    self.scale_y(190 + index * 28, 144 + index * 18),
+                    self.scale_y(134 + index * 18, 104 + index * 14) if compact else self.scale_y(190 + index * 28, 144 + index * 18),
                 )
             )
             surface.blit(line, line_rect)
 
-        counts = self.small_font.render(
-            f"Satyrs/Oracles drafted: {len(self.player_hands[0]) + len(self.player_hands[1]) - self.kings_drafted}/8   Heroes drafted: {self.kings_drafted}/2",
-            True,
-            (185, 185, 185),
+        drafted_low_cards = len(self.player_hands[0]) + len(self.player_hands[1]) - self.kings_drafted
+        count_text = (
+            f"S/O: {drafted_low_cards}/8 | Heroes: {self.kings_drafted}/2"
+            if self.is_compact_layout()
+            else f"Satyrs/Oracles drafted: {drafted_low_cards}/8   Heroes drafted: {self.kings_drafted}/2"
         )
-        counts_rect = counts.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(560, 430)))
+        counts = self.small_font.render(count_text, True, (185, 185, 185))
+        counts_y = self.draft_grid_bottom + self.scale_y(28, 20)
+        counts_rect = counts.get_rect(center=(self.window.WINDOW_WIDTH // 2, counts_y))
         surface.blit(counts, counts_rect)
 
         for index, rect in enumerate(self.card_rects):
             card = self.available_cards[index] if index < len(self.available_cards) else None
             self._render_draft_card(surface, rect, card)
 
-        margin = self.scale_x(70, 28)
-        panel_gap = self.scale_x(60, 24)
-        panel_y = self.scale_y(630, 480)
-        panel_height = max(self.scale_y(210, 150), self.window.WINDOW_HEIGHT - panel_y - margin)
-        panel_width = max(
-            self.scale_x(300, 220),
-            (self.window.WINDOW_WIDTH - 2 * margin - panel_gap) // 2,
-        )
+        margin = self.scale_x(70, 20)
+        panel_gap = self.scale_x(60, 12)
+        panel_y = counts_y + self.scale_y(32, 22)
+        if self.is_compact_layout():
+            panel_width = self.window.WINDOW_WIDTH - 2 * margin
+            panel_height = max(self.scale_y(66, 54), (self.window.WINDOW_HEIGHT - panel_y - margin - panel_gap) // 2)
+            panel_rects = [
+                pygame.Rect(margin, panel_y, panel_width, panel_height),
+                pygame.Rect(margin, panel_y + panel_height + panel_gap, panel_width, panel_height),
+            ]
+        else:
+            panel_height = max(self.scale_y(210, 150), self.window.WINDOW_HEIGHT - panel_y - margin)
+            panel_width = max(
+                self.scale_x(300, 220),
+                (self.window.WINDOW_WIDTH - 2 * margin - panel_gap) // 2,
+            )
+            panel_rects = [
+                pygame.Rect(margin, panel_y, panel_width, panel_height),
+                pygame.Rect(margin + panel_width + panel_gap, panel_y, panel_width, panel_height),
+            ]
 
-        self._render_hand_panel(
-            surface,
-            pygame.Rect(margin, panel_y, panel_width, panel_height),
-            "Player 1 Trial Hand",
-            self.player_hands[0],
-            (210, 120, 120),
-        )
-        self._render_hand_panel(
-            surface,
-            pygame.Rect(margin + panel_width + panel_gap, panel_y, panel_width, panel_height),
-            "Player 2 Trial Hand",
-            self.player_hands[1],
-            (120, 160, 230),
-        )
+        self._render_hand_panel(surface, panel_rects[0], "Player 1 Trial Hand", self.player_hands[0], (210, 120, 120))
+        self._render_hand_panel(surface, panel_rects[1], "Player 2 Trial Hand", self.player_hands[1], (120, 160, 230))
 
     def on_enter(self) -> None:
         """Manual card rendering needs no UI activation."""
@@ -652,6 +694,24 @@ class DraftScreen(Screen):
         inner_margin = self.scale(18, 10)
         surface.blit(title_text, (rect.x + inner_margin, rect.y + self.scale(14, 10)))
 
+        if rect.height < self.scale_y(112, 86):
+            label_y = rect.y + self.scale_y(42, 30)
+            label_width = max(self.scale_x(48, 38), (rect.width - 2 * inner_margin - 4 * self.scale(6, 4)) // 5)
+            spacing = self.scale(6, 4)
+            for index in range(5):
+                chip_rect = pygame.Rect(
+                    rect.x + inner_margin + index * (label_width + spacing),
+                    label_y,
+                    label_width,
+                    self.scale_y(26, 20),
+                )
+                pygame.draw.rect(surface, (38, 42, 54), chip_rect, border_radius=self.scale(7, 5))
+                pygame.draw.rect(surface, (92, 98, 112), chip_rect, 1, border_radius=self.scale(7, 5))
+                if index < len(cards):
+                    label = self.small_font.render(get_card_display(cards[index], compact=True), True, (232, 232, 232))
+                    surface.blit(label, label.get_rect(center=chip_rect.center))
+            return
+
         card_spacing = self.scale(10, 6)
         card_width = max(
             self.scale(52, 40),
@@ -708,6 +768,9 @@ class DraftScreen(Screen):
 
     def _render_value_legend(self, surface: pygame.Surface) -> None:
         """Show the draft-phase values for the three high-rank card types."""
+        if self.is_compact_layout():
+            return
+
         panel_rect = pygame.Rect(
             self.scale_x(28, 16),
             self.scale_y(28, 16),
@@ -807,72 +870,86 @@ class JackRevealScreen(Screen):
         subtitle_rect = subtitle.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(150, 112)))
         surface.blit(subtitle, subtitle_rect)
 
-        spacing = self.scale(24, 12)
+        compact = self.is_compact_layout()
+        columns = 2 if compact else 4
+        spacing = self.scale(24, 10)
         card_width = min(
-            self.scale(180, 100),
-            (self.window.WINDOW_WIDTH - self.scale_x(80, 32) - 3 * spacing) // 4,
+            self.scale_x(150, 104) if compact else self.scale(180, 100),
+            (self.window.WINDOW_WIDTH - self.scale_x(80, 32) - (columns - 1) * spacing) // columns,
         )
-        card_height = max(self.scale(150, 120), int(card_width * 1.22))
-        total_width = 4 * card_width + 3 * spacing
+        card_height = max(self.scale_y(112, 84), int(card_width * (0.78 if compact else 1.22)))
+        rows = (4 + columns - 1) // columns
+        total_width = columns * card_width + (columns - 1) * spacing
         start_x = (self.window.WINDOW_WIDTH - total_width) // 2
-        y = self.scale_y(260, 190)
+        y = self.scale_y(170, 122) if compact else self.scale_y(260, 190)
         border_radius = self.scale(12, 8)
 
         for index in range(4):
-            rect = pygame.Rect(start_x + index * (card_width + spacing), y, card_width, card_height)
+            row = index // columns
+            col = index % columns
+            rect = pygame.Rect(
+                start_x + col * (card_width + spacing),
+                y + row * (card_height + spacing),
+                card_width,
+                card_height,
+            )
             pygame.draw.rect(surface, (62, 68, 88), rect, border_radius=border_radius)
             pygame.draw.rect(surface, (130, 136, 156), rect, 2, border_radius=border_radius)
 
             if index < self.revealed_count:
                 suit = self.jack_order[index]
                 card_text = self.card_font.render("Omen", True, (235, 235, 235))
-                card_rect = card_text.get_rect(center=(rect.centerx, rect.y + self.scale(60, 42)))
+                card_rect = card_text.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.28)))
                 surface.blit(card_text, card_rect)
-                draw_suit_icon(surface, suit, (rect.centerx, rect.y + self.scale(108, 78)), size=self.scale(18, 10))
+                draw_suit_icon(surface, suit, (rect.centerx, rect.y + int(rect.height * 0.52)), size=self.scale(18, 10))
 
                 color_name = self.small_font.render(get_family_name(suit), True, (220, 220, 220))
-                color_rect = color_name.get_rect(center=(rect.centerx, rect.y + self.scale(132, 96)))
+                color_rect = color_name.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.68)))
                 surface.blit(color_name, color_rect)
 
                 role_text = self.body_font.render(self.ROLE_NAMES[index], True, (235, 196, 100))
-                role_rect = role_text.get_rect(center=(rect.centerx, rect.y + self.scale(168, 124)))
+                role_rect = role_text.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.86)))
                 surface.blit(role_text, role_rect)
             elif index == self.revealed_count and not self.finished:
                 shuffle_text = self.card_font.render("Omen", True, (190, 190, 220))
-                shuffle_rect = shuffle_text.get_rect(center=(rect.centerx, rect.y + self.scale(60, 42)))
+                shuffle_rect = shuffle_text.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.28)))
                 surface.blit(shuffle_text, shuffle_rect)
                 cycling_suit = self._cycling_suit()
                 draw_suit_icon(
                     surface,
                     cycling_suit,
-                    (rect.centerx, rect.y + self.scale(108, 78)),
+                    (rect.centerx, rect.y + int(rect.height * 0.52)),
                     size=self.scale(18, 10),
                     color=(190, 190, 220),
                 )
 
                 color_name = self.small_font.render(get_family_name(cycling_suit), True, (185, 185, 205))
-                color_rect = color_name.get_rect(center=(rect.centerx, rect.y + self.scale(132, 96)))
+                color_rect = color_name.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.68)))
                 surface.blit(color_name, color_rect)
 
                 pending = self.small_font.render("shuffling...", True, (165, 165, 180))
-                pending_rect = pending.get_rect(center=(rect.centerx, rect.y + self.scale(168, 124)))
+                pending_rect = pending.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.86)))
                 surface.blit(pending, pending_rect)
             else:
                 hidden = self.card_font.render("?", True, (155, 155, 170))
-                hidden_rect = hidden.get_rect(center=(rect.centerx, rect.y + self.scale(70, 50)))
+                hidden_rect = hidden.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.44)))
                 surface.blit(hidden, hidden_rect)
 
         footer = self.small_font.render("The Omens reveal automatically, then the labyrinth begins.", True, (145, 145, 160))
-        footer_rect = footer.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(620, 470)))
+        grid_bottom = y + rows * card_height + (rows - 1) * spacing
+        footer_rect = footer.get_rect(center=(self.window.WINDOW_WIDTH // 2, grid_bottom + self.scale_y(28, 20)))
         surface.blit(footer, footer_rect)
 
         if self.player_cards:
-            card_w = self.scale_x(170, 120)
-            card_h = self.scale_y(90, 64)
-            gap = self.scale_x(80, 48)
-            y = self.scale_y(690, 520)
-            left_rect = pygame.Rect(self.window.WINDOW_WIDTH // 2 - gap // 2 - card_w, y, card_w, card_h)
-            right_rect = pygame.Rect(self.window.WINDOW_WIDTH // 2 + gap // 2, y, card_w, card_h)
+            card_w = self.scale_x(160, 112) if compact else self.scale_x(170, 120)
+            card_h = self.scale_y(78, 58) if compact else self.scale_y(90, 64)
+            gap = self.scale_x(24, 14) if compact else self.scale_x(80, 48)
+            player_y = min(
+                footer_rect.bottom + self.scale_y(16, 10),
+                self.window.WINDOW_HEIGHT - card_h - self.scale_y(18, 12),
+            )
+            left_rect = pygame.Rect(self.window.WINDOW_WIDTH // 2 - gap // 2 - card_w, player_y, card_w, card_h)
+            right_rect = pygame.Rect(self.window.WINDOW_WIDTH // 2 + gap // 2, player_y, card_w, card_h)
             self._render_player_card(surface, left_rect, "P1 Player Card", self.player_cards[0] if len(self.player_cards) > 0 else None)
             self._render_player_card(surface, right_rect, "P2 Player Card", self.player_cards[1] if len(self.player_cards) > 1 else None)
 

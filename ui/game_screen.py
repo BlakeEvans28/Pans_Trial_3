@@ -310,6 +310,7 @@ class GameScreen(Screen):
         self._refresh_fonts()
         self.renderer.update_layout(self.window.WINDOW_WIDTH, self.window.WINDOW_HEIGHT)
         board_rect = self.renderer.get_board_rect()
+        compact = self.is_compact_layout()
 
         margin = self.scale(20, 12)
         button_width = max(
@@ -379,29 +380,52 @@ class GameScreen(Screen):
             )
 
         card_spacing = self.scale(10, 4)
-        card_height = self.scale(40, 32)
-        bottom_margin = self.scale(26, 16)
-        card_row_y = self.window.WINDOW_HEIGHT - bottom_margin - card_height
-        card_width = max(
-            self.scale(72, 62),
-            min(
-                self.scale(110, 96),
-                (self.window.WINDOW_WIDTH - 2 * margin - (len(self.card_buttons) - 1) * card_spacing) // len(self.card_buttons),
-            ),
-        )
-        total_cards_width = len(self.card_buttons) * card_width + (len(self.card_buttons) - 1) * card_spacing
-        card_start_x = max(margin, (self.window.WINDOW_WIDTH - total_cards_width) // 2)
-
-        for index, button in enumerate(self.card_buttons):
-            self._apply_element_rect(
-                button,
-                pygame.Rect(
-                    card_start_x + index * (card_width + card_spacing),
-                    card_row_y,
-                    card_width,
-                    card_height,
+        card_height = self.scale_y(36, 30) if compact else self.scale(40, 32)
+        bottom_margin = self.scale_y(18, 12) if compact else self.scale(26, 16)
+        if compact:
+            card_columns = 5
+            card_rows = 2
+            card_width = max(
+                self.scale_x(56, 48),
+                (self.window.WINDOW_WIDTH - 2 * margin - (card_columns - 1) * card_spacing) // card_columns,
+            )
+            total_cards_width = card_columns * card_width + (card_columns - 1) * card_spacing
+            card_start_x = max(margin, (self.window.WINDOW_WIDTH - total_cards_width) // 2)
+            card_row_y = self.window.WINDOW_HEIGHT - bottom_margin - card_rows * card_height - (card_rows - 1) * card_spacing
+            for index, button in enumerate(self.card_buttons):
+                row = index // card_columns
+                col = index % card_columns
+                self._apply_element_rect(
+                    button,
+                    pygame.Rect(
+                        card_start_x + col * (card_width + card_spacing),
+                        card_row_y + row * (card_height + card_spacing),
+                        card_width,
+                        card_height,
+                    ),
+                )
+        else:
+            card_row_y = self.window.WINDOW_HEIGHT - bottom_margin - card_height
+            card_width = max(
+                self.scale(72, 62),
+                min(
+                    self.scale(110, 96),
+                    (self.window.WINDOW_WIDTH - 2 * margin - (len(self.card_buttons) - 1) * card_spacing) // len(self.card_buttons),
                 ),
             )
+            total_cards_width = len(self.card_buttons) * card_width + (len(self.card_buttons) - 1) * card_spacing
+            card_start_x = max(margin, (self.window.WINDOW_WIDTH - total_cards_width) // 2)
+
+            for index, button in enumerate(self.card_buttons):
+                self._apply_element_rect(
+                    button,
+                    pygame.Rect(
+                        card_start_x + index * (card_width + card_spacing),
+                        card_row_y,
+                        card_width,
+                        card_height,
+                    ),
+                )
 
         hand_label_x = card_start_x
         hand_label_width = min(self.scale_x(260, 180), self.window.WINDOW_WIDTH - hand_label_x - margin)
@@ -410,7 +434,7 @@ class GameScreen(Screen):
                 label,
                 pygame.Rect(
                     hand_label_x,
-                    card_row_y - self.scale(54, 38) + index * self.scale(28, 20),
+                    card_row_y - self.scale(46, 34) + index * self.scale(24, 18) if compact else card_row_y - self.scale(54, 38) + index * self.scale(28, 20),
                     hand_label_width,
                     self.scale(24, 18),
                 ),
@@ -430,24 +454,49 @@ class GameScreen(Screen):
                 ),
             )
 
-        weapon_label_y = max(board_rect.top + self.scale(470, 310), move_start_y + total_button_height + self.scale(82, 54))
-        weapon_button_y = weapon_label_y + self.scale(30, 22)
-        weapon_button_height = self.scale(24, 20)
+        weapon_button_height = self.scale_y(28, 22) if compact else self.scale(24, 20)
         weapon_button_spacing = self.scale(4, 2)
-        self._apply_element_rect(
-            self.weapon_label,
-            pygame.Rect(right_panel_x, weapon_label_y, button_width, self.scale(24, 18)),
-        )
-        for index, button in enumerate(self.weapon_buttons):
-            self._apply_element_rect(
-                button,
-                pygame.Rect(
-                    right_panel_x,
-                    weapon_button_y + index * (weapon_button_height + weapon_button_spacing),
-                    button_width,
-                    weapon_button_height,
-                ),
+        if compact:
+            weapon_label_y = board_rect.bottom + self.scale_y(8, 5)
+            weapon_columns = 5
+            weapon_width = max(
+                self.scale_x(56, 48),
+                (self.window.WINDOW_WIDTH - 2 * margin - (weapon_columns - 1) * weapon_button_spacing) // weapon_columns,
             )
+            weapon_start_x = max(margin, (self.window.WINDOW_WIDTH - (weapon_columns * weapon_width + (weapon_columns - 1) * weapon_button_spacing)) // 2)
+            self._apply_element_rect(
+                self.weapon_label,
+                pygame.Rect(margin, weapon_label_y, self.window.WINDOW_WIDTH - 2 * margin, self.scale(24, 18)),
+            )
+            for index, button in enumerate(self.weapon_buttons):
+                row = index // weapon_columns
+                col = index % weapon_columns
+                self._apply_element_rect(
+                    button,
+                    pygame.Rect(
+                        weapon_start_x + col * (weapon_width + weapon_button_spacing),
+                        weapon_label_y + self.scale_y(26, 20) + row * (weapon_button_height + weapon_button_spacing),
+                        weapon_width,
+                        weapon_button_height,
+                    ),
+                )
+        else:
+            weapon_label_y = max(board_rect.top + self.scale(470, 310), move_start_y + total_button_height + self.scale(82, 54))
+            weapon_button_y = weapon_label_y + self.scale(30, 22)
+            self._apply_element_rect(
+                self.weapon_label,
+                pygame.Rect(right_panel_x, weapon_label_y, button_width, self.scale(24, 18)),
+            )
+            for index, button in enumerate(self.weapon_buttons):
+                self._apply_element_rect(
+                    button,
+                    pygame.Rect(
+                        right_panel_x,
+                        weapon_button_y + index * (weapon_button_height + weapon_button_spacing),
+                        button_width,
+                        weapon_button_height,
+                    ),
+                )
 
         restructure_y = board_rect.top + self.scale(250, 172)
         restructure_height = self.scale(28, 22)
@@ -730,7 +779,9 @@ class GameScreen(Screen):
         # Update the small turn indicator above the card buttons.
         for i, label in enumerate(self.hand_labels):
             label.set_text(f"Player {i+1} Turn")
-            if i == self.game.current_player:
+            if self.is_compact_layout() and self.game.has_pending_card_placement():
+                label.hide()
+            elif i == self.game.current_player:
                 label.show()
             else:
                 label.hide()
@@ -749,6 +800,11 @@ class GameScreen(Screen):
         # Update card buttons
         player_hand = self.game.get_player_hand(self.game.current_player)
         for i, btn in enumerate(self.card_buttons):
+            if self.is_compact_layout() and self.game.has_pending_card_placement():
+                btn.set_text("")
+                btn.disabled = True
+                btn.hide()
+                continue
             if i < len(player_hand):
                 card = player_hand[i]
                 btn.set_text(self._format_card_role_label(card))
@@ -769,10 +825,14 @@ class GameScreen(Screen):
         # Update active player's combat-eligible weapon-color cards from their normal hand.
         player_weapons = self.game.get_player_weapons(self.game.current_player)
         self.weapon_label.set_text(f"P{self.game.current_player + 1} Weapon Cards ({len(player_weapons)})")
-        self.weapon_label.show()
+        show_weapon_panel = self.game.has_pending_combat() or not self.is_compact_layout()
+        if show_weapon_panel:
+            self.weapon_label.show()
+        else:
+            self.weapon_label.hide()
 
         for index, btn in enumerate(self.weapon_buttons):
-            if index < len(player_weapons):
+            if show_weapon_panel and index < len(player_weapons):
                 btn.set_text(self._format_card_label(player_weapons[index]))
                 btn.disabled = not self.game.has_pending_combat()
                 btn.show()
@@ -900,9 +960,23 @@ class GameScreen(Screen):
         role = self.game.suit_roles.get(card.suit)
         return role.value.title() if role else "Unknown"
 
+    def _get_card_role_short_name(self, card) -> str:
+        """Return a short role label that fits narrow hand buttons."""
+        role = self.game.suit_roles.get(card.suit)
+        if role is None:
+            return "?"
+        return {
+            "walls": "Wall",
+            "traps": "Trap",
+            "ballista": "Ball",
+            "weapons": "Wpn",
+        }.get(role.value, role.value[:4].title())
+
     def _format_card_role_label(self, card) -> str:
         """Render a compact card label with its current Omen role."""
-        return f"{self._format_card_label(card)} | {self._get_card_role_name(card)}"
+        if self.is_compact_layout():
+            return f"{get_rank_name(card.rank)}{get_family_code(card.suit)} {self._get_card_role_short_name(card)}"
+        return f"{self._format_card_label(card)} | {self._get_card_role_short_name(card)}"
 
     def _show_notice(self, text: str, seconds: float = 4.5) -> None:
         """Show a short gameplay notice banner."""
@@ -956,6 +1030,17 @@ class GameScreen(Screen):
 
     def _get_damage_summary_rects(self) -> dict[int, pygame.Rect]:
         """Return the clickable top-right damage summary rects."""
+        if self.is_compact_layout():
+            margin = self.scale_x(18, 12)
+            gap = self.scale_x(10, 6)
+            width = (self.window.WINDOW_WIDTH - 2 * margin - gap) // 2
+            height = self.scale_y(28, 22)
+            top = self.scale_y(58, 46)
+            return {
+                0: pygame.Rect(margin, top, width, height),
+                1: pygame.Rect(margin + width + gap, top, width, height),
+            }
+
         width = self.scale_x(184, 136)
         height = self.scale(32, 24)
         x = self.scale_x(24, 14)
@@ -969,14 +1054,14 @@ class GameScreen(Screen):
     def _get_request_popup_layout(self) -> tuple[pygame.Rect, list[tuple[str, pygame.Rect]]]:
         """Return request popup panel and button rects."""
         request_options = self._get_request_popup_options()
-        cols = 2 if len(request_options) > 1 else 1
+        cols = 1 if self.is_compact_layout() else (2 if len(request_options) > 1 else 1)
         rows = max(1, (len(request_options) + cols - 1) // cols)
-        button_width = self.scale_x(360 if cols == 2 else 420, 220)
-        button_height = self.scale_y(100, 74)
+        button_width = self.scale_x(360 if cols == 2 else 420, 250 if self.is_compact_layout() else 220)
+        button_height = self.scale_y(82, 64) if self.is_compact_layout() else self.scale_y(100, 74)
         spacing_x = self.scale(20, 12)
         spacing_y = self.scale(18, 10)
-        panel_width = cols * button_width + (cols - 1) * spacing_x + 60
-        panel_height = rows * button_height + (rows - 1) * spacing_y + 110
+        panel_width = cols * button_width + (cols - 1) * spacing_x + self.scale_x(60, 36)
+        panel_height = rows * button_height + (rows - 1) * spacing_y + self.scale_y(110, 82)
         panel_rect = self._get_centered_panel_rect(panel_width, panel_height)
 
         rects = []
@@ -985,8 +1070,8 @@ class GameScreen(Screen):
             col = index % cols
             rect = pygame.Rect(
                 panel_rect.x + self.scale(30, 18) + col * (button_width + spacing_x),
-                panel_rect.y + self.scale(66, 46) + row * (button_height + spacing_y),
-                button_width,
+                panel_rect.y + self.scale_y(66, 46) + row * (button_height + spacing_y),
+                min(button_width, panel_rect.width - 2 * self.scale(30, 18)),
                 button_height,
             )
             rects.append((request_type, rect))
@@ -1019,10 +1104,14 @@ class GameScreen(Screen):
         panel_rect = self._get_centered_panel_rect(self.scale_x(840, 560), panel_height)
 
         rects = []
-        lane_width = self.scale_x(330, 214)
+        lane_width = (
+            (panel_rect.width - self.scale_x(76, 48)) // 2
+            if self.is_compact_layout()
+            else self.scale_x(330, 214)
+        )
         start_y = panel_rect.y + self.scale(126, 92)
         left_x = panel_rect.x + self.scale(40, 24)
-        right_x = panel_rect.centerx + self.scale(20, 12)
+        right_x = panel_rect.right - self.scale(40, 24) - lane_width
         for player_id, cards, x in [
             (0, left_cards, left_x),
             (1, right_cards, right_x),
@@ -1659,6 +1748,19 @@ class GameScreen(Screen):
         if not self.game.has_pending_card_placement():
             return []
 
+        if self.is_compact_layout():
+            cards = self.game.get_pending_placement_cards()
+            card_width = self.scale_x(142, 112)
+            card_height = self.scale_y(92, 70)
+            spacing = self.scale_x(14, 8)
+            total_width = len(cards) * card_width + max(0, len(cards) - 1) * spacing
+            x = max(self.scale_x(18, 12), (self.window.WINDOW_WIDTH - total_width) // 2)
+            y = self.window.WINDOW_HEIGHT - self.scale_y(112, 86)
+            return [
+                (index, pygame.Rect(x + index * (card_width + spacing), y, card_width, card_height))
+                for index, _ in enumerate(cards)
+            ]
+
         summary_rects = self._get_damage_summary_rects()
         top_y = max(rect.bottom for rect in summary_rects.values()) + self.scale(96, 68)
         card_width = self.scale_x(182, 130)
@@ -1761,20 +1863,29 @@ class GameScreen(Screen):
         if not cards:
             return
 
-        header_rect = pygame.Rect(
-            self.scale_x(24, 14),
-            self.scale_y(104, 78),
-            self.scale_x(192, 144),
-            self.scale_y(34, 26),
-        )
+        if self.is_compact_layout():
+            header_rect = pygame.Rect(
+                self.scale_x(18, 12),
+                self.window.WINDOW_HEIGHT - self.scale_y(150, 116),
+                self.window.WINDOW_WIDTH - 2 * self.scale_x(18, 12),
+                self.scale_y(30, 24),
+            )
+        else:
+            header_rect = pygame.Rect(
+                self.scale_x(24, 14),
+                self.scale_y(104, 78),
+                self.scale_x(192, 144),
+                self.scale_y(34, 26),
+            )
         pygame.draw.rect(surface, (28, 32, 44), header_rect, border_radius=self.scale(10, 6))
         pygame.draw.rect(surface, (98, 108, 126), header_rect, 1, border_radius=self.scale(10, 6))
         header = self.popup_small_font.render("Drag a Played Card", True, (232, 232, 232))
         header_rect_text = header.get_rect(center=header_rect.center)
         surface.blit(header, header_rect_text)
 
-        instructions = self.popup_small_font.render("Hold, drag to a hole, release.", True, (186, 186, 186))
-        surface.blit(instructions, (self.scale_x(28, 16), self.scale_y(146, 108)))
+        if not self.is_compact_layout():
+            instructions = self.popup_small_font.render("Hold, drag to a hole, release.", True, (186, 186, 186))
+            surface.blit(instructions, (self.scale_x(28, 16), self.scale_y(146, 108)))
 
         card_rects = self._get_pending_placement_card_rects()
         for index, rect in card_rects:
@@ -1789,7 +1900,12 @@ class GameScreen(Screen):
             and self.dragging_placement_card_pos is not None
             and self.dragging_placement_card_index < len(cards)
         ):
-            drag_rect = pygame.Rect(0, 0, self.scale_x(182, 130), self.scale_y(122, 88))
+            drag_rect = pygame.Rect(
+                0,
+                0,
+                self.scale_x(142, 112) if self.is_compact_layout() else self.scale_x(182, 130),
+                self.scale_y(92, 70) if self.is_compact_layout() else self.scale_y(122, 88),
+            )
             drag_rect.center = self.dragging_placement_card_pos
             self._render_pending_card_face(
                 surface,
@@ -1842,6 +1958,32 @@ class GameScreen(Screen):
 
     def _render_suit_role_legend(self, surface: pygame.Surface) -> None:
         """Render suit-role mappings with drawn icons instead of font glyphs."""
+        if self.is_compact_layout():
+            if self.game.phase == GamePhase.APPEASING:
+                return
+            margin = self.scale_x(18, 12)
+            gap = self.scale_x(10, 6)
+            chip_width = (self.window.WINDOW_WIDTH - 2 * margin - gap) // 2
+            chip_height = self.scale_y(24, 20)
+            start_y = self.scale_y(88, 72)
+            for index, suit in enumerate(self.game.jack_order):
+                role = self.game.suit_roles.get(suit)
+                row = index // 2
+                col = index % 2
+                rect = pygame.Rect(
+                    margin + col * (chip_width + gap),
+                    start_y + row * (chip_height + self.scale_y(6, 4)),
+                    chip_width,
+                    chip_height,
+                )
+                pygame.draw.rect(surface, (30, 34, 46), rect, border_radius=self.scale(9, 6))
+                pygame.draw.rect(surface, (92, 104, 124), rect, 1, border_radius=self.scale(9, 6))
+                draw_suit_icon(surface, suit, (rect.x + self.scale(14, 9), rect.centery), size=self.scale(8, 5))
+                role_text = role.value.title() if role else "Unknown"
+                label = self.renderer.font_small.render(f"{get_family_name(suit)}: {role_text}", True, (218, 218, 218))
+                surface.blit(label, (rect.x + self.scale(28, 18), rect.y + self.scale(4, 3)))
+            return
+
         start_x = self.window.WINDOW_WIDTH - self.scale_x(215, 156)
         start_y = self.scale_y(82, 62)
         row_height = self.scale(30, 22)
@@ -1863,15 +2005,17 @@ class GameScreen(Screen):
             return
 
         title = self.renderer.font_small.render("Phase 2 Colors (Strong -> Weak)", True, (225, 225, 225))
-        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(66, 48)))
+        compact = self.is_compact_layout()
+        title_y = self.scale_y(88, 70) if compact else self.scale_y(66, 48)
+        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, title_y))
         surface.blit(title, title_rect)
 
-        chip_width = self.scale_x(128, 90)
-        chip_height = self.scale_y(24, 18)
-        spacing = self.scale(10, 6)
+        chip_width = self.scale_x(84, 68) if compact else self.scale_x(128, 90)
+        chip_height = self.scale_y(22, 18) if compact else self.scale_y(24, 18)
+        spacing = self.scale(6, 4) if compact else self.scale(10, 6)
         total_width = len(hierarchy) * chip_width + (len(hierarchy) - 1) * spacing
         start_x = (self.window.WINDOW_WIDTH - total_width) // 2
-        y = self.scale_y(78, 58)
+        y = self.scale_y(102, 80) if compact else self.scale_y(78, 58)
 
         for index, suit in enumerate(hierarchy):
             rect = pygame.Rect(start_x + index * (chip_width + spacing), y, chip_width, chip_height)
@@ -1883,6 +2027,14 @@ class GameScreen(Screen):
 
     def _render_rank_guide(self, surface: pygame.Surface) -> None:
         """Show the themed high-rank mapping during every gameplay phase."""
+        if self.is_compact_layout():
+            board_rect = self.renderer.get_board_rect()
+            text = "Ranks: Satyr 10 | Oracle 11 | Hero 12"
+            line = self.renderer.font_small.render(text, True, (214, 214, 214))
+            line_rect = line.get_rect(center=(self.window.WINDOW_WIDTH // 2, board_rect.top - self.scale_y(16, 12)))
+            surface.blit(line, line_rect)
+            return
+
         panel_rect = pygame.Rect(
             self.window.WINDOW_WIDTH - self.scale_x(215, 156),
             self.scale_y(225, 168),

@@ -12,8 +12,8 @@ class GameWindow:
 
     BASE_WINDOW_WIDTH = 1200
     BASE_WINDOW_HEIGHT = 900
-    MIN_WINDOW_WIDTH = 860
-    MIN_WINDOW_HEIGHT = 640
+    MIN_WINDOW_WIDTH = 390
+    MIN_WINDOW_HEIGHT = 620
     SCREEN_MARGIN_X = 80
     SCREEN_MARGIN_Y = 120
     FPS = 60
@@ -46,8 +46,8 @@ class GameWindow:
     def _get_initial_window_size(self) -> tuple[int, int]:
         """Pick a starting size that fits on the current display."""
         display_info = pygame.display.Info()
-        available_width = max(640, display_info.current_w - self.SCREEN_MARGIN_X)
-        available_height = max(480, display_info.current_h - self.SCREEN_MARGIN_Y)
+        available_width = max(self.MIN_WINDOW_WIDTH, display_info.current_w - self.SCREEN_MARGIN_X)
+        available_height = max(self.MIN_WINDOW_HEIGHT, display_info.current_h - self.SCREEN_MARGIN_Y)
 
         width = min(self.BASE_WINDOW_WIDTH, available_width)
         height = min(self.BASE_WINDOW_HEIGHT, available_height)
@@ -82,6 +82,18 @@ class GameWindow:
             self.WINDOW_WIDTH / self.BASE_WINDOW_WIDTH,
             self.WINDOW_HEIGHT / self.BASE_WINDOW_HEIGHT,
         )
+
+    def get_layout_mode(self) -> str:
+        """Return the current responsive layout bucket."""
+        if self.WINDOW_WIDTH < 720 or self.WINDOW_HEIGHT < 680:
+            return "compact"
+        if self.WINDOW_WIDTH < 1020 or self.WINDOW_HEIGHT < 760:
+            return "medium"
+        return "wide"
+
+    def is_compact_layout(self) -> bool:
+        """Return True when the UI should favor phone-sized stacked layouts."""
+        return self.get_layout_mode() == "compact"
 
     def scale(self, value: int, minimum: int = 1) -> int:
         """Scale an isotropic measurement using the current window size."""

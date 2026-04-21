@@ -83,16 +83,24 @@ class BoardRenderer:
 
     def update_layout(self, surface_width: int, surface_height: int) -> None:
         """Recompute board metrics for the current window size."""
-        side_gutter = min(max(180, int(surface_width * 0.18)), surface_width // 4)
-        top_margin = max(86, int(surface_height * 0.11))
-        bottom_margin = max(190, int(surface_height * 0.20))
+        compact = surface_width < 720 or surface_height < 680
+        if compact:
+            side_gutter = max(18, int(surface_width * 0.07))
+            top_margin = max(150, int(surface_height * 0.21))
+            bottom_margin = max(130, int(surface_height * 0.18))
+            min_cell_size = 44
+        else:
+            side_gutter = min(max(180, int(surface_width * 0.18)), surface_width // 4)
+            top_margin = max(86, int(surface_height * 0.11))
+            bottom_margin = max(190, int(surface_height * 0.20))
+            min_cell_size = self.MIN_CELL_SIZE
 
-        available_width = max(self.MIN_CELL_SIZE * self.GRID_WIDTH, surface_width - 2 * side_gutter)
-        available_height = max(self.MIN_CELL_SIZE * self.GRID_HEIGHT, surface_height - top_margin - bottom_margin)
+        available_width = max(min_cell_size * self.GRID_WIDTH, surface_width - 2 * side_gutter)
+        available_height = max(min_cell_size * self.GRID_HEIGHT, surface_height - top_margin - bottom_margin)
         cell_size = min(
             self.MAX_CELL_SIZE,
             max(
-                self.MIN_CELL_SIZE,
+                min_cell_size,
                 min(
                     available_width // self.GRID_WIDTH,
                     available_height // self.GRID_HEIGHT,
