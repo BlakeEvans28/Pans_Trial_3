@@ -37,10 +37,20 @@ class ScreenType(Enum):
 
 class Screen:
     """Base class for all screens."""
+
+    ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
+    PAN_BACKGROUND_PATH = ASSET_ROOT / "Pan_Background.png"
+    PAN_ICON_PATH = ASSET_ROOT / "Pan_Icon.png"
+    WOOD_LABEL_CENTER_Y_RATIO = 0.50
     
     def __init__(self, window: "GameWindow"):
         self.window = window
         self.ui_manager = window.ui_manager
+        self._background_base = self._load_image(self.PAN_BACKGROUND_PATH)
+        self._background_cache: dict[tuple[int, int], pygame.Surface] = {}
+        self._wood_icon_base = self._crop_wood_icon(self._load_image(self.PAN_ICON_PATH))
+        self._wood_icon_cache: dict[tuple[tuple[int, int], bool], pygame.Surface] = {}
+        self._title_style_font_cache: dict[int, pygame.font.Font] = {}
 
     def scale(self, value: int, minimum: int = 1) -> int:
         """Scale a measurement from the base 1200x900 layout."""
@@ -61,6 +71,133 @@ class Screen:
     def font_size(self, value: int, minimum: int = 1) -> int:
         """Scale a font size using the active text-size setting."""
         return self.window.font_size(value, minimum)
+
+    def _load_image(self, path: Path) -> pygame.Surface | None:
+        """Load a screen image if the asset is available."""
+        if not path.exists():
+            return None
+        try:
+            return pygame.image.load(str(path)).convert_alpha()
+        except pygame.error:
+            return None
+
+    def _crop_wood_icon(self, image: pygame.Surface | None) -> pygame.Surface | None:
+        """Crop Pan_Icon to the visible plank area for reusable UI buttons."""
+        if image is None:
+            return None
+        crop_rect = pygame.Rect(
+            0,
+            int(image.get_height() * 0.08),
+            image.get_width(),
+            int(image.get_height() * 0.62),
+        )
+        return image.subsurface(crop_rect).copy()
+
+    def _get_title_style_font(self, size: int) -> pygame.font.Font:
+        """Return a bold serif font that echoes the title lettering."""
+        size = max(1, size)
+        if size not in self._title_style_font_cache:
+            for family in ["georgia", "garamond", "timesnewroman", "times new roman"]:
+                font_path = pygame.font.match_font(family, bold=True)
+                if font_path is not None:
+                    self._title_style_font_cache[size] = pygame.font.Font(font_path, size)
+                    break
+            else:
+                self._title_style_font_cache[size] = pygame.font.Font(None, size)
+        return self._title_style_font_cache[size]
+
+    def _render_screen_background(self, surface: pygame.Surface, fallback: tuple[int, int, int] = (16, 20, 30)) -> None:
+        """Render Pan_Background with the same cover-scaling rule as the title art."""
+        if self._background_base is None:
+            surface.fill(fallback)
+            return
+
+        size = self._get_cover_scaled_size(self._background_base, surface.get_size())
+        if size not in self._background_cache:
+            self._background_cache[size] = pygame.transform.smoothscale(self._background_base, size)
+        surface.blit(self._background_cache[size], (0, 0))
+
+    def _get_cover_scaled_size(self, image: pygame.Surface, frame_size: tuple[int, int]) -> tuple[int, int]:
+        """Return an image size that covers the frame and crops right/bottom overflow."""
+        frame_width, frame_height = frame_size
+        scale = max(frame_width / image.get_width(), frame_height / image.get_height())
+        return (
+            max(1, int(image.get_width() * scale)),
+            max(1, int(image.get_height() * scale)),
+        )
+
+    def _get_wood_icon_height_for_width(self, width: int) -> int:
+        """Return Pan_Icon height for a width while preserving aspect ratio."""
+        if self._wood_icon_base is None or self._wood_icon_base.get_width() <= 0:
+            return max(self.scale_y(64, 44), width // 3)
+        return max(1, int(width * self._wood_icon_base.get_height() / self._wood_icon_base.get_width()))
+
+    def _get_wood_icon_width_for_height(self, height: int) -> int:
+        """Return Pan_Icon width for a height while preserving aspect ratio."""
+        if self._wood_icon_base is None or self._wood_icon_base.get_height() <= 0:
+            return max(1, height * 3)
+        return max(1, int(height * self._wood_icon_base.get_width() / self._wood_icon_base.get_height()))
+
+    def _get_scaled_wood_icon(self, size: tuple[int, int], bright: bool) -> pygame.Surface | None:
+        """Return the wood icon scaled to a rect, brightened when hovered."""
+        if self._wood_icon_base is None:
+            return None
+        key = (size, bright)
+        if key not in self._wood_icon_cache:
+            icon = pygame.transform.smoothscale(self._wood_icon_base, size)
+            if bright:
+                icon = icon.copy()
+                icon.fill((58, 58, 58, 0), special_flags=pygame.BLEND_RGBA_ADD)
+            self._wood_icon_cache[key] = icon
+        return self._wood_icon_cache[key]
+
+    def _get_wood_label_center(self, rect: pygame.Rect) -> tuple[int, int]:
+        """Return the visual center of the wood plank inside the icon canvas."""
+        return (rect.centerx, rect.y + int(rect.height * self.WOOD_LABEL_CENTER_Y_RATIO))
+
+    def _get_wood_text_font(self, label: str, rect: pygame.Rect, preferred_size: int) -> pygame.font.Font:
+        """Return a title-style font sized to fit the visible plank."""
+        max_width = max(1, int(rect.width * 0.72))
+        size = max(self.font_size(18, 14), preferred_size)
+        while size > self.font_size(16, 12):
+            font = self._get_title_style_font(size)
+            if font.size(label)[0] <= max_width:
+                return font
+            size -= 2
+        return self._get_title_style_font(size)
+
+    def _render_wood_button(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        label: str,
+        hovered: bool,
+        preferred_font_size: int | None = None,
+        enabled: bool = True,
+    ) -> None:
+        """Render a Pan_Icon wood button with centered title-style text."""
+        icon = self._get_scaled_wood_icon(rect.size, hovered and enabled)
+        if icon is not None:
+            surface.blit(icon, rect.topleft)
+        else:
+            pygame.draw.rect(surface, (96, 66, 38), rect, border_radius=self.scale(10, 6))
+
+        if not enabled:
+            veil = pygame.Surface(rect.size, pygame.SRCALPHA)
+            veil.fill((10, 10, 12, 132))
+            surface.blit(veil, rect.topleft)
+
+        font_size = preferred_font_size if preferred_font_size is not None else self.font_size(32, 22)
+        font = self._get_wood_text_font(label, rect, font_size)
+        if enabled:
+            text_color = (255, 246, 214) if hovered else (246, 236, 204)
+        else:
+            text_color = (156, 150, 136)
+        label_surface = font.render(label, True, text_color)
+        shadow = font.render(label, True, (24, 14, 8))
+        label_rect = label_surface.get_rect(center=self._get_wood_label_center(rect))
+        surface.blit(shadow, label_rect.move(self.scale(3, 2), self.scale(3, 2)))
+        surface.blit(label_surface, label_rect)
     
     def handle_events(self, event: pygame.event.Event) -> bool:
         """Handle event. Return True if event was consumed."""
@@ -346,6 +483,8 @@ class HowToPlayScreen(Screen):
         self.body_font = None
         self.small_font = None
         self.back_button = None
+        self.back_button_rect = pygame.Rect(0, 0, 1, 1)
+        self.hovered_button = None
         self.scroll_offset = 0
         self.max_scroll = 0
         self._refresh_fonts()
@@ -371,12 +510,18 @@ class HowToPlayScreen(Screen):
 
     def _layout_ui(self) -> None:
         """Lay out the back button for the current window size."""
-        button_width = self.scale_x(220, 160)
-        button_height = self.scale_y(52, 40)
+        button_width = min(self.scale_x(330, 220), self.window.WINDOW_WIDTH - 2 * self.scale_x(24, 14))
+        button_height = self._get_wood_icon_height_for_width(button_width)
+        self.back_button_rect = pygame.Rect(
+            (self.window.WINDOW_WIDTH - button_width) // 2,
+            self.window.WINDOW_HEIGHT - button_height - self.scale_y(6, 4),
+            button_width,
+            button_height,
+        )
         self.back_button.set_relative_position(
             (
-                (self.window.WINDOW_WIDTH - button_width) // 2,
-                self.window.WINDOW_HEIGHT - button_height - self.scale_y(30, 20),
+                self.back_button_rect.x,
+                self.back_button_rect.y,
             )
         )
         self.back_button.set_dimensions((button_width, button_height))
@@ -389,6 +534,11 @@ class HowToPlayScreen(Screen):
         """Handle How To Play events."""
         if event.type == pygame_gui.UI_BUTTON_PRESSED and event.ui_element == self.back_button:
             return "MENU"
+        if event.type == pygame.MOUSEMOTION:
+            self.hovered_button = "back" if self.back_button_rect.collidepoint(event.pos) else None
+            return False
+        if event.type == pygame.MOUSEBUTTONDOWN and self.back_button_rect.collidepoint(event.pos):
+            return "MENU"
         if event.type == pygame.MOUSEWHEEL:
             self.scroll_offset = max(0, min(self.max_scroll, self.scroll_offset - event.y * self.scale(48, 32)))
             return True
@@ -400,7 +550,7 @@ class HowToPlayScreen(Screen):
 
     def render(self, surface: pygame.Surface) -> None:
         """Render the How To Play page."""
-        surface.fill((16, 20, 30))
+        self._render_screen_background(surface, (16, 20, 30))
 
         title = self.title_font.render("HOW TO PLAY", True, (238, 214, 142))
         title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(76, 54)))
@@ -463,6 +613,13 @@ class HowToPlayScreen(Screen):
             )
             self._draw_wrapped_text(surface, body, self.body_font, (222, 226, 232), body_rect, self.scale(22, 15), 4)
         surface.set_clip(old_clip)
+        self._render_wood_button(
+            surface,
+            self.back_button_rect,
+            "Back",
+            self.hovered_button == "back",
+            self.font_size(38, 26),
+        )
 
     def _draw_wrapped_text(
         self,
@@ -495,11 +652,12 @@ class HowToPlayScreen(Screen):
 
     def on_enter(self) -> None:
         """Activate the How To Play screen."""
-        self.back_button.show()
+        self.back_button.hide()
 
     def on_exit(self) -> None:
         """Deactivate the How To Play screen."""
         self.back_button.hide()
+        self.hovered_button = None
 
     def on_resize(self) -> None:
         """Refresh fonts and layout after resize."""
@@ -532,6 +690,9 @@ class SettingsScreen(Screen):
         self.tutorial_button = None
         self.tutorial_reset_button = None
         self.back_button = None
+        self.button_labels: dict[str, str] = {}
+        self.setting_button_rects: dict[str, pygame.Rect] = {}
+        self.hovered_setting_key = None
         self._refresh_fonts()
         self._create_ui()
         self.on_resize()
@@ -590,26 +751,58 @@ class SettingsScreen(Screen):
 
     def _layout_ui(self) -> None:
         """Lay out settings controls."""
-        button_width = min(self.scale_x(420, 260), self.window.WINDOW_WIDTH - 2 * self.scale_x(40, 18))
-        button_height = self.scale_y(54, 42)
-        gap = self.scale_y(14, 10)
-        start_y = self.scale_y(236, 174) if self.get_missing_required_art_assets() else self.scale_y(210, 150)
-        center_x = (self.window.WINDOW_WIDTH - button_width) // 2
+        outer_margin = self.scale_x(52, 22)
+        column_gap = self.scale_x(26, 14)
+        row_gap = self.scale_y(4, 2)
+        columns = 1 if self.is_compact_layout() else 2
+        available_width = self.window.WINDOW_WIDTH - 2 * outer_margin - (columns - 1) * column_gap
+        button_width = min(self.scale_x(390, 250), max(self.scale_x(230, 190), available_width // columns))
+        button_height = self._get_wood_icon_height_for_width(button_width)
+        start_y = self.scale_y(212, 156) if self.get_missing_required_art_assets() else self.scale_y(188, 138)
+        option_controls = self._setting_option_controls()
+        rows = (len(option_controls) + columns - 1) // columns
+        grid_width = columns * button_width + (columns - 1) * column_gap
+        start_x = (self.window.WINDOW_WIDTH - grid_width) // 2
 
-        for index, button in enumerate(self._setting_buttons()):
-            button.set_relative_position((center_x, start_y + index * (button_height + gap)))
+        self.setting_button_rects = {}
+        for index, (key, button) in enumerate(option_controls):
+            row = index // columns
+            col = index % columns
+            rect = pygame.Rect(
+                start_x + col * (button_width + column_gap),
+                start_y + row * (button_height + row_gap),
+                button_width,
+                button_height,
+            )
+            self.setting_button_rects[key] = rect
+            button.set_relative_position((rect.x, rect.y))
             button.set_dimensions((button_width, button_height))
 
-        self.back_button.set_relative_position(
-            (
-                center_x,
-                start_y + len(self._setting_buttons()) * (button_height + gap) + self.scale_y(18, 12),
-            )
-        )
-        self.back_button.set_dimensions((button_width, button_height))
+        back_width = min(self.scale_x(320, 220), button_width)
+        back_height = self._get_wood_icon_height_for_width(back_width)
+        back_y = start_y + rows * (button_height + row_gap) + self.scale_y(2, 1)
+        back_rect = pygame.Rect((self.window.WINDOW_WIDTH - back_width) // 2, back_y, back_width, back_height)
+        self.setting_button_rects["back"] = back_rect
+        self.back_button.set_relative_position((back_rect.x, back_rect.y))
+        self.back_button.set_dimensions((back_rect.width, back_rect.height))
+
+    def _setting_option_controls(self) -> list[tuple[str, object]]:
+        """Return only the setting options, without the Back control."""
+        return [
+            ("fullscreen", self.fullscreen_button),
+            ("text", self.text_button),
+            ("animation", self.animation_button),
+            ("sound", self.sound_button),
+            ("tutorial", self.tutorial_button),
+            ("tutorial_reset", self.tutorial_reset_button),
+        ]
+
+    def _setting_controls(self) -> list[tuple[str, object]]:
+        """Return setting-control keys with their hidden pygame_gui buttons."""
+        return self._setting_option_controls() + [("back", self.back_button)]
 
     def _setting_buttons(self) -> list:
-        """Return only the setting-control buttons."""
+        """Return only the hidden setting-control buttons."""
         return [
             self.fullscreen_button,
             self.text_button,
@@ -640,14 +833,22 @@ class SettingsScreen(Screen):
 
     def _refresh_button_text(self) -> None:
         """Refresh settings button labels."""
-        self.fullscreen_button.set_text(f"Display: {'Fullscreen' if self.window.fullscreen else 'Windowed'}")
-        self.text_button.set_text(f"Text Size: {self._label_for_value(self.TEXT_SCALES, self.window.text_scale)}")
-        self.animation_button.set_text(
-            f"Animation Speed: {self._label_for_value(self.ANIMATION_SPEEDS, self.window.animation_speed)}"
-        )
-        self.sound_button.set_text(f"Sound Volume: {self._label_for_value(self.SOUND_LEVELS, self.window.sound_volume)}")
-        self.tutorial_button.set_text(f"Tutorial Tips: {'On' if self.window.tutorial_enabled else 'Off'}")
-        self.tutorial_reset_button.set_text("Reset First Tutorial")
+        self.button_labels = {
+            "fullscreen": f"Display: {'Fullscreen' if self.window.fullscreen else 'Windowed'}",
+            "text": f"Text Size: {self._label_for_value(self.TEXT_SCALES, self.window.text_scale)}",
+            "animation": f"Animation Speed: {self._label_for_value(self.ANIMATION_SPEEDS, self.window.animation_speed)}",
+            "sound": f"Sound Volume: {self._label_for_value(self.SOUND_LEVELS, self.window.sound_volume)}",
+            "tutorial": f"Tutorial Tips: {'On' if self.window.tutorial_enabled else 'Off'}",
+            "tutorial_reset": "Reset First Tutorial",
+            "back": "Back",
+        }
+        self.fullscreen_button.set_text(self.button_labels["fullscreen"])
+        self.text_button.set_text(self.button_labels["text"])
+        self.animation_button.set_text(self.button_labels["animation"])
+        self.sound_button.set_text(self.button_labels["sound"])
+        self.tutorial_button.set_text(self.button_labels["tutorial"])
+        self.tutorial_reset_button.set_text(self.button_labels["tutorial_reset"])
+        self.back_button.set_text(self.button_labels["back"])
 
     def get_missing_required_art_assets(self) -> list[str]:
         """Return required artwork filenames that are unavailable."""
@@ -655,27 +856,51 @@ class SettingsScreen(Screen):
 
     def handle_events(self, event: pygame.event.Event) -> bool:
         """Handle settings clicks."""
+        if event.type == pygame.MOUSEMOTION:
+            self.hovered_setting_key = self._setting_key_at(event.pos)
+            return False
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            key = self._setting_key_at(event.pos)
+            if key is not None:
+                return self._activate_setting_key(key)
+            return False
+
         if event.type != pygame_gui.UI_BUTTON_PRESSED:
             return False
 
-        if event.ui_element == self.back_button:
+        key_by_element = {button: key for key, button in self._setting_controls()}
+        key = key_by_element.get(event.ui_element)
+        if key is None:
+            return False
+        return self._activate_setting_key(key)
+
+    def _setting_key_at(self, pos: tuple[int, int]) -> str | None:
+        """Return the setting control key at a mouse position."""
+        for key, rect in self.setting_button_rects.items():
+            if rect.collidepoint(pos):
+                return key
+        return None
+
+    def _activate_setting_key(self, key: str):
+        """Apply one Settings control action."""
+        if key == "back":
             return "MENU"
-        if event.ui_element == self.fullscreen_button:
+        if key == "fullscreen":
             self.window.toggle_fullscreen()
             self.on_resize()
             return "RESIZED"
-        if event.ui_element == self.text_button:
+        if key == "text":
             self.window.text_scale = self._cycle_value(self.TEXT_SCALES, self.window.text_scale)
             self.on_resize()
             return "RESIZED"
-        if event.ui_element == self.animation_button:
+        if key == "animation":
             self.window.animation_speed = self._cycle_value(self.ANIMATION_SPEEDS, self.window.animation_speed)
-        elif event.ui_element == self.sound_button:
+        elif key == "sound":
             self.window.sound_volume = self._cycle_value(self.SOUND_LEVELS, self.window.sound_volume)
             self.window.audio.set_volume(self.window.sound_volume)
-        elif event.ui_element == self.tutorial_button:
+        elif key == "tutorial":
             self.window.tutorial_enabled = not self.window.tutorial_enabled
-        elif event.ui_element == self.tutorial_reset_button:
+        elif key == "tutorial_reset":
             self.window.reset_tutorial_tips()
         self._refresh_button_text()
         return True
@@ -686,7 +911,7 @@ class SettingsScreen(Screen):
 
     def render(self, surface: pygame.Surface) -> None:
         """Render the settings page."""
-        surface.fill((18, 22, 32))
+        self._render_screen_background(surface, (18, 22, 32))
         title = self.title_font.render("SETTINGS", True, (238, 214, 142))
         title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(84, 58)))
         surface.blit(title, title_rect)
@@ -713,6 +938,19 @@ class SettingsScreen(Screen):
             warning = f"Missing art: {', '.join(missing_assets)}. Fallback tile colors will be used."
             self._draw_wrapped_settings_text(surface, warning, warning_rect.inflate(-self.scale_x(18, 10), -self.scale_y(8, 5)))
 
+        self._render_settings_buttons(surface)
+
+    def _render_settings_buttons(self, surface: pygame.Surface) -> None:
+        """Render Settings controls as title-style wood buttons."""
+        for key, rect in self.setting_button_rects.items():
+            self._render_wood_button(
+                surface,
+                rect,
+                self.button_labels.get(key, key.title()),
+                self.hovered_setting_key == key,
+                self.font_size(27, 18),
+            )
+
     def _draw_wrapped_settings_text(self, surface: pygame.Surface, text: str, rect: pygame.Rect) -> None:
         """Draw one compact wrapped Settings warning."""
         words = text.split()
@@ -737,12 +975,12 @@ class SettingsScreen(Screen):
     def on_enter(self) -> None:
         """Activate settings controls."""
         self._refresh_button_text()
-        for button in self._setting_buttons() + [self.back_button]:
-            button.show()
+        self._hide_all_elements()
 
     def on_exit(self) -> None:
         """Deactivate settings controls."""
         self._hide_all_elements()
+        self.hovered_setting_key = None
 
     def on_resize(self) -> None:
         """Refresh fonts and layout when size or text scale changes."""
@@ -790,7 +1028,7 @@ class CoinFlipScreen(Screen):
 
     def render(self, surface: pygame.Surface) -> None:
         """Render the coin flip screen."""
-        surface.fill((14, 18, 28))
+        self._render_screen_background(surface, (14, 18, 28))
         title = self.title_font.render("COIN FLIP", True, (238, 214, 142))
         title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(110, 78)))
         surface.blit(title, title_rect)
@@ -973,7 +1211,7 @@ class DraftScreen(Screen):
 
     def render(self, surface: pygame.Surface) -> None:
         """Render draft instructions and current picks."""
-        surface.fill((16, 18, 28))
+        self._render_screen_background(surface, (16, 18, 28))
         self._render_value_legend(surface)
         compact = self.is_compact_layout()
 
@@ -1318,7 +1556,7 @@ class JackRevealScreen(Screen):
 
     def render(self, surface: pygame.Surface) -> None:
         """Render the animated Jack order reveal."""
-        surface.fill((12, 16, 26))
+        self._render_screen_background(surface, (12, 16, 26))
 
         title = self.title_font.render("THE OMENS DETERMINE THE TRIAL", True, (225, 225, 205))
         title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(100, 74)))
@@ -1484,6 +1722,8 @@ class GameOverScreen(Screen):
 
         self.play_again_button = None
         self.menu_button = None
+        self.game_over_button_rects: dict[str, pygame.Rect] = {}
+        self.hovered_button = None
         self._refresh_fonts()
         self._create_ui()
         self.on_resize()
@@ -1514,19 +1754,21 @@ class GameOverScreen(Screen):
 
     def _layout_ui(self) -> None:
         """Lay out game-over buttons for the current window size."""
-        button_width = self.scale_x(300, 220)
-        button_height = self.scale_y(60, 44)
+        button_width = min(self.scale_x(360, 240), self.window.WINDOW_WIDTH - 2 * self.scale_x(40, 18))
+        button_height = self._get_wood_icon_height_for_width(button_width)
         center_x = (self.window.WINDOW_WIDTH - button_width) // 2
-        gap = self.scale_y(14, 10)
-        menu_y = self.window.WINDOW_HEIGHT - button_height - self.scale_y(28, 18)
+        gap = self.scale_y(2, 1)
+        menu_y = self.window.WINDOW_HEIGHT - button_height - self.scale_y(10, 6)
         play_again_y = menu_y - button_height - gap
 
-        for button, y in [
-            (self.play_again_button, play_again_y),
-            (self.menu_button, menu_y),
-        ]:
-            button.set_relative_position((center_x, y))
-            button.set_dimensions((button_width, button_height))
+        self.game_over_button_rects = {
+            "play": pygame.Rect(center_x, play_again_y, button_width, button_height),
+            "menu": pygame.Rect(center_x, menu_y, button_width, button_height),
+        }
+        for key, button in [("play", self.play_again_button), ("menu", self.menu_button)]:
+            rect = self.game_over_button_rects[key]
+            button.set_relative_position((rect.x, rect.y))
+            button.set_dimensions((rect.width, rect.height))
 
     def set_result(self, winner: int, p1_damage: int, p2_damage: int, match_summary: dict | None = None) -> None:
         """Set winner screen text."""
@@ -1541,6 +1783,16 @@ class GameOverScreen(Screen):
 
     def handle_events(self, event: pygame.event.Event) -> bool:
         """Handle game-over screen events."""
+        if event.type == pygame.MOUSEMOTION:
+            self.hovered_button = self._game_over_button_at(event.pos)
+            return False
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            key = self._game_over_button_at(event.pos)
+            if key == "play":
+                return "PLAY"
+            if key == "menu":
+                return "MENU"
+            return False
         if event.type == pygame_gui.UI_BUTTON_PRESSED:
             if event.ui_element == self.play_again_button:
                 return "PLAY"
@@ -1548,13 +1800,20 @@ class GameOverScreen(Screen):
                 return "MENU"
         return False
 
+    def _game_over_button_at(self, pos: tuple[int, int]) -> str | None:
+        """Return the Game Over wood button at a mouse position."""
+        for key, rect in self.game_over_button_rects.items():
+            if rect.collidepoint(pos):
+                return key
+        return None
+
     def update(self, time_delta: float) -> None:
         """Update."""
         pass
 
     def render(self, surface: pygame.Surface) -> None:
         """Render game-over screen."""
-        surface.fill((18, 18, 28))
+        self._render_screen_background(surface, (18, 18, 28))
 
         title = self.title_font.render("VICTORY", True, (220, 180, 90))
         title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(150, 110)))
@@ -1571,8 +1830,22 @@ class GameOverScreen(Screen):
         self._render_match_summary(surface, damage_rect.bottom + self.scale_y(20, 14))
 
         prompt = self.body_font.render("Choose what to do next.", True, (140, 140, 140))
-        prompt_rect = prompt.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.window.WINDOW_HEIGHT - self.scale_y(156, 110)))
+        button_top = min(rect.top for rect in self.game_over_button_rects.values()) if self.game_over_button_rects else self.window.WINDOW_HEIGHT
+        prompt_rect = prompt.get_rect(center=(self.window.WINDOW_WIDTH // 2, button_top - self.scale_y(12, 8)))
         surface.blit(prompt, prompt_rect)
+        self._render_game_over_buttons(surface)
+
+    def _render_game_over_buttons(self, surface: pygame.Surface) -> None:
+        """Render Play Again and Main Menu as wood buttons."""
+        labels = {"play": "Play Again", "menu": "Main Menu"}
+        for key, rect in self.game_over_button_rects.items():
+            self._render_wood_button(
+                surface,
+                rect,
+                labels[key],
+                self.hovered_button == key,
+                self.font_size(34, 24),
+            )
 
     def _render_match_summary(self, surface: pygame.Surface, start_y: int) -> None:
         """Render final damage cards, recent requests, and major events."""
@@ -1647,13 +1920,14 @@ class GameOverScreen(Screen):
 
     def on_enter(self) -> None:
         """Activate game-over screen."""
-        self.play_again_button.show()
-        self.menu_button.show()
+        self.play_again_button.hide()
+        self.menu_button.hide()
 
     def on_exit(self) -> None:
         """Deactivate game-over screen."""
         self.play_again_button.hide()
         self.menu_button.hide()
+        self.hovered_button = None
 
     def on_resize(self) -> None:
         """Refresh fonts and buttons after a resize."""

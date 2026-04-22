@@ -13,10 +13,17 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-04-22 - Brandt Homan
+Commit: `pending` - Extended title theming into gameplay controls
+Summary:
+- Fixed Plane Shift confirmation previews so column shifts display as columns and the animation snaps from its final frame back to the first instead of reversing.
+- Applied the title-screen wood-button treatment to more gameplay controls, including request choices, Plane Shift action buttons, damage chips, and popup action buttons.
+
 ## 2026-04-21 - Brandt Homan
 Commit: `pending` - Added title art, music, and UI smoke checks
 Summary:
 - Reworked the title screen so `PanTitle.png` fills the screen and right-side `Pan_Icon.png` wood buttons show overlaid labels with hover brightening.
+- Added `Pan_Background.png` as the cover-scaled background for the non-title screens and restyled menu-screen controls as wood buttons.
 - Switched audio to the checked-in intro and phase music loops while keeping only the battle clash sound effect.
 - Added compact hand-card Inspect hints, an animated Plane Shift confirmation preview, Settings missing-art warnings, and regression-style UI smoke checks.
 

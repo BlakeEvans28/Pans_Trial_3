@@ -124,7 +124,7 @@ class GameScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh gameplay popup fonts after a resize."""
-        self.popup_title_font = pygame.font.Font(None, self.font_size(38, 26))
+        self.popup_title_font = self._get_title_style_font(self.font_size(38, 26))
         self.popup_body_font = pygame.font.Font(None, self.font_size(28, 20))
         self.popup_small_font = pygame.font.Font(None, self.font_size(22, 16))
 
@@ -919,7 +919,7 @@ class GameScreen(Screen):
     
     def render(self, surface: pygame.Surface) -> None:
         """Render game screen."""
-        surface.fill((20, 20, 30))
+        self._render_screen_background(surface, (20, 20, 30))
         
         suit_role_render = {}
         for suit, role in self.game.suit_roles.items():
@@ -1295,7 +1295,7 @@ class GameScreen(Screen):
 
     def _get_plane_shift_confirmation_layout(self) -> tuple[pygame.Rect, dict[str, pygame.Rect]]:
         """Return Plane Shift confirmation popup and action button rects."""
-        panel_rect = self._get_centered_panel_rect(self.scale_x(600, 370), self.scale_y(292, 228))
+        panel_rect = self._get_centered_panel_rect(self.scale_x(600, 370), self.scale_y(360, 300))
         button_width = (panel_rect.width - self.scale_x(76, 46)) // 2
         button_height = self.scale_y(46, 36)
         button_y = panel_rect.bottom - button_height - self.scale_y(24, 16)
@@ -1316,7 +1316,7 @@ class GameScreen(Screen):
             panel_rect.x + self.scale_x(28, 18),
             panel_rect.y + self.scale_y(116, 88),
             panel_rect.width - self.scale_x(56, 36),
-            self.scale_y(72, 54),
+            self.scale_y(136, 104),
         )
 
     def _get_plane_shift_direction_options(self) -> list[str]:
@@ -1471,9 +1471,9 @@ class GameScreen(Screen):
         return Position((pos.row + delta) % 6, pos.col)
 
     def _get_plane_shift_preview_progress(self) -> float:
-        """Return a smooth looping 0..1..0 preview progress value."""
-        cycle = (self.plane_shift_preview_elapsed % 1.4) / 1.4
-        return 1.0 - abs(cycle * 2.0 - 1.0)
+        """Return forward-only preview progress that snaps back to the first frame."""
+        cycle = (self.plane_shift_preview_elapsed % 1.15) / 1.15
+        return cycle * cycle * (3.0 - 2.0 * cycle)
 
     def _confirm_plane_shift(self) -> bool:
         """Apply the selected Plane Shift after the confirmation popup."""
@@ -1732,22 +1732,38 @@ class GameScreen(Screen):
         overlay.fill((6, 8, 14, alpha))
         surface.blit(overlay, (0, 0))
 
+    def _render_game_wood_button(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        label: str,
+        *,
+        enabled: bool = True,
+        selected: bool = False,
+        preferred_font_size: int | None = None,
+    ) -> None:
+        """Render an in-game action as a title-screen wood button."""
+        hovered = enabled and rect.collidepoint(pygame.mouse.get_pos())
+        self._render_wood_button(
+            surface,
+            rect,
+            label,
+            hovered or selected,
+            preferred_font_size if preferred_font_size is not None else self.font_size(24, 16),
+            enabled=enabled,
+        )
+
     def _render_damage_summary(self, surface: pygame.Surface) -> None:
         """Render clickable damage summary chips."""
         for player_id, rect in self._get_damage_summary_rects().items():
             active = self.damage_popup_player == player_id
-            fill = (56, 60, 76) if active else (33, 37, 49)
-            border = (224, 199, 120) if active else (106, 112, 128)
-            pygame.draw.rect(surface, fill, rect, border_radius=10)
-            pygame.draw.rect(surface, border, rect, 2, border_radius=10)
-
-            label = self.popup_small_font.render(
+            self._render_game_wood_button(
+                surface,
+                rect,
                 f"P{player_id + 1} Damage: {self.game.get_damage_total(player_id)}",
-                True,
-                (232, 232, 232),
+                selected=active,
+                preferred_font_size=self.font_size(18, 13),
             )
-            label_rect = label.get_rect(center=rect.center)
-            surface.blit(label, label_rect)
 
     def _render_turn_move_highlights(self, surface: pygame.Surface) -> None:
         """Highlight the active player and their legal movement targets."""
@@ -1797,12 +1813,13 @@ class GameScreen(Screen):
         for axis, index, rect in self._get_plane_shift_line_controls():
             active = selected == (axis, index)
             hover = hovered == (axis, index)
-            fill = (60, 70, 86) if active else ((44, 54, 70) if hover else (26, 30, 40))
-            border = (252, 222, 104) if active or hover else (120, 128, 146)
-            pygame.draw.rect(surface, fill, rect, border_radius=self.scale(8, 5))
-            pygame.draw.rect(surface, border, rect, self.scale(2, 1), border_radius=self.scale(8, 5))
-            label = self.popup_small_font.render(str(index + 1), True, (242, 238, 220))
-            surface.blit(label, label.get_rect(center=rect.center))
+            self._render_wood_button(
+                surface,
+                rect,
+                str(index + 1),
+                hover or active,
+                self.font_size(20, 14),
+            )
 
         line = selected or hovered
         if line is not None:
@@ -2157,10 +2174,12 @@ class GameScreen(Screen):
             button_width,
             button_height,
         )
-        pygame.draw.rect(surface, (52, 58, 72), self.tutorial_toggle_rect, border_radius=self.scale(8, 5))
-        pygame.draw.rect(surface, (252, 222, 104), self.tutorial_toggle_rect, 1, border_radius=self.scale(8, 5))
-        off_label = self.popup_small_font.render("Tips Off", True, (240, 236, 214))
-        surface.blit(off_label, off_label.get_rect(center=self.tutorial_toggle_rect.center))
+        self._render_game_wood_button(
+            surface,
+            self.tutorial_toggle_rect,
+            "Tips Off",
+            preferred_font_size=self.font_size(16, 12),
+        )
 
         text_rect = panel_rect.inflate(-self.scale(20, 12), -self.scale(8, 6))
         text_rect.width -= button_width + self.scale_x(10, 6)
@@ -2268,43 +2287,39 @@ class GameScreen(Screen):
         for request_type, rect in option_rects:
             copy = REQUEST_POPUP_COPY[request_type]
             enabled, disabled_reason = option_states[request_type]
-            fill = (38, 44, 58) if enabled else (30, 32, 40)
-            border = (108, 114, 134) if enabled else (78, 82, 94)
-            title_color = (238, 238, 238) if enabled else (164, 164, 172)
             body_color = (208, 208, 208) if enabled else (136, 136, 144)
             detail_color = (170, 200, 220) if enabled else (200, 164, 124)
 
-            pygame.draw.rect(surface, fill, rect, border_radius=14)
-            pygame.draw.rect(surface, border, rect, 2, border_radius=14)
-
-            title_surface = self.popup_body_font.render(copy["title"], True, title_color)
-            surface.blit(title_surface, (rect.x + self.scale(16, 10), rect.y + self.scale(12, 8)))
-
-            self._draw_wrapped_text(
-                surface,
-                copy["description"],
-                self.popup_small_font,
-                body_color,
-                pygame.Rect(
-                    rect.x + self.scale(16, 10),
-                    rect.y + self.scale(42, 28),
-                    rect.width - self.scale(32, 20),
-                    self.scale(32, 24),
-                ),
-                line_height=self.scale(18, 14),
-                max_lines=2,
+            wood_rect = pygame.Rect(
+                rect.x + self.scale_x(4, 3),
+                rect.y + self.scale_y(2, 1),
+                rect.width - self.scale_x(8, 6),
+                min(rect.height - self.scale_y(30, 22), self._get_wood_icon_height_for_width(rect.width - self.scale_x(8, 6))),
             )
+            wood_rect.height = max(self.scale_y(44, 34), wood_rect.height)
+            wood_rect.height = min(rect.height, wood_rect.height)
+            self._render_game_wood_button(
+                surface,
+                wood_rect,
+                copy["title"],
+                enabled=enabled,
+                preferred_font_size=self.font_size(26, 18),
+            )
+
+            detail_top = wood_rect.bottom + self.scale_y(2, 1)
+            detail_rect = pygame.Rect(
+                rect.x + self.scale(16, 10),
+                detail_top,
+                rect.width - self.scale(32, 20),
+                max(self.scale_y(18, 14), rect.bottom - detail_top - self.scale_y(2, 1)),
+            )
+
             self._draw_wrapped_text(
                 surface,
-                disabled_reason if not enabled else "",
+                disabled_reason if not enabled and disabled_reason else copy["description"],
                 self.popup_small_font,
-                detail_color,
-                pygame.Rect(
-                    rect.x + self.scale(16, 10),
-                    rect.y + self.scale(74, 54),
-                    rect.width - self.scale(32, 20),
-                    self.scale(18, 14),
-                ),
+                detail_color if not enabled and disabled_reason else body_color,
+                detail_rect,
                 line_height=self.scale(18, 14),
                 max_lines=2,
             )
@@ -2342,13 +2357,13 @@ class GameScreen(Screen):
             (close_rect, "Close", True),
         ]
         for rect, label, enabled in buttons:
-            fill = (54, 68, 86) if enabled else (36, 40, 50)
-            border = (252, 222, 104) if enabled else (88, 92, 104)
-            color = (242, 238, 220) if enabled else (150, 150, 158)
-            pygame.draw.rect(surface, fill, rect, border_radius=self.scale(10, 6))
-            pygame.draw.rect(surface, border, rect, 2, border_radius=self.scale(10, 6))
-            text = self.popup_small_font.render(label, True, color)
-            surface.blit(text, text.get_rect(center=rect.center))
+            self._render_game_wood_button(
+                surface,
+                rect,
+                label,
+                enabled=enabled,
+                preferred_font_size=self.font_size(20, 14),
+            )
 
     def _render_steal_life_popup(self, surface: pygame.Surface) -> None:
         """Render the centered Steal Life selector."""
@@ -2443,19 +2458,21 @@ class GameScreen(Screen):
         for suit, rect in suit_rects:
             role = self.game.suit_roles.get(suit)
             selected = suit in selected_suits
-            fill = (54, 68, 86) if selected else (36, 42, 54)
-            border = (234, 201, 114) if selected else (104, 112, 128)
-            pygame.draw.rect(surface, fill, rect, border_radius=12)
-            pygame.draw.rect(surface, border, rect, 2, border_radius=12)
+            self._render_game_wood_button(
+                surface,
+                rect,
+                get_family_name(suit),
+                selected=selected,
+                preferred_font_size=self.font_size(20, 14),
+            )
 
             icon_x = rect.x + self.scale(18, 12)
             draw_suit_icon(surface, suit, (icon_x, rect.centery), size=self.scale(10, 6))
-            family = self.popup_body_font.render(get_family_name(suit), True, (238, 238, 238))
-            surface.blit(family, (rect.x + self.scale(36, 24), rect.y + self.scale(6, 4)))
 
             role_text = role.value.title() if role else "Unknown"
-            detail = self.popup_small_font.render(role_text, True, (194, 204, 220))
-            surface.blit(detail, (rect.x + self.scale(38, 24), rect.y + self.scale(28, 20)))
+            detail = self.popup_small_font.render(role_text, True, (232, 222, 192) if selected else (194, 204, 220))
+            detail_rect = detail.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.70)))
+            surface.blit(detail, detail_rect)
 
     def _render_plane_shift_direction_popup(self, surface: pygame.Surface) -> None:
         """Render the centered Plane Shift direction picker."""
@@ -2485,11 +2502,12 @@ class GameScreen(Screen):
             "down": "Shift Down",
         }
         for direction, rect in direction_rects:
-            pygame.draw.rect(surface, (40, 46, 60), rect, border_radius=12)
-            pygame.draw.rect(surface, (110, 118, 138), rect, 2, border_radius=12)
-            label = self.popup_body_font.render(labels[direction], True, (236, 236, 236))
-            label_rect = label.get_rect(center=rect.center)
-            surface.blit(label, label_rect)
+            self._render_game_wood_button(
+                surface,
+                rect,
+                labels[direction],
+                preferred_font_size=self.font_size(22, 15),
+            )
 
     def _render_plane_shift_confirmation_popup(self, surface: pygame.Surface) -> None:
         """Render final confirmation before Plane Shift changes the board."""
@@ -2526,12 +2544,13 @@ class GameScreen(Screen):
 
         for key, label in [("confirm", "Apply Shift"), ("change", "Change Direction")]:
             rect = buttons[key]
-            fill = (56, 68, 86) if key == "confirm" else (40, 46, 60)
-            border = (252, 222, 104) if key == "confirm" else (120, 128, 146)
-            pygame.draw.rect(surface, fill, rect, border_radius=self.scale(10, 6))
-            pygame.draw.rect(surface, border, rect, 2, border_radius=self.scale(10, 6))
-            text = self.popup_small_font.render(label, True, (240, 236, 214))
-            surface.blit(text, text.get_rect(center=rect.center))
+            self._render_game_wood_button(
+                surface,
+                rect,
+                label,
+                selected=key == "confirm",
+                preferred_font_size=self.font_size(18, 13),
+            )
 
     def _render_plane_shift_popup_preview(
         self,
@@ -2551,18 +2570,44 @@ class GameScreen(Screen):
         )
         surface.blit(label, (preview_rect.x + self.scale(12, 8), preview_rect.y + self.scale(6, 4)))
 
-        cell_gap = self.scale(6, 4)
         top = preview_rect.y + self.scale_y(30, 22)
-        cell_size = min(
-            self.scale(34, 24),
-            (preview_rect.width - self.scale_x(24, 16) - 5 * cell_gap) // 6,
-            preview_rect.bottom - top - self.scale_y(8, 5),
-        )
-        start_x = preview_rect.x + (preview_rect.width - (6 * cell_size + 5 * cell_gap)) // 2
-        slots = [
-            pygame.Rect(start_x + index * (cell_size + cell_gap), top, cell_size, cell_size)
-            for index in range(6)
-        ]
+        bottom = preview_rect.bottom - self.scale_y(8, 5)
+        if axis == "column":
+            cell_gap = self.scale(4, 2)
+            available_height = max(1, bottom - top)
+            cell_size = max(
+                self.scale(8, 6),
+                min(
+                    self.scale(26, 18),
+                    preview_rect.width // 5,
+                    max(1, (available_height - 5 * cell_gap) // 6),
+                ),
+            )
+            total_height = 6 * cell_size + 5 * cell_gap
+            start_x = preview_rect.centerx - cell_size // 2
+            start_y = top + max(0, (available_height - total_height) // 2)
+            slots = [
+                pygame.Rect(start_x, start_y + index * (cell_size + cell_gap), cell_size, cell_size)
+                for index in range(6)
+            ]
+        else:
+            cell_gap = self.scale(6, 4)
+            available_width = preview_rect.width - self.scale_x(24, 16)
+            available_height = max(1, bottom - top)
+            cell_size = max(
+                self.scale(10, 8),
+                min(
+                    self.scale(34, 24),
+                    max(1, (available_width - 5 * cell_gap) // 6),
+                    available_height,
+                ),
+            )
+            total_width = 6 * cell_size + 5 * cell_gap
+            start_x = preview_rect.x + (preview_rect.width - total_width) // 2
+            slots = [
+                pygame.Rect(start_x + index * (cell_size + cell_gap), top, cell_size, cell_size)
+                for index in range(6)
+            ]
 
         for slot in slots:
             pygame.draw.rect(surface, (18, 22, 30), slot, border_radius=self.scale(6, 4))
@@ -2573,7 +2618,8 @@ class GameScreen(Screen):
         for index, slot in enumerate(slots):
             target = slots[(index + sign) % 6]
             x = int(slot.x + (target.x - slot.x) * progress)
-            moving = pygame.Rect(x, slot.y, slot.width, slot.height)
+            y = int(slot.y + (target.y - slot.y) * progress)
+            moving = pygame.Rect(x, y, slot.width, slot.height)
             pygame.draw.rect(surface, (70, 88, 112), moving, border_radius=self.scale(6, 4))
             pygame.draw.rect(surface, (252, 222, 104), moving, 1, border_radius=self.scale(6, 4))
             number = self.popup_small_font.render(str(index + 1), True, (246, 238, 204))

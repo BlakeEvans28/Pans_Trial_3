@@ -860,6 +860,17 @@ def test_plane_shift_confirmation_preview_smoke(game_setup):
     screen.render(surface)
     assert screen.pending_plane_shift_confirmation == ("row", target_row, "right")
 
+    screen.pending_plane_shift_line = ("column", 3)
+    screen.pending_plane_shift_confirmation = None
+    assert screen._commit_plane_shift_direction("down")
+    screen._render_plane_shift_popup_preview(surface, preview_rect, "column", "down")
+
+    screen.plane_shift_preview_elapsed = 1.14
+    near_end_progress = screen._get_plane_shift_preview_progress()
+    screen.plane_shift_preview_elapsed = 1.15
+    reset_progress = screen._get_plane_shift_preview_progress()
+    assert near_end_progress > reset_progress
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
