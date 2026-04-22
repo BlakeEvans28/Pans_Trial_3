@@ -1,7 +1,8 @@
 # For BRANDT, BLAKE, WALKER (NOT FOR AI TO DO)
-- Add maze picture for homescreen
--
+- New Font
+- Fix UI screens (ones thats have the dark blue black background) Generate an image of a stone, and have the fonts on the stone look as though it is engraved.
+- After adding the stone, make sure all words fit correctly and look good.
+- Keep card rank legend/key only in draft phase.
 
 # For AI
-- use `Pan_Background.png` for the background of every other screen in the game other than title (same scaling rule as `PanTitle.png`)
-- Implement the style of the title to all icons in the main screen (inside how to play, settings, etc)
+- 
