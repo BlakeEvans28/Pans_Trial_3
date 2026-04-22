@@ -14,6 +14,13 @@ Use this file to track the most recent committed changes in reverse chronologica
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
 ## 2026-04-21 - Brandt Homan
+Commit: `pending` - Added title art, music, and UI smoke checks
+Summary:
+- Reworked the title screen so `PanTitle.png` fills the screen and right-side `Pan_Icon.png` wood buttons show overlaid labels with hover brightening.
+- Switched audio to the checked-in intro and phase music loops while keeping only the battle clash sound effect.
+- Added compact hand-card Inspect hints, an animated Plane Shift confirmation preview, Settings missing-art warnings, and regression-style UI smoke checks.
+
+## 2026-04-21 - Brandt Homan
 Commit: `pending` - Kept move and Ballista highlights clear of card numbers
 Summary:
 - Changed legal-move, Ballista-target, and board-cell highlight outlines so they leave the top-left card value visible.

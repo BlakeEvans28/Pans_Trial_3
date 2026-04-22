@@ -89,98 +89,107 @@ class Screen:
 
 class StartScreen(Screen):
     """Start/menu screen."""
+
+    ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
+    MENU_ACTIONS = [
+        ("PLAY", "Start Game"),
+        ("HOW_TO_PLAY", "How To Play"),
+        ("SETTINGS", "Settings"),
+        ("QUIT", "Quit"),
+    ]
+    MENU_LABEL_CENTER_Y_RATIO = 0.38
     
     def __init__(self, window: "GameWindow"):
         super().__init__(window)
         self.title_font = None
-        self.subtitle_font = None
         self.info_font = None
-        self.play_button = None
-        self.how_to_button = None
-        self.settings_button = None
-        self.quit_button = None
+        self.menu_font = None
+        self.menu_buttons: list[tuple[str, str, pygame.Rect]] = []
+        self.hovered_menu_action = None
+        self._title_base = self._load_image(self.ASSET_ROOT / "PanTitle.png")
+        self._icon_base = self._load_image(self.ASSET_ROOT / "Pan_Icon.png")
+        self._title_cache: dict[tuple[int, int], pygame.Surface] = {}
+        self._icon_cache: dict[tuple[tuple[int, int], bool], pygame.Surface] = {}
         self._refresh_fonts()
         self._create_ui()
         self.on_resize()
-        
-        # Start with elements hidden (will be shown when screen is activated)
-        self._hide_all_elements()
 
     def _refresh_fonts(self) -> None:
         """Refresh cached fonts for the current window scale."""
         self.title_font = pygame.font.Font(None, self.font_size(72, 42))
-        self.subtitle_font = pygame.font.Font(None, self.font_size(36, 24))
         self.info_font = pygame.font.Font(None, self.font_size(24, 18))
+        self.menu_font = self._make_title_style_font(self.font_size(42, 30))
+
+    def _make_title_style_font(self, size: int) -> pygame.font.Font:
+        """Return a large serif font that sits closer to the title lettering."""
+        for family in ["georgia", "garamond", "timesnewroman", "times new roman"]:
+            font_path = pygame.font.match_font(family, bold=True)
+            if font_path is not None:
+                return pygame.font.Font(font_path, size)
+        return pygame.font.Font(None, size)
+
+    def _load_image(self, path: Path) -> pygame.Surface | None:
+        """Load a title-screen image if the asset is available."""
+        if not path.exists():
+            return None
+        try:
+            return pygame.image.load(str(path)).convert_alpha()
+        except pygame.error:
+            return None
     
     def _create_ui(self):
-        """Create UI elements."""
-        self.play_button = pygame_gui.elements.UIButton(
-            relative_rect=pygame.Rect((0, 0), (1, 1)),
-            text="Start Game",
-            manager=self.ui_manager,
-            object_id="play_button"
-        )
-
-        self.how_to_button = pygame_gui.elements.UIButton(
-            relative_rect=pygame.Rect((0, 0), (1, 1)),
-            text="How To Play",
-            manager=self.ui_manager,
-            object_id="how_to_play_button"
-        )
-
-        self.settings_button = pygame_gui.elements.UIButton(
-            relative_rect=pygame.Rect((0, 0), (1, 1)),
-            text="Settings",
-            manager=self.ui_manager,
-            object_id="settings_button"
-        )
-        
-        self.quit_button = pygame_gui.elements.UIButton(
-            relative_rect=pygame.Rect((0, 0), (1, 1)),
-            text="Quit",
-            manager=self.ui_manager,
-            object_id="quit_button"
-        )
+        """Create manual title-menu hitboxes."""
+        self._layout_ui()
 
     def _layout_ui(self) -> None:
-        """Lay out menu buttons for the current window size."""
-        button_width = self.scale_x(300, 220)
-        button_height = self.scale_y(60, 44)
-        button_gap = self.scale_y(16, 10)
-        center_x = (self.window.WINDOW_WIDTH - button_width) // 2
-        total_height = button_height * 4 + button_gap * 3
-        play_y = self.window.WINDOW_HEIGHT // 2 - total_height // 2
-        how_y = play_y + button_height + button_gap
-        settings_y = how_y + button_height + button_gap
-        quit_y = settings_y + button_height + button_gap
+        """Lay out the wood-icon title menu down the right side."""
+        icon_overlap = self.scale_y(66, 44) if not self.is_compact_layout() else self.scale_y(46, 30)
+        gap = -icon_overlap
+        side_margin = self.scale_x(42, 18) if not self.is_compact_layout() else self.scale_x(18, 10)
+        min_width = 190 if self.is_compact_layout() else 330
+        max_width = 360 if self.is_compact_layout() else 520
+        icon_width = min(max_width, max(min_width, int(self.window.WINDOW_WIDTH * (0.46 if self.is_compact_layout() else 0.31))))
+        icon_height = self._get_icon_height_for_width(icon_width)
+        vertical_margin = self.scale_y(52, 28)
+        max_total_height = max(icon_height, self.window.WINDOW_HEIGHT - 2 * vertical_margin)
+        total_height = len(self.MENU_ACTIONS) * icon_height + (len(self.MENU_ACTIONS) - 1) * gap
+        if total_height > max_total_height:
+            available_icon_height = max(1, (max_total_height - (len(self.MENU_ACTIONS) - 1) * gap) // len(self.MENU_ACTIONS))
+            icon_width = self._get_icon_width_for_height(available_icon_height)
+            icon_height = self._get_icon_height_for_width(icon_width)
+        total_height = len(self.MENU_ACTIONS) * icon_height + (len(self.MENU_ACTIONS) - 1) * gap
+        start_x = max(self.scale_x(12, 8), self.window.WINDOW_WIDTH - side_margin - icon_width)
+        start_y = max(
+            vertical_margin,
+            min(
+                (self.window.WINDOW_HEIGHT - total_height) // 2,
+                self.window.WINDOW_HEIGHT - total_height - vertical_margin,
+            ),
+        )
 
-        for button, y in [
-            (self.play_button, play_y),
-            (self.how_to_button, how_y),
-            (self.settings_button, settings_y),
-            (self.quit_button, quit_y),
-        ]:
-            button.set_relative_position((center_x, y))
-            button.set_dimensions((button_width, button_height))
+        self.menu_buttons = []
+        for index, (action, label) in enumerate(self.MENU_ACTIONS):
+            rect = pygame.Rect(
+                start_x,
+                start_y + index * (icon_height + gap),
+                icon_width,
+                icon_height,
+            )
+            self.menu_buttons.append((action, label, rect))
     
     def _hide_all_elements(self):
-        """Hide all UI elements initially."""
-        self.play_button.hide()
-        self.how_to_button.hide()
-        self.settings_button.hide()
-        self.quit_button.hide()
+        """Start screen renders controls manually."""
+        self.hovered_menu_action = None
     
     def handle_events(self, event: pygame.event.Event) -> bool:
         """Handle events."""
-        if event.type == pygame_gui.UI_BUTTON_PRESSED:
-            if event.ui_element == self.play_button:
-                return "PLAY"
-            elif event.ui_element == self.how_to_button:
-                return "HOW_TO_PLAY"
-            elif event.ui_element == self.settings_button:
-                return "SETTINGS"
-            elif event.ui_element == self.quit_button:
-                return "QUIT"
+        if event.type == pygame.MOUSEMOTION:
+            self.hovered_menu_action = self._menu_action_at(event.pos)
+            return False
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            action = self._menu_action_at(event.pos)
+            if action is not None:
+                return action
         return False
     
     def update(self, time_delta: float) -> None:
@@ -190,21 +199,87 @@ class StartScreen(Screen):
     def render(self, surface: pygame.Surface) -> None:
         """Render start screen."""
         surface.fill((20, 20, 30))
-        
-        # Title - centered at top
-        title = self.title_font.render("PAN'S TRIAL", True, (200, 100, 200))
-        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(120, 84)))
-        surface.blit(title, title_rect)
-        
-        # Subtitle - centered below title
-        subtitle = self.subtitle_font.render("Card Game", True, (150, 150, 150))
-        subtitle_rect = subtitle.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(200, 150)))
-        surface.blit(subtitle, subtitle_rect)
-        
-        # Instructions - centered below subtitle
-        inst = self.info_font.render("Two-Player Card Game", True, (100, 100, 100))
-        inst_rect = inst.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(280, 210)))
-        surface.blit(inst, inst_rect)
+        self._render_title_art(surface)
+        self._render_menu_buttons(surface)
+
+    def _render_title_art(self, surface: pygame.Surface) -> None:
+        """Render the checked-in title artwork as a full-screen background."""
+        if self._title_base is None:
+            fallback = self.title_font.render("Pan's Trial", True, (238, 214, 142))
+            surface.blit(fallback, fallback.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(130, 90))))
+            return
+
+        image = self._get_scaled_title_art()
+        surface.blit(image, (0, 0))
+
+    def _get_scaled_title_art(self) -> pygame.Surface:
+        """Return the title image proportionally scaled to cover the frame."""
+        scale = max(
+            self.window.WINDOW_WIDTH / self._title_base.get_width(),
+            self.window.WINDOW_HEIGHT / self._title_base.get_height(),
+        )
+        size = (
+            max(1, int(self._title_base.get_width() * scale)),
+            max(1, int(self._title_base.get_height() * scale)),
+        )
+        if size not in self._title_cache:
+            self._title_cache[size] = pygame.transform.smoothscale(self._title_base, size)
+        return self._title_cache[size]
+
+    def _render_menu_buttons(self, surface: pygame.Surface) -> None:
+        """Render right-side wood-icon buttons with overlaid labels."""
+        mouse_pos = pygame.mouse.get_pos()
+        self.hovered_menu_action = self._menu_action_at(mouse_pos)
+        for action, label, rect in self.menu_buttons:
+            hovered = action == self.hovered_menu_action
+
+            icon = self._get_scaled_icon(rect.size, hovered)
+            if icon is not None:
+                surface.blit(icon, rect.topleft)
+            else:
+                pygame.draw.rect(surface, (96, 66, 38), rect, border_radius=self.scale(10, 6))
+
+            label_surface = self.menu_font.render(label, True, (255, 246, 214) if hovered else (246, 236, 204))
+            shadow = self.menu_font.render(label, True, (24, 14, 8))
+            label_rect = label_surface.get_rect(center=self._get_menu_label_center(rect))
+            surface.blit(shadow, label_rect.move(self.scale(3, 2), self.scale(3, 2)))
+            surface.blit(label_surface, label_rect)
+
+    def _get_menu_label_center(self, rect: pygame.Rect) -> tuple[int, int]:
+        """Return the visual center of the wood plank within the icon canvas."""
+        return (rect.centerx, rect.y + int(rect.height * self.MENU_LABEL_CENTER_Y_RATIO))
+
+    def _get_icon_height_for_width(self, width: int) -> int:
+        """Return the Pan icon height that preserves its source aspect ratio."""
+        if self._icon_base is None or self._icon_base.get_width() <= 0:
+            return max(self.scale_y(64, 44), width // 3)
+        return max(1, int(width * self._icon_base.get_height() / self._icon_base.get_width()))
+
+    def _get_icon_width_for_height(self, height: int) -> int:
+        """Return the Pan icon width that preserves its source aspect ratio."""
+        if self._icon_base is None or self._icon_base.get_height() <= 0:
+            return max(1, height * 3)
+        return max(1, int(height * self._icon_base.get_width() / self._icon_base.get_height()))
+
+    def _get_scaled_icon(self, size: tuple[int, int], bright: bool) -> pygame.Surface | None:
+        """Return the Pan icon, brightened when hovered."""
+        if self._icon_base is None:
+            return None
+        key = (size, bright)
+        if key not in self._icon_cache:
+            icon = pygame.transform.smoothscale(self._icon_base, size)
+            if bright:
+                icon = icon.copy()
+                icon.fill((58, 58, 58, 0), special_flags=pygame.BLEND_RGBA_ADD)
+            self._icon_cache[key] = icon
+        return self._icon_cache[key]
+
+    def _menu_action_at(self, pos: tuple[int, int]) -> str | None:
+        """Return the title-menu action at a mouse position."""
+        for action, _, rect in self.menu_buttons:
+            if rect.collidepoint(pos):
+                return action
+        return None
     
     def on_enter(self) -> None:
         """Activate start screen."""
@@ -218,18 +293,11 @@ class StartScreen(Screen):
             for _, btn in game_screen.request_buttons:
                 btn.hide()
         
-        # Show start screen elements
-        self.play_button.show()
-        self.how_to_button.show()
-        self.settings_button.show()
-        self.quit_button.show()
+        self.hovered_menu_action = None
     
     def on_exit(self) -> None:
         """Deactivate start screen."""
-        self.play_button.hide()
-        self.how_to_button.hide()
-        self.settings_button.hide()
-        self.quit_button.hide()
+        self.hovered_menu_action = None
 
     def on_resize(self) -> None:
         """Resize fonts and button positions."""
@@ -442,6 +510,12 @@ class HowToPlayScreen(Screen):
 class SettingsScreen(Screen):
     """Game settings screen for display, text, animation, sound, and tutorial options."""
 
+    ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
+    REQUIRED_ART_ASSETS = [
+        ASSET_ROOT / "Trap.png",
+        ASSET_ROOT / "Ballista.png",
+        ASSET_ROOT / "Stone_Wall.jpg",
+    ]
     TEXT_SCALES = [("Small", 0.9), ("Normal", 1.0), ("Large", 1.18)]
     ANIMATION_SPEEDS = [("Slow", 0.75), ("Normal", 1.0), ("Fast", 1.35)]
     SOUND_LEVELS = [("Muted", 0.0), ("50%", 0.5), ("100%", 1.0)]
@@ -519,7 +593,7 @@ class SettingsScreen(Screen):
         button_width = min(self.scale_x(420, 260), self.window.WINDOW_WIDTH - 2 * self.scale_x(40, 18))
         button_height = self.scale_y(54, 42)
         gap = self.scale_y(14, 10)
-        start_y = self.scale_y(210, 150)
+        start_y = self.scale_y(236, 174) if self.get_missing_required_art_assets() else self.scale_y(210, 150)
         center_x = (self.window.WINDOW_WIDTH - button_width) // 2
 
         for index, button in enumerate(self._setting_buttons()):
@@ -575,6 +649,10 @@ class SettingsScreen(Screen):
         self.tutorial_button.set_text(f"Tutorial Tips: {'On' if self.window.tutorial_enabled else 'Off'}")
         self.tutorial_reset_button.set_text("Reset First Tutorial")
 
+    def get_missing_required_art_assets(self) -> list[str]:
+        """Return required artwork filenames that are unavailable."""
+        return [path.name for path in self.REQUIRED_ART_ASSETS if not path.exists()]
+
     def handle_events(self, event: pygame.event.Event) -> bool:
         """Handle settings clicks."""
         if event.type != pygame_gui.UI_BUTTON_PRESSED:
@@ -621,6 +699,40 @@ class SettingsScreen(Screen):
             line = self.small_font.render(text, True, (190, 198, 210))
             line_rect = line.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(132 + index * 28, 92 + index * 18)))
             surface.blit(line, line_rect)
+
+        missing_assets = self.get_missing_required_art_assets()
+        if missing_assets:
+            warning_rect = pygame.Rect(
+                self.scale_x(34, 18),
+                self.scale_y(178, 130),
+                self.window.WINDOW_WIDTH - 2 * self.scale_x(34, 18),
+                self.scale_y(42, 32),
+            )
+            pygame.draw.rect(surface, (58, 44, 32), warning_rect, border_radius=self.scale(10, 6))
+            pygame.draw.rect(surface, (224, 166, 92), warning_rect, 2, border_radius=self.scale(10, 6))
+            warning = f"Missing art: {', '.join(missing_assets)}. Fallback tile colors will be used."
+            self._draw_wrapped_settings_text(surface, warning, warning_rect.inflate(-self.scale_x(18, 10), -self.scale_y(8, 5)))
+
+    def _draw_wrapped_settings_text(self, surface: pygame.Surface, text: str, rect: pygame.Rect) -> None:
+        """Draw one compact wrapped Settings warning."""
+        words = text.split()
+        lines = []
+        current = ""
+        for word in words:
+            candidate = word if not current else f"{current} {word}"
+            if self.small_font.size(candidate)[0] <= rect.width:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+
+        line_height = self.scale_y(18, 13)
+        for index, line in enumerate(lines[:2]):
+            rendered = self.small_font.render(line, True, (248, 224, 180))
+            surface.blit(rendered, (rect.x, rect.y + index * line_height))
 
     def on_enter(self) -> None:
         """Activate settings controls."""
@@ -1551,6 +1663,14 @@ class GameOverScreen(Screen):
 
 class ScreenManager:
     """Manages screen transitions."""
+
+    INTRO_MUSIC_SCREENS = {
+        ScreenType.START,
+        ScreenType.COIN_FLIP,
+        ScreenType.DRAFT,
+        ScreenType.JACK_REVEAL,
+        ScreenType.GAME_OVER,
+    }
     
     def __init__(self, window: "GameWindow"):
         self.window = window
@@ -1569,6 +1689,17 @@ class ScreenManager:
         
         self.current_screen = screen_type
         self.screens[screen_type].on_enter()
+        self._sync_music_for_screen(screen_type)
+
+    def _sync_music_for_screen(self, screen_type: ScreenType) -> None:
+        """Play the looping track that belongs to the active screen."""
+        audio = getattr(self.window, "audio", None)
+        if audio is None:
+            return
+        if screen_type in self.INTRO_MUSIC_SCREENS:
+            audio.play_intro_music()
+        elif screen_type == ScreenType.GAME:
+            audio.play_phase_music()
     
     def get_current(self) -> Screen:
         """Get current screen."""

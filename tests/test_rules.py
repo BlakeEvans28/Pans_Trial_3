@@ -2,6 +2,12 @@
 Tests for Pan's Trial game rules.
 """
 
+import os
+
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+
+import pygame
+import pygame_gui
 import pytest
 from engine import (
     Card, CardRank, CardSuit, GameState, GamePhase,
@@ -13,6 +19,84 @@ from engine import (
 from deck_utils import setup_game_deck, create_6x6_labyrinth, draft_hands, get_jack_suit_order
 from ui.input_handler import InputHandler
 from ui.board_renderer import BoardRenderer
+from ui.game_screen import GameScreen
+from ui.screen_manager import SettingsScreen
+
+
+class SmokeAudio:
+    """Small audio test double for UI smoke checks."""
+
+    def set_volume(self, volume: float) -> None:
+        self.volume = volume
+
+    def play_phase_music(self) -> None:
+        self.phase_music_started = True
+
+
+class SmokeWindow:
+    """Minimal GameWindow-shaped object for screen smoke tests."""
+
+    BASE_WINDOW_WIDTH = 1200
+    BASE_WINDOW_HEIGHT = 900
+
+    def __init__(self, width: int = 900, height: int = 700):
+        self.WINDOW_WIDTH = width
+        self.WINDOW_HEIGHT = height
+        self.fullscreen = False
+        self.text_scale = 1.0
+        self.animation_speed = 1.0
+        self.sound_volume = 0.5
+        self.tutorial_enabled = True
+        self.audio = SmokeAudio()
+        self.ui_manager = pygame_gui.UIManager((width, height))
+        self.reset_calls = 0
+
+    def get_scale(self) -> float:
+        return min(self.WINDOW_WIDTH / self.BASE_WINDOW_WIDTH, self.WINDOW_HEIGHT / self.BASE_WINDOW_HEIGHT)
+
+    def get_layout_mode(self) -> str:
+        if self.WINDOW_WIDTH < 720 or self.WINDOW_HEIGHT < 680:
+            return "compact"
+        if self.WINDOW_WIDTH < 1020 or self.WINDOW_HEIGHT < 760:
+            return "medium"
+        return "wide"
+
+    def is_compact_layout(self) -> bool:
+        return self.get_layout_mode() == "compact"
+
+    def scale(self, value: int, minimum: int = 1) -> int:
+        return max(minimum, int(round(value * self.get_scale())))
+
+    def scale_x(self, value: int, minimum: int = 1) -> int:
+        return max(minimum, int(round(value * self.WINDOW_WIDTH / self.BASE_WINDOW_WIDTH)))
+
+    def scale_y(self, value: int, minimum: int = 1) -> int:
+        return max(minimum, int(round(value * self.WINDOW_HEIGHT / self.BASE_WINDOW_HEIGHT)))
+
+    def font_size(self, value: int, minimum: int = 1) -> int:
+        return max(minimum, int(round(value * self.get_scale() * self.text_scale)))
+
+    def toggle_fullscreen(self) -> bool:
+        self.fullscreen = not self.fullscreen
+        return True
+
+    def reset_tutorial_tips(self) -> None:
+        self.reset_calls += 1
+        self.tutorial_enabled = True
+        game_screen = getattr(self, "game_screen_ref", None)
+        if game_screen is not None and hasattr(game_screen, "reset_tutorial_cycle"):
+            game_screen.reset_tutorial_cycle()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def pygame_smoke_display():
+    """Give pygame surfaces a tiny display for convert_alpha smoke tests."""
+    pygame.display.init()
+    pygame.font.init()
+    if pygame.display.get_surface() is None:
+        pygame.display.set_mode((1, 1))
+    yield
+    pygame.display.quit()
 
 
 @pytest.fixture
@@ -702,6 +786,79 @@ def test_player_tokens_only_offset_when_sharing_a_tile():
     assert BoardRenderer.get_player_x_offset(1, sharing_tile=False) == 0
     assert BoardRenderer.get_player_x_offset(0, sharing_tile=True) < 0
     assert BoardRenderer.get_player_x_offset(1, sharing_tile=True) > 0
+
+
+def test_settings_tutorial_reset_smoke():
+    """Settings reset button should re-enable first-cycle tutorial state."""
+    window = SmokeWindow()
+    screen = SettingsScreen(window)
+    window.tutorial_enabled = False
+
+    class GameplayStub:
+        reset_called = False
+
+        def reset_tutorial_cycle(self):
+            self.reset_called = True
+
+    gameplay_stub = GameplayStub()
+    window.game_screen_ref = gameplay_stub
+
+    event = pygame.event.Event(
+        pygame_gui.UI_BUTTON_PRESSED,
+        {"ui_element": screen.tutorial_reset_button},
+    )
+
+    assert screen.handle_events(event) is True
+    assert window.tutorial_enabled is True
+    assert window.reset_calls == 1
+    assert gameplay_stub.reset_called is True
+
+
+def test_compact_hand_card_inspect_smoke(game_setup):
+    """Compact hand cards should open the Inspect popup before play."""
+    window = SmokeWindow(width=560, height=660)
+    game = game_setup
+    game.current_player = 0
+    game.phase = GamePhase.APPEASING
+    game.current_request_winner = None
+    screen = GameScreen(window, game)
+
+    hand_rects = screen._get_hand_card_rects()
+    assert hand_rects
+    assert screen._handle_hand_card_click(hand_rects[0][1].center)
+    assert screen.inspected_hand_card_index == 0
+    assert screen._is_hand_inspect_popup_active()
+
+    surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
+    screen.render(surface)
+    assert screen.hand_card_rects
+
+
+def test_plane_shift_confirmation_preview_smoke(game_setup):
+    """Plane Shift confirmation should queue and render the animated preview."""
+    window = SmokeWindow(width=820, height=720)
+    game = game_setup
+    target_row = 2
+    game.phase = GamePhase.APPEASING
+    game.current_request_winner = 0
+    game.pending_request_players = [0]
+    game.current_player = 0
+    game.traversing_resume_player = 1
+    assert game.choose_request(0, "plane_shift")
+
+    screen = GameScreen(window, game)
+    screen.pending_plane_shift_line = ("row", target_row)
+    assert screen._commit_plane_shift_direction("right")
+    assert screen.pending_plane_shift_confirmation == ("row", target_row, "right")
+
+    panel_rect, _ = screen._get_plane_shift_confirmation_layout()
+    preview_rect = screen._get_plane_shift_confirmation_preview_rect(panel_rect)
+    assert preview_rect.height > 0
+
+    surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
+    screen.update(0.16)
+    screen.render(surface)
+    assert screen.pending_plane_shift_confirmation == ("row", target_row, "right")
 
 
 if __name__ == "__main__":
