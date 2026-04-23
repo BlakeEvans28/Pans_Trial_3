@@ -125,8 +125,8 @@ class GameScreen(Screen):
     def _refresh_fonts(self) -> None:
         """Refresh gameplay popup fonts after a resize."""
         self.popup_title_font = self._get_title_style_font(self.font_size(38, 26))
-        self.popup_body_font = pygame.font.Font(None, self.font_size(28, 20))
-        self.popup_small_font = pygame.font.Font(None, self.font_size(22, 16))
+        self.popup_body_font = self._get_game_font(self.font_size(28, 20))
+        self.popup_small_font = self._get_game_font(self.font_size(22, 16))
 
     def _apply_element_rect(self, element, rect: pygame.Rect) -> None:
         """Resize and reposition one pygame_gui element."""

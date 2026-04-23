@@ -41,6 +41,7 @@ class Screen:
     ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
     PAN_BACKGROUND_PATH = ASSET_ROOT / "Pan_Background.png"
     PAN_ICON_PATH = ASSET_ROOT / "Pan_Icon.png"
+    MEDIEVAL_SHARP_PATH = ASSET_ROOT / "MedievalSharp.ttf"
     WOOD_LABEL_CENTER_Y_RATIO = 0.50
     
     def __init__(self, window: "GameWindow"):
@@ -97,14 +98,26 @@ class Screen:
         """Return a bold serif font that echoes the title lettering."""
         size = max(1, size)
         if size not in self._title_style_font_cache:
-            for family in ["georgia", "garamond", "timesnewroman", "times new roman"]:
-                font_path = pygame.font.match_font(family, bold=True)
-                if font_path is not None:
-                    self._title_style_font_cache[size] = pygame.font.Font(font_path, size)
-                    break
+            # Try MedievalSharp first from assets
+            if self.MEDIEVAL_SHARP_PATH.exists():
+                self._title_style_font_cache[size] = pygame.font.Font(str(self.MEDIEVAL_SHARP_PATH), size)
             else:
-                self._title_style_font_cache[size] = pygame.font.Font(None, size)
+                # Fall back to system serif fonts
+                for family in ["georgia", "garamond", "timesnewroman", "times new roman"]:
+                    font_path = pygame.font.match_font(family, bold=True)
+                    if font_path is not None:
+                        self._title_style_font_cache[size] = pygame.font.Font(font_path, size)
+                        break
+                else:
+                    self._title_style_font_cache[size] = pygame.font.Font(None, size)
         return self._title_style_font_cache[size]
+
+    def _get_game_font(self, size: int) -> pygame.font.Font:
+        """Return a game-style font, preferring MedievallSharp if available."""
+        # Try MedievalSharp from assets first, then fall back to default
+        if self.MEDIEVAL_SHARP_PATH.exists():
+            return pygame.font.Font(str(self.MEDIEVAL_SHARP_PATH), size)
+        return pygame.font.Font(None, size)
 
     def _render_screen_background(self, surface: pygame.Surface, fallback: tuple[int, int, int] = (16, 20, 30)) -> None:
         """Render Pan_Background with the same cover-scaling rule as the title art."""
@@ -253,12 +266,16 @@ class StartScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh cached fonts for the current window scale."""
-        self.title_font = pygame.font.Font(None, self.font_size(72, 42))
-        self.info_font = pygame.font.Font(None, self.font_size(24, 18))
+        self.title_font = self._get_game_font(self.font_size(72, 42))
+        self.info_font = self._get_game_font(self.font_size(24, 18))
         self.menu_font = self._make_title_style_font(self.font_size(42, 30))
 
     def _make_title_style_font(self, size: int) -> pygame.font.Font:
         """Return a large serif font that sits closer to the title lettering."""
+        # Try MedievalSharp from assets first
+        if self.MEDIEVAL_SHARP_PATH.exists():
+            return pygame.font.Font(str(self.MEDIEVAL_SHARP_PATH), size)
+        # Fall back to system serif fonts
         for family in ["georgia", "garamond", "timesnewroman", "times new roman"]:
             font_path = pygame.font.match_font(family, bold=True)
             if font_path is not None:
@@ -494,10 +511,10 @@ class HowToPlayScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh fonts for the current window scale."""
-        self.title_font = pygame.font.Font(None, self.font_size(64, 38))
-        self.heading_font = pygame.font.Font(None, self.font_size(30, 22))
-        self.body_font = pygame.font.Font(None, self.font_size(24, 17))
-        self.small_font = pygame.font.Font(None, self.font_size(22, 16))
+        self.title_font = self._get_game_font(self.font_size(64, 38))
+        self.heading_font = self._get_game_font(self.font_size(30, 22))
+        self.body_font = self._get_game_font(self.font_size(24, 17))
+        self.small_font = self._get_game_font(self.font_size(22, 16))
 
     def _create_ui(self) -> None:
         """Create How To Play UI controls."""
@@ -700,9 +717,9 @@ class SettingsScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh fonts for the current text-size setting."""
-        self.title_font = pygame.font.Font(None, self.font_size(64, 38))
-        self.body_font = pygame.font.Font(None, self.font_size(28, 20))
-        self.small_font = pygame.font.Font(None, self.font_size(22, 16))
+        self.title_font = self._get_game_font(self.font_size(64, 38))
+        self.body_font = self._get_game_font(self.font_size(28, 20))
+        self.small_font = self._get_game_font(self.font_size(22, 16))
 
     def _create_ui(self) -> None:
         """Create settings buttons."""
@@ -1005,9 +1022,9 @@ class CoinFlipScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh coin-flip fonts."""
-        self.title_font = pygame.font.Font(None, self.font_size(64, 38))
-        self.body_font = pygame.font.Font(None, self.font_size(34, 24))
-        self.small_font = pygame.font.Font(None, self.font_size(24, 16))
+        self.title_font = self._get_game_font(self.font_size(64, 38))
+        self.body_font = self._get_game_font(self.font_size(34, 24))
+        self.small_font = self._get_game_font(self.font_size(24, 16))
 
     def start_flip(self, first_player: int) -> None:
         """Start a new flip animation for the chosen first drafter."""
@@ -1102,10 +1119,10 @@ class DraftScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh all draft-phase fonts."""
-        self.title_font = pygame.font.Font(None, self.font_size(64, 38))
-        self.body_font = pygame.font.Font(None, self.font_size(30, 20))
-        self.small_font = pygame.font.Font(None, self.font_size(24, 16))
-        self.card_font = pygame.font.Font(None, self.font_size(34, 22))
+        self.title_font = self._get_game_font(self.font_size(64, 38))
+        self.body_font = self._get_game_font(self.font_size(30, 20))
+        self.small_font = self._get_game_font(self.font_size(24, 16))
+        self.card_font = self._get_game_font(self.font_size(34, 22))
 
     def _create_ui(self):
         """Create the 6x2 grid of draft card hitboxes."""
@@ -1518,10 +1535,10 @@ class JackRevealScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh reveal fonts after a resize."""
-        self.title_font = pygame.font.Font(None, self.font_size(62, 36))
-        self.body_font = pygame.font.Font(None, self.font_size(30, 20))
-        self.card_font = pygame.font.Font(None, self.font_size(42, 24))
-        self.small_font = pygame.font.Font(None, self.font_size(24, 16))
+        self.title_font = self._get_game_font(self.font_size(62, 36))
+        self.body_font = self._get_game_font(self.font_size(30, 20))
+        self.card_font = self._get_game_font(self.font_size(42, 24))
+        self.small_font = self._get_game_font(self.font_size(24, 16))
 
     def start_reveal(self, jack_cards: list, player_cards: list | None = None) -> None:
         """Begin a new autonomous Jack reveal animation."""
