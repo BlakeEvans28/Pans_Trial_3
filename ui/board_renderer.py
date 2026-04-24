@@ -32,6 +32,7 @@ class BoardRenderer:
     PLAYER_MARKER_RADIUS = 17
     ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
     PLAYER_PORTRAIT_PATH = Path(__file__).resolve().parent.parent / "assets" / "player_portrait_micah.png"
+    MEDIEVAL_SHARP_PATH = ASSET_ROOT / "MedievalSharp.ttf"
     
     def __init__(self):
         """Initialize board renderer."""
@@ -51,9 +52,19 @@ class BoardRenderer:
 
     def _refresh_fonts(self) -> None:
         """Refresh fonts to match the current cell size."""
-        self.font_small = pygame.font.Font(None, max(18, int(round(self.CELL_SIZE * 0.30))))
-        self.font_medium = pygame.font.Font(None, max(22, int(round(self.CELL_SIZE * 0.40))))
-        self.player_label_font = pygame.font.Font(None, max(16, int(round(self.CELL_SIZE * 0.22))))
+        small_size = max(18, int(round(self.CELL_SIZE * 0.30)))
+        medium_size = max(22, int(round(self.CELL_SIZE * 0.40)))
+        label_size = max(16, int(round(self.CELL_SIZE * 0.22)))
+        
+        # Try to use MedievalSharp from assets, fall back to default
+        if self.MEDIEVAL_SHARP_PATH.exists():
+            self.font_small = pygame.font.Font(str(self.MEDIEVAL_SHARP_PATH), small_size)
+            self.font_medium = pygame.font.Font(str(self.MEDIEVAL_SHARP_PATH), medium_size)
+            self.player_label_font = pygame.font.Font(str(self.MEDIEVAL_SHARP_PATH), label_size)
+        else:
+            self.font_small = pygame.font.Font(None, small_size)
+            self.font_medium = pygame.font.Font(None, medium_size)
+            self.player_label_font = pygame.font.Font(None, label_size)
 
     def _load_player_portrait(self) -> Optional[pygame.Surface]:
         """Load the circular portrait asset used for player markers."""

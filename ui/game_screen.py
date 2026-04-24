@@ -107,6 +107,7 @@ class GameScreen(Screen):
         self.hovered_plane_shift_line = None
         self.pending_plane_shift_confirmation = None
         self.tutorial_toggle_rect = None
+        self.tutorial_panel_rect = None
         self.hand_card_rects = []
         self.inspected_hand_card_index = None
         self._tutorial_seen_appeasing_cycle = False
@@ -125,8 +126,8 @@ class GameScreen(Screen):
     def _refresh_fonts(self) -> None:
         """Refresh gameplay popup fonts after a resize."""
         self.popup_title_font = self._get_title_style_font(self.font_size(38, 26))
-        self.popup_body_font = pygame.font.Font(None, self.font_size(28, 20))
-        self.popup_small_font = pygame.font.Font(None, self.font_size(22, 16))
+        self.popup_body_font = self._get_game_font(self.font_size(28, 20))
+        self.popup_small_font = self._get_game_font(self.font_size(22, 16))
 
     def _apply_element_rect(self, element, rect: pygame.Rect) -> None:
         """Resize and reposition one pygame_gui element."""
@@ -953,7 +954,6 @@ class GameScreen(Screen):
             self._render_ballista_target_overlay(surface, highlight_positions)
         self._render_pending_placement_hover(surface)
         self._render_suit_role_legend(surface)
-        self._render_rank_guide(surface)
         self._render_damage_summary(surface)
         self._render_hand_cards(surface)
         self._render_pending_placement_cards(surface)
@@ -2119,6 +2119,7 @@ class GameScreen(Screen):
         """Render optional context-sensitive tutorial guidance."""
         if not self.window.tutorial_enabled:
             self.tutorial_toggle_rect = None
+            self.tutorial_panel_rect = None
             return
 
         board_rect = self.renderer.get_board_rect()
@@ -2160,10 +2161,9 @@ class GameScreen(Screen):
         pygame.draw.rect(surface, (252, 222, 104), target_rect.inflate(self.scale(10, 6), self.scale(10, 6)), 3, border_radius=10)
         panel_width = min(self.scale_x(720, 330), self.window.WINDOW_WIDTH - 2 * self.scale_x(20, 12))
         panel_height = self.scale_y(46, 36)
-        panel_y = self.scale_y(132, 96)
-        if target_rect.top < self.window.WINDOW_HEIGHT // 2:
-            panel_y = min(self.window.WINDOW_HEIGHT - panel_height - self.scale_y(16, 10), target_rect.bottom + self.scale_y(12, 8))
-        panel_rect = pygame.Rect((self.window.WINDOW_WIDTH - panel_width) // 2, panel_y, panel_width, panel_height)
+        avoid_rects = self._get_tutorial_avoid_rects(target_rect)
+        panel_rect = self._choose_tutorial_panel_rect(target_rect, (panel_width, panel_height), avoid_rects)
+        self.tutorial_panel_rect = panel_rect
         pygame.draw.rect(surface, (24, 28, 40), panel_rect, border_radius=self.scale(10, 6))
         pygame.draw.rect(surface, (252, 222, 104), panel_rect, 2, border_radius=self.scale(10, 6))
         button_width = min(self.scale_x(132, 92), max(self.scale_x(86, 72), panel_rect.width // 4))
@@ -2192,6 +2192,35 @@ class GameScreen(Screen):
             self.scale_y(18, 13),
             2,
         )
+
+    def _get_tutorial_avoid_rects(self, target_rect: pygame.Rect) -> list[pygame.Rect]:
+        """Return important gameplay areas the tutorial text panel should avoid."""
+        board_rect = self.renderer.get_board_rect()
+        avoid_rects = [target_rect, board_rect]
+        for element in (self.status_label, self.info_label):
+            rect = getattr(element, "relative_rect", None)
+            if rect is not None:
+                avoid_rects.append(rect.copy())
+        avoid_rects.extend(self._get_damage_summary_rects().values())
+        avoid_rects.extend(rect for _, rect in self._get_hand_card_rects())
+        avoid_rects.extend(rect for _, rect in self._get_pending_placement_card_rects())
+
+        if self.game.phase == GamePhase.APPEASING:
+            strip_height = self.scale_y(58, 44)
+            avoid_rects.append(
+                pygame.Rect(
+                    self.scale_x(16, 10),
+                    self.scale_y(52, 40),
+                    self.window.WINDOW_WIDTH - 2 * self.scale_x(16, 10),
+                    strip_height,
+                )
+            )
+
+        legend_rect = self._get_suit_role_legend_panel_rect()
+        if legend_rect is not None:
+            avoid_rects.append(legend_rect)
+
+        return avoid_rects
 
     def _get_active_popup_tutorial_target(self) -> tuple[pygame.Rect | None, str | None]:
         """Return the active modal rect so tutorial highlights do not cover it from behind."""
@@ -2854,11 +2883,42 @@ class GameScreen(Screen):
         border = (252, 222, 104) if selected or floating else (110, 116, 130)
         pygame.draw.rect(surface, border, rect, self.scale(3 if selected or floating else 2, 1), border_radius=self.scale(8, 5))
 
-    def _render_suit_role_legend(self, surface: pygame.Surface) -> None:
-        """Render suit-role mappings with drawn icons instead of font glyphs."""
+    def _get_suit_role_legend_panel_rect(self) -> pygame.Rect | None:
+        """Return the wood backing rect for the top-right suit role legend."""
         if self.is_compact_layout():
             if self.game.phase == GamePhase.APPEASING:
-                return
+                return None
+            margin = self.scale_x(18, 12)
+            gap = self.scale_x(10, 6)
+            chip_width = (self.window.WINDOW_WIDTH - 2 * margin - gap) // 2
+            chip_height = self.scale_y(24, 20)
+            start_y = self.scale_y(88, 72)
+            height = 2 * chip_height + self.scale_y(6, 4)
+            return pygame.Rect(
+                margin - self.scale_x(8, 5),
+                start_y - self.scale_y(6, 4),
+                2 * chip_width + gap + 2 * self.scale_x(8, 5),
+                height + 2 * self.scale_y(6, 4),
+            )
+
+        start_x = self.window.WINDOW_WIDTH - self.scale_x(235, 170)
+        start_y = self.scale_y(72, 54)
+        row_height = self.scale(30, 22)
+        return pygame.Rect(
+            start_x,
+            start_y,
+            self.scale_x(220, 160),
+            4 * row_height + self.scale_y(20, 14),
+        )
+
+    def _render_suit_role_legend(self, surface: pygame.Surface) -> None:
+        """Render suit-role mappings with drawn icons instead of font glyphs."""
+        panel_rect = self._get_suit_role_legend_panel_rect()
+        if panel_rect is None:
+            return
+        self._render_wood_panel(surface, panel_rect, (132, 118, 82), dim_alpha=104)
+
+        if self.is_compact_layout():
             margin = self.scale_x(18, 12)
             gap = self.scale_x(10, 6)
             chip_width = (self.window.WINDOW_WIDTH - 2 * margin - gap) // 2
@@ -2882,8 +2942,8 @@ class GameScreen(Screen):
                 surface.blit(label, (rect.x + self.scale(28, 18), rect.y + self.scale(4, 3)))
             return
 
-        start_x = self.window.WINDOW_WIDTH - self.scale_x(215, 156)
-        start_y = self.scale_y(82, 62)
+        start_x = panel_rect.x + self.scale_x(14, 9)
+        start_y = panel_rect.y + self.scale_y(12, 8)
         row_height = self.scale(30, 22)
 
         for index, suit in enumerate(self.game.jack_order):

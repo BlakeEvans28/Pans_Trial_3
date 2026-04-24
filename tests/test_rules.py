@@ -20,7 +20,7 @@ from deck_utils import setup_game_deck, create_6x6_labyrinth, draft_hands, get_j
 from ui.input_handler import InputHandler
 from ui.board_renderer import BoardRenderer
 from ui.game_screen import GameScreen
-from ui.screen_manager import SettingsScreen
+from ui.screen_manager import DraftScreen, SettingsScreen
 
 
 class SmokeAudio:
@@ -814,6 +814,27 @@ def test_settings_tutorial_reset_smoke():
     assert gameplay_stub.reset_called is True
 
 
+def test_draft_tutorial_panel_avoids_card_grid_smoke():
+    """Draft tutorial text should not cover the highlighted draft-card grid."""
+    window = SmokeWindow(width=1200, height=900)
+    screen = DraftScreen(window)
+    draft_cards = [
+        Card(rank, suit)
+        for rank in (CardRank.TEN, CardRank.QUEEN, CardRank.KING)
+        for suit in (CardSuit.HEARTS, CardSuit.DIAMONDS, CardSuit.CLUBS, CardSuit.SPADES)
+    ]
+    screen.start_draft(draft_cards, starting_player=0)
+
+    surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
+    screen.render(surface)
+
+    grid_rect = screen._get_draft_grid_rect()
+    assert screen.draft_tutorial_panel_rect is not None
+    assert screen.tutorial_toggle_rect is not None
+    assert not screen.draft_tutorial_panel_rect.colliderect(grid_rect)
+    assert not screen.tutorial_toggle_rect.colliderect(grid_rect)
+
+
 def test_compact_hand_card_inspect_smoke(game_setup):
     """Compact hand cards should open the Inspect popup before play."""
     window = SmokeWindow(width=560, height=660)
@@ -832,6 +853,21 @@ def test_compact_hand_card_inspect_smoke(game_setup):
     surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
     screen.render(surface)
     assert screen.hand_card_rects
+
+
+def test_game_tutorial_panel_avoids_board_smoke(game_setup):
+    """Gameplay tutorial text should not cover the highlighted board area."""
+    window = SmokeWindow(width=900, height=700)
+    game = game_setup
+    game.phase = GamePhase.TRAVERSING
+    game.current_player = 0
+    screen = GameScreen(window, game)
+
+    surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
+    screen.render(surface)
+
+    assert screen.tutorial_panel_rect is not None
+    assert not screen.tutorial_panel_rect.colliderect(screen.renderer.get_board_rect())
 
 
 def test_plane_shift_confirmation_preview_smoke(game_setup):

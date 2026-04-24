@@ -18,6 +18,9 @@ Commit: `pending` - Extended title theming into gameplay controls
 Summary:
 - Fixed Plane Shift confirmation previews so column shifts display as columns and the animation snaps from its final frame back to the first instead of reversing.
 - Applied the title-screen wood-button treatment to more gameplay controls, including request choices, Plane Shift action buttons, damage chips, and popup action buttons.
+- Moved the wood treatment off individual cards and onto larger text panels like the draft value guide, trial-hand panels, and top-right suit-role legend.
+- Removed the gameplay card-rank key from the labyrinth screens.
+- Repositioned tutorial text panels so they avoid highlighted gameplay areas and added smoke checks for draft/gameplay tutorial placement.
 
 ## 2026-04-21 - Brandt Homan
 Commit: `pending` - Added title art, music, and UI smoke checks

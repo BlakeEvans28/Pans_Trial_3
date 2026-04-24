@@ -41,6 +41,7 @@ class Screen:
     ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
     PAN_BACKGROUND_PATH = ASSET_ROOT / "Pan_Background.png"
     PAN_ICON_PATH = ASSET_ROOT / "Pan_Icon.png"
+    MEDIEVAL_SHARP_PATH = ASSET_ROOT / "MedievalSharp.ttf"
     WOOD_LABEL_CENTER_Y_RATIO = 0.50
     
     def __init__(self, window: "GameWindow"):
@@ -97,14 +98,26 @@ class Screen:
         """Return a bold serif font that echoes the title lettering."""
         size = max(1, size)
         if size not in self._title_style_font_cache:
-            for family in ["georgia", "garamond", "timesnewroman", "times new roman"]:
-                font_path = pygame.font.match_font(family, bold=True)
-                if font_path is not None:
-                    self._title_style_font_cache[size] = pygame.font.Font(font_path, size)
-                    break
+            # Try MedievalSharp first from assets
+            if self.MEDIEVAL_SHARP_PATH.exists():
+                self._title_style_font_cache[size] = pygame.font.Font(str(self.MEDIEVAL_SHARP_PATH), size)
             else:
-                self._title_style_font_cache[size] = pygame.font.Font(None, size)
+                # Fall back to system serif fonts
+                for family in ["georgia", "garamond", "timesnewroman", "times new roman"]:
+                    font_path = pygame.font.match_font(family, bold=True)
+                    if font_path is not None:
+                        self._title_style_font_cache[size] = pygame.font.Font(font_path, size)
+                        break
+                else:
+                    self._title_style_font_cache[size] = pygame.font.Font(None, size)
         return self._title_style_font_cache[size]
+
+    def _get_game_font(self, size: int) -> pygame.font.Font:
+        """Return a game-style font, preferring MedievallSharp if available."""
+        # Try MedievalSharp from assets first, then fall back to default
+        if self.MEDIEVAL_SHARP_PATH.exists():
+            return pygame.font.Font(str(self.MEDIEVAL_SHARP_PATH), size)
+        return pygame.font.Font(None, size)
 
     def _render_screen_background(self, surface: pygame.Surface, fallback: tuple[int, int, int] = (16, 20, 30)) -> None:
         """Render Pan_Background with the same cover-scaling rule as the title art."""
@@ -198,6 +211,76 @@ class Screen:
         label_rect = label_surface.get_rect(center=self._get_wood_label_center(rect))
         surface.blit(shadow, label_rect.move(self.scale(3, 2), self.scale(3, 2)))
         surface.blit(label_surface, label_rect)
+
+    def _render_wood_panel(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        border_color: tuple[int, int, int] | None = None,
+        dim_alpha: int = 94,
+    ) -> None:
+        """Render a large text/panel box with the shared wood art."""
+        icon = self._get_scaled_wood_icon(rect.size, False)
+        if icon is not None:
+            surface.blit(icon, rect.topleft)
+        else:
+            pygame.draw.rect(surface, (72, 46, 28), rect, border_radius=self.scale(12, 8))
+
+        if dim_alpha > 0:
+            veil = pygame.Surface(rect.size, pygame.SRCALPHA)
+            veil.fill((10, 7, 4, dim_alpha))
+            surface.blit(veil, rect.topleft)
+
+        if border_color is not None:
+            pygame.draw.rect(surface, border_color, rect, self.scale(3, 2), border_radius=self.scale(14, 8))
+
+    @staticmethod
+    def _overlap_area(first: pygame.Rect, second: pygame.Rect) -> int:
+        """Return the overlapping area between two rects."""
+        clipped = first.clip(second)
+        return clipped.width * clipped.height
+
+    def _clamp_panel_rect(self, rect: pygame.Rect, margin: int) -> pygame.Rect:
+        """Keep a floating panel inside the current screen bounds."""
+        max_x = max(margin, self.window.WINDOW_WIDTH - rect.width - margin)
+        max_y = max(margin, self.window.WINDOW_HEIGHT - rect.height - margin)
+        rect.x = max(margin, min(rect.x, max_x))
+        rect.y = max(margin, min(rect.y, max_y))
+        return rect
+
+    def _choose_tutorial_panel_rect(
+        self,
+        target_rect: pygame.Rect,
+        size: tuple[int, int],
+        avoid_rects: list[pygame.Rect],
+    ) -> pygame.Rect:
+        """Choose a tutorial panel position that avoids the target and key UI."""
+        width, height = size
+        margin = self.scale(18, 12)
+        gap = self.scale(14, 8)
+        target = target_rect.copy()
+        candidates = [
+            pygame.Rect(target.centerx - width // 2, target.top - height - gap, width, height),
+            pygame.Rect(target.centerx - width // 2, target.bottom + gap, width, height),
+            pygame.Rect(target.left - width - gap, target.centery - height // 2, width, height),
+            pygame.Rect(target.right + gap, target.centery - height // 2, width, height),
+            pygame.Rect(margin, margin, width, height),
+            pygame.Rect(self.window.WINDOW_WIDTH - width - margin, margin, width, height),
+            pygame.Rect(margin, self.window.WINDOW_HEIGHT - height - margin, width, height),
+            pygame.Rect(self.window.WINDOW_WIDTH - width - margin, self.window.WINDOW_HEIGHT - height - margin, width, height),
+            pygame.Rect((self.window.WINDOW_WIDTH - width) // 2, margin, width, height),
+            pygame.Rect((self.window.WINDOW_WIDTH - width) // 2, self.window.WINDOW_HEIGHT - height - margin, width, height),
+        ]
+
+        protected_rects = [target] + [rect for rect in avoid_rects if rect.width > 0 and rect.height > 0]
+
+        def score(rect: pygame.Rect) -> tuple[int, int]:
+            clamped = self._clamp_panel_rect(rect.copy(), margin)
+            overlap = sum(self._overlap_area(clamped, protected) for protected in protected_rects)
+            distance = abs(clamped.centerx - target.centerx) + abs(clamped.centery - target.centery)
+            return overlap, distance
+
+        return self._clamp_panel_rect(min(candidates, key=score).copy(), margin)
     
     def handle_events(self, event: pygame.event.Event) -> bool:
         """Handle event. Return True if event was consumed."""
@@ -253,12 +336,16 @@ class StartScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh cached fonts for the current window scale."""
-        self.title_font = pygame.font.Font(None, self.font_size(72, 42))
-        self.info_font = pygame.font.Font(None, self.font_size(24, 18))
+        self.title_font = self._get_game_font(self.font_size(72, 42))
+        self.info_font = self._get_game_font(self.font_size(24, 18))
         self.menu_font = self._make_title_style_font(self.font_size(42, 30))
 
     def _make_title_style_font(self, size: int) -> pygame.font.Font:
         """Return a large serif font that sits closer to the title lettering."""
+        # Try MedievalSharp from assets first
+        if self.MEDIEVAL_SHARP_PATH.exists():
+            return pygame.font.Font(str(self.MEDIEVAL_SHARP_PATH), size)
+        # Fall back to system serif fonts
         for family in ["georgia", "garamond", "timesnewroman", "times new roman"]:
             font_path = pygame.font.match_font(family, bold=True)
             if font_path is not None:
@@ -494,10 +581,10 @@ class HowToPlayScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh fonts for the current window scale."""
-        self.title_font = pygame.font.Font(None, self.font_size(64, 38))
-        self.heading_font = pygame.font.Font(None, self.font_size(30, 22))
-        self.body_font = pygame.font.Font(None, self.font_size(24, 17))
-        self.small_font = pygame.font.Font(None, self.font_size(22, 16))
+        self.title_font = self._get_game_font(self.font_size(64, 38))
+        self.heading_font = self._get_game_font(self.font_size(30, 22))
+        self.body_font = self._get_game_font(self.font_size(24, 17))
+        self.small_font = self._get_game_font(self.font_size(22, 16))
 
     def _create_ui(self) -> None:
         """Create How To Play UI controls."""
@@ -700,9 +787,9 @@ class SettingsScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh fonts for the current text-size setting."""
-        self.title_font = pygame.font.Font(None, self.font_size(64, 38))
-        self.body_font = pygame.font.Font(None, self.font_size(28, 20))
-        self.small_font = pygame.font.Font(None, self.font_size(22, 16))
+        self.title_font = self._get_game_font(self.font_size(64, 38))
+        self.body_font = self._get_game_font(self.font_size(28, 20))
+        self.small_font = self._get_game_font(self.font_size(22, 16))
 
     def _create_ui(self) -> None:
         """Create settings buttons."""
@@ -1005,9 +1092,9 @@ class CoinFlipScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh coin-flip fonts."""
-        self.title_font = pygame.font.Font(None, self.font_size(64, 38))
-        self.body_font = pygame.font.Font(None, self.font_size(34, 24))
-        self.small_font = pygame.font.Font(None, self.font_size(24, 16))
+        self.title_font = self._get_game_font(self.font_size(64, 38))
+        self.body_font = self._get_game_font(self.font_size(34, 24))
+        self.small_font = self._get_game_font(self.font_size(24, 16))
 
     def start_flip(self, first_player: int) -> None:
         """Start a new flip animation for the chosen first drafter."""
@@ -1095,6 +1182,7 @@ class DraftScreen(Screen):
         self.player_cards = []
         self.draft_grid_bottom = 0
         self.tutorial_toggle_rect = None
+        self.draft_tutorial_panel_rect = None
         self._refresh_fonts()
         self._create_ui()
         self.on_resize()
@@ -1102,10 +1190,10 @@ class DraftScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh all draft-phase fonts."""
-        self.title_font = pygame.font.Font(None, self.font_size(64, 38))
-        self.body_font = pygame.font.Font(None, self.font_size(30, 20))
-        self.small_font = pygame.font.Font(None, self.font_size(24, 16))
-        self.card_font = pygame.font.Font(None, self.font_size(34, 22))
+        self.title_font = self._get_game_font(self.font_size(64, 38))
+        self.body_font = self._get_game_font(self.font_size(30, 20))
+        self.small_font = self._get_game_font(self.font_size(24, 16))
+        self.card_font = self._get_game_font(self.font_size(34, 22))
 
     def _create_ui(self):
         """Create the 6x2 grid of draft card hitboxes."""
@@ -1262,7 +1350,15 @@ class DraftScreen(Screen):
 
         margin = self.scale_x(70, 20)
         panel_gap = self.scale_x(60, 12)
-        panel_y = counts_y + self.scale_y(32, 22)
+        self.draft_tutorial_panel_rect = None
+        tutorial_gap = self.scale_y(12, 8)
+        if self.window.tutorial_enabled and self.card_rects:
+            self.draft_tutorial_panel_rect = self._get_draft_tutorial_panel_rect(counts_rect)
+        panel_y = (
+            self.draft_tutorial_panel_rect.bottom + tutorial_gap
+            if self.draft_tutorial_panel_rect is not None
+            else counts_y + self.scale_y(32, 22)
+        )
         if self.is_compact_layout():
             panel_width = self.window.WINDOW_WIDTH - 2 * margin
             panel_height = max(self.scale_y(66, 54), (self.window.WINDOW_HEIGHT - panel_y - margin - panel_gap) // 2)
@@ -1285,24 +1381,41 @@ class DraftScreen(Screen):
         self._render_hand_panel(surface, panel_rects[1], "Player 2 Trial Hand", self.player_hands[1], (120, 160, 230))
         self._render_tutorial_overlay(surface)
 
+    def _get_draft_grid_rect(self) -> pygame.Rect:
+        """Return the bounding rect for all draft card hitboxes."""
+        if not self.card_rects:
+            return pygame.Rect(0, 0, 0, 0)
+        grid_rect = self.card_rects[0].copy()
+        for rect in self.card_rects[1:]:
+            grid_rect.union_ip(rect)
+        return grid_rect
+
+    def _get_draft_tutorial_panel_rect(self, counts_rect: pygame.Rect) -> pygame.Rect:
+        """Return a reserved tutorial panel slot below the draft grid and counts."""
+        margin = self.scale_x(22, 14)
+        width = min(self.scale_x(760, 320), self.window.WINDOW_WIDTH - 2 * margin)
+        height = self.scale_y(46, 36)
+        return pygame.Rect(
+            (self.window.WINDOW_WIDTH - width) // 2,
+            counts_rect.bottom + self.scale_y(8, 5),
+            width,
+            height,
+        )
+
     def _render_tutorial_overlay(self, surface: pygame.Surface) -> None:
         """Show optional draft tutorial guidance."""
         if not self.window.tutorial_enabled or not self.card_rects:
             self.tutorial_toggle_rect = None
             return
 
-        grid_rect = self.card_rects[0].copy()
-        for rect in self.card_rects[1:]:
-            grid_rect.union_ip(rect)
+        grid_rect = self._get_draft_grid_rect()
         pygame.draw.rect(surface, (252, 222, 104), grid_rect.inflate(self.scale(10, 6), self.scale(10, 6)), 3, border_radius=10)
 
         text = "Tutorial: click a draft card. Draft all Satyrs and Oracles, but only two Heroes."
-        panel_rect = pygame.Rect(
-            self.scale_x(22, 14),
-            max(self.scale_y(152, 112), grid_rect.top - self.scale_y(58, 42)),
-            min(self.scale_x(720, 320), self.window.WINDOW_WIDTH - 2 * self.scale_x(22, 14)),
-            self.scale_y(42, 34),
-        )
+        if self.draft_tutorial_panel_rect is None:
+            counts_rect = pygame.Rect(0, self.draft_grid_bottom + self.scale_y(18, 12), 1, self.scale_y(24, 18))
+            self.draft_tutorial_panel_rect = self._get_draft_tutorial_panel_rect(counts_rect)
+        panel_rect = self.draft_tutorial_panel_rect
         pygame.draw.rect(surface, (24, 28, 40), panel_rect, border_radius=self.scale(10, 6))
         pygame.draw.rect(surface, (252, 222, 104), panel_rect, 2, border_radius=self.scale(10, 6))
         button_width = min(self.scale_x(132, 92), max(self.scale_x(86, 72), panel_rect.width // 4))
@@ -1313,13 +1426,38 @@ class DraftScreen(Screen):
             button_width,
             button_height,
         )
-        pygame.draw.rect(surface, (52, 58, 72), self.tutorial_toggle_rect, border_radius=self.scale(8, 5))
-        pygame.draw.rect(surface, (252, 222, 104), self.tutorial_toggle_rect, 1, border_radius=self.scale(8, 5))
-        off_label = self.small_font.render("Tips Off", True, (240, 236, 214))
-        surface.blit(off_label, off_label.get_rect(center=self.tutorial_toggle_rect.center))
+        self._render_wood_button(
+            surface,
+            self.tutorial_toggle_rect,
+            "Tips Off",
+            self.tutorial_toggle_rect.collidepoint(pygame.mouse.get_pos()),
+            self.font_size(16, 12),
+        )
 
-        line = self.small_font.render(text, True, (238, 238, 238))
-        surface.blit(line, (panel_rect.x + self.scale(12, 8), panel_rect.y + self.scale(11, 7)))
+        text_rect = panel_rect.inflate(-self.scale(20, 12), -self.scale(8, 6))
+        text_rect.width -= button_width + self.scale_x(10, 6)
+        self._draw_wrapped_draft_text(surface, text, text_rect)
+
+    def _draw_wrapped_draft_text(self, surface: pygame.Surface, text: str, rect: pygame.Rect) -> None:
+        """Draw compact wrapped tutorial text inside a reserved panel."""
+        words = text.split()
+        lines = []
+        current = ""
+        for word in words:
+            candidate = word if not current else f"{current} {word}"
+            if self.small_font.size(candidate)[0] <= rect.width:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+
+        y = rect.y
+        for line in lines[:2]:
+            surface.blit(self.small_font.render(line, True, (238, 238, 238)), (rect.x, y))
+            y += self.scale_y(18, 13)
 
     def on_enter(self) -> None:
         """Manual card rendering needs no UI activation."""
@@ -1360,14 +1498,13 @@ class DraftScreen(Screen):
             pygame.draw.rect(surface, (42, 42, 52), rect, border_radius=radius)
             pygame.draw.rect(surface, (90, 90, 100), rect, 2, border_radius=radius)
             taken = self.body_font.render("Taken", True, (165, 165, 165))
-            taken_rect = taken.get_rect(center=rect.center)
-            surface.blit(taken, taken_rect)
+            surface.blit(taken, taken.get_rect(center=rect.center))
             return
 
         enabled = self._can_pick_card(card)
         fill = self._muted_family_color(card.suit, enabled)
         border = get_family_color(card.suit) if enabled else (95, 95, 95)
-        text_color = (35, 35, 35)
+        text_color = (35, 35, 35) if enabled else (92, 92, 98)
 
         radius = self.scale(12, 8)
         pygame.draw.rect(surface, fill, rect, border_radius=radius)
@@ -1390,9 +1527,7 @@ class DraftScreen(Screen):
         accent: tuple[int, int, int],
     ) -> None:
         """Draw one player's drafted hand as visible cards instead of text."""
-        radius = self.scale(14, 8)
-        pygame.draw.rect(surface, (24, 28, 40), rect, border_radius=radius)
-        pygame.draw.rect(surface, accent, rect, 3, border_radius=radius)
+        self._render_wood_panel(surface, rect, accent, dim_alpha=112)
 
         title_text = self.body_font.render(f"{title} ({len(cards)}/5)", True, (230, 230, 230))
         inner_margin = self.scale(18, 10)
@@ -1473,9 +1608,7 @@ class DraftScreen(Screen):
             self.scale_x(230, 170),
             self.scale_y(126, 94),
         )
-        radius = self.scale(14, 8)
-        pygame.draw.rect(surface, (25, 28, 38), panel_rect, border_radius=radius)
-        pygame.draw.rect(surface, (106, 112, 132), panel_rect, 2, border_radius=radius)
+        self._render_wood_panel(surface, panel_rect, (106, 112, 132), dim_alpha=118)
 
         title = self.small_font.render("Draft Value Guide", True, (232, 232, 232))
         surface.blit(title, (panel_rect.x + self.scale(14, 8), panel_rect.y + self.scale(12, 8)))
@@ -1518,10 +1651,10 @@ class JackRevealScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh reveal fonts after a resize."""
-        self.title_font = pygame.font.Font(None, self.font_size(62, 36))
-        self.body_font = pygame.font.Font(None, self.font_size(30, 20))
-        self.card_font = pygame.font.Font(None, self.font_size(42, 24))
-        self.small_font = pygame.font.Font(None, self.font_size(24, 16))
+        self.title_font = self._get_game_font(self.font_size(62, 36))
+        self.body_font = self._get_game_font(self.font_size(30, 20))
+        self.card_font = self._get_game_font(self.font_size(42, 24))
+        self.small_font = self._get_game_font(self.font_size(24, 16))
 
     def start_reveal(self, jack_cards: list, player_cards: list | None = None) -> None:
         """Begin a new autonomous Jack reveal animation."""
