@@ -41,6 +41,7 @@ class Screen:
     ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
     PAN_BACKGROUND_PATH = ASSET_ROOT / "Pan_Background.png"
     PAN_ICON_PATH = ASSET_ROOT / "Pan_Icon.png"
+    STONE_PANEL_PATH = ASSET_ROOT / "stone.png"
     MEDIEVAL_SHARP_PATH = ASSET_ROOT / "MedievalSharp.ttf"
     WOOD_LABEL_CENTER_Y_RATIO = 0.50
     
@@ -51,6 +52,8 @@ class Screen:
         self._background_cache: dict[tuple[int, int], pygame.Surface] = {}
         self._wood_icon_base = self._crop_wood_icon(self._load_image(self.PAN_ICON_PATH))
         self._wood_icon_cache: dict[tuple[tuple[int, int], bool], pygame.Surface] = {}
+        self._stone_panel_base = self._crop_stone_panel(self._load_image(self.STONE_PANEL_PATH))
+        self._stone_panel_cache: dict[tuple[int, int], pygame.Surface] = {}
         self._title_style_font_cache: dict[int, pygame.font.Font] = {}
 
     def scale(self, value: int, minimum: int = 1) -> int:
@@ -93,6 +96,20 @@ class Screen:
             int(image.get_height() * 0.62),
         )
         return image.subsurface(crop_rect).copy()
+
+    def _crop_stone_panel(self, image: pygame.Surface | None) -> pygame.Surface | None:
+        """Trim transparent slack around the stone art so the plaque can fill more of each box."""
+        if image is None:
+            return None
+        bounds = image.get_bounding_rect(min_alpha=6)
+        if bounds.width <= 0 or bounds.height <= 0:
+            return image
+        pad = 4
+        left = max(0, bounds.x - pad)
+        top = max(0, bounds.y - pad)
+        right = min(image.get_width(), bounds.right + pad)
+        bottom = min(image.get_height(), bounds.bottom + pad)
+        return image.subsurface(pygame.Rect(left, top, right - left, bottom - top)).copy()
 
     def _get_title_style_font(self, size: int) -> pygame.font.Font:
         """Return a bold serif font that echoes the title lettering."""
@@ -164,6 +181,69 @@ class Screen:
             self._wood_icon_cache[key] = icon
         return self._wood_icon_cache[key]
 
+    def _blit_scaled_patch(
+        self,
+        target: pygame.Surface,
+        source: pygame.Surface,
+        src_rect: pygame.Rect,
+        dst_rect: pygame.Rect,
+    ) -> None:
+        """Scale one image patch into its destination rect."""
+        if src_rect.width <= 0 or src_rect.height <= 0 or dst_rect.width <= 0 or dst_rect.height <= 0:
+            return
+        patch = source.subsurface(src_rect)
+        if patch.get_size() != dst_rect.size:
+            patch = pygame.transform.smoothscale(patch, dst_rect.size)
+        target.blit(patch, dst_rect.topleft)
+
+    def _get_scaled_stone_panel(self, size: tuple[int, int]) -> pygame.Surface | None:
+        """Return stone art stretched with preserved borders so it fits any panel size."""
+        if self._stone_panel_base is None or size[0] <= 0 or size[1] <= 0:
+            return None
+        if size not in self._stone_panel_cache:
+            panel = pygame.Surface(size, pygame.SRCALPHA)
+            src_w = self._stone_panel_base.get_width()
+            src_h = self._stone_panel_base.get_height()
+            src_border_x = max(1, int(src_w * 0.125))
+            src_border_y = max(1, int(src_h * 0.125))
+            dst_border_x = min(
+                max(self.scale_x(18, 12), int(size[1] * 0.20)),
+                max(1, size[0] // 3),
+            )
+            dst_border_y = min(
+                max(self.scale_y(14, 8), int(size[1] * 0.16)),
+                max(1, size[1] // 3),
+            )
+            src_x = [0, src_border_x, src_w - src_border_x, src_w]
+            src_y = [0, src_border_y, src_h - src_border_y, src_h]
+            dst_x = [0, dst_border_x, size[0] - dst_border_x, size[0]]
+            dst_y = [0, dst_border_y, size[1] - dst_border_y, size[1]]
+            for row in range(3):
+                for col in range(3):
+                    self._blit_scaled_patch(
+                        panel,
+                        self._stone_panel_base,
+                        pygame.Rect(
+                            src_x[col],
+                            src_y[row],
+                            src_x[col + 1] - src_x[col],
+                            src_y[row + 1] - src_y[row],
+                        ),
+                        pygame.Rect(
+                            dst_x[col],
+                            dst_y[row],
+                            dst_x[col + 1] - dst_x[col],
+                            dst_y[row + 1] - dst_y[row],
+                        ),
+                    )
+            self._stone_panel_cache[size] = panel
+        return self._stone_panel_cache[size]
+
+    @staticmethod
+    def _shift_color(color: tuple[int, int, int], delta: int) -> tuple[int, int, int]:
+        """Lighten or darken a color by a fixed delta."""
+        return tuple(max(0, min(255, channel + delta)) for channel in color)
+
     def _get_wood_label_center(self, rect: pygame.Rect) -> tuple[int, int]:
         """Return the visual center of the wood plank inside the icon canvas."""
         return (rect.centerx, rect.y + int(rect.height * self.WOOD_LABEL_CENTER_Y_RATIO))
@@ -222,17 +302,155 @@ class Screen:
         """Render a large text/panel box with the shared wood art."""
         icon = self._get_scaled_wood_icon(rect.size, False)
         if icon is not None:
+            if dim_alpha > 0:
+                icon = icon.copy()
+                shade = max(0, 255 - dim_alpha)
+                icon.fill((shade, shade, shade, 255), special_flags=pygame.BLEND_RGBA_MULT)
             surface.blit(icon, rect.topleft)
         else:
             pygame.draw.rect(surface, (72, 46, 28), rect, border_radius=self.scale(12, 8))
 
-        if dim_alpha > 0:
-            veil = pygame.Surface(rect.size, pygame.SRCALPHA)
-            veil.fill((10, 7, 4, dim_alpha))
-            surface.blit(veil, rect.topleft)
-
         if border_color is not None:
             pygame.draw.rect(surface, border_color, rect, self.scale(3, 2), border_radius=self.scale(14, 8))
+
+    def _render_stone_panel(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        dim_alpha: int = 34,
+        shadow_alpha: int = 72,
+    ) -> None:
+        """Render a shared stone plaque without any extra highlight outline."""
+        if rect.width <= 0 or rect.height <= 0:
+            return
+
+        panel = self._get_scaled_stone_panel(rect.size)
+        if panel is not None:
+            if dim_alpha > 0:
+                panel = panel.copy()
+                shade = max(0, 255 - dim_alpha)
+                panel.fill((shade, shade, shade, 255), special_flags=pygame.BLEND_RGBA_MULT)
+            surface.blit(panel, rect.topleft)
+        else:
+            pygame.draw.rect(surface, (92, 88, 74), rect, border_radius=self.scale(12, 8))
+
+    def _get_stone_content_rect(
+        self,
+        rect: pygame.Rect,
+        *,
+        extra_x: int = 0,
+        extra_top: int = 0,
+        extra_bottom: int = 0,
+    ) -> pygame.Rect:
+        """Return a text-safe inner rect that stays away from moss and stone borders."""
+        pad_x = min(
+            max(self.scale_x(18, 12), int(rect.height * 0.19)) + extra_x,
+            max(1, rect.width // 3),
+        )
+        pad_top = min(
+            max(self.scale_y(12, 8), int(rect.height * 0.14)) + extra_top,
+            max(1, rect.height // 3),
+        )
+        pad_bottom = min(
+            max(self.scale_y(11, 7), int(rect.height * 0.11)) + extra_bottom,
+            max(1, rect.height // 3),
+        )
+        return pygame.Rect(
+            rect.x + pad_x,
+            rect.y + pad_top,
+            max(1, rect.width - 2 * pad_x),
+            max(1, rect.height - pad_top - pad_bottom),
+        )
+
+    def _render_carved_text(
+        self,
+        surface: pygame.Surface,
+        font: pygame.font.Font,
+        text: str,
+        color: tuple[int, int, int],
+        position: tuple[int, int],
+        anchor: str = "topleft",
+    ) -> pygame.Rect:
+        """Render dark beveled lettering that reads like an engraving in stone."""
+        mid_tone = color if sum(color) <= 240 else self._shift_color(color, -128)
+        face_color = self._shift_color(mid_tone, -44)
+        edge_light = self._shift_color(mid_tone, 34)
+        edge_dark = self._shift_color(mid_tone, -86)
+        main = font.render(text, True, face_color)
+        light = font.render(text, True, edge_light)
+        dark = font.render(text, True, edge_dark)
+        rect = main.get_rect()
+        setattr(rect, anchor, position)
+        offset = self.scale(1, 1)
+        for dx, dy in [(-offset, 0), (0, -offset), (-offset, -offset)]:
+            surface.blit(light, rect.move(dx, dy))
+        for dx, dy in [(offset, 0), (0, offset), (offset, offset)]:
+            surface.blit(dark, rect.move(dx, dy))
+        surface.blit(main, rect)
+        return rect
+
+    def _wrap_text_lines(
+        self,
+        text: str,
+        font: pygame.font.Font,
+        max_width: int,
+        max_lines: int,
+    ) -> list[str]:
+        """Wrap text to the given pixel width and cap the number of lines."""
+        words = text.split()
+        lines = []
+        current = ""
+        for word in words:
+            candidate = word if not current else f"{current} {word}"
+            if font.size(candidate)[0] <= max_width:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        return lines[:max_lines]
+
+    def _draw_wrapped_carved_text(
+        self,
+        surface: pygame.Surface,
+        text: str,
+        font: pygame.font.Font,
+        color: tuple[int, int, int],
+        rect: pygame.Rect,
+        line_height: int,
+        max_lines: int,
+        align: str = "left",
+    ) -> None:
+        """Draw wrapped readable text inside a stone panel."""
+        max_visible_lines = min(max_lines, max(1, rect.height // max(1, line_height)))
+        lines = self._wrap_text_lines(text, font, rect.width, max_visible_lines)
+        old_clip = surface.get_clip()
+        surface.set_clip(rect)
+        for index, line in enumerate(lines):
+            y = rect.y + index * line_height
+            if align == "center":
+                self._render_carved_text(surface, font, line, color, (rect.centerx, y), anchor="midtop")
+            else:
+                self._render_carved_text(surface, font, line, color, (rect.x, y))
+        surface.set_clip(old_clip)
+
+    def _get_fitted_game_font(
+        self,
+        text: str,
+        preferred_size: int,
+        rect: pygame.Rect,
+        max_lines: int,
+        min_size: int,
+    ) -> pygame.font.Font:
+        """Return the largest game font that fits the wrapped text into the rect."""
+        for size in range(max(preferred_size, min_size), min_size - 1, -1):
+            font = self._get_game_font(size)
+            lines = self._wrap_text_lines(text, font, rect.width, 999)
+            if len(lines) <= max_lines and len(lines) * font.get_linesize() <= rect.height:
+                return font
+        return self._get_game_font(min_size)
 
     @staticmethod
     def _overlap_area(first: pygame.Rect, second: pygame.Rect) -> int:
@@ -639,8 +857,17 @@ class HowToPlayScreen(Screen):
         """Render the How To Play page."""
         self._render_screen_background(surface, (16, 20, 30))
 
+        header_rect = pygame.Rect(
+            self.scale_x(120, 48),
+            self.scale_y(18, 12),
+            self.window.WINDOW_WIDTH - 2 * self.scale_x(120, 48),
+            self.scale_y(126, 94),
+        )
+        self._render_wood_panel(surface, header_rect, dim_alpha=78)
+        header_content = header_rect.inflate(-self.scale_x(42, 20), -self.scale_y(18, 10))
+
         title = self.title_font.render("HOW TO PLAY", True, (238, 214, 142))
-        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(76, 54)))
+        title_rect = title.get_rect(center=(header_content.centerx, header_content.y + self.scale_y(30, 22)))
         surface.blit(title, title_rect)
 
         subtitle = self.small_font.render(
@@ -648,17 +875,22 @@ class HowToPlayScreen(Screen):
             True,
             (190, 198, 210),
         )
-        subtitle_rect = subtitle.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(122, 88)))
+        subtitle_rect = subtitle.get_rect(center=(header_content.centerx, header_content.bottom - self.scale_y(18, 12)))
         surface.blit(subtitle, subtitle_rect)
 
         viewport_rect = pygame.Rect(
             self.scale_x(48, 24),
-            self.scale_y(160, 118),
+            header_rect.bottom + self.scale_y(18, 12),
             self.window.WINDOW_WIDTH - 2 * self.scale_x(48, 24),
-            self.window.WINDOW_HEIGHT - self.scale_y(280, 204),
+            max(1, self.back_button_rect.top - header_rect.bottom - self.scale_y(42, 28)),
         )
         columns = 2 if self.window.WINDOW_WIDTH >= 900 else 1
-        rows = (len(self.SECTIONS) + columns - 1) // columns
+        if columns == 2 and len(self.SECTIONS) % 2 == 1:
+            rows = len(self.SECTIONS) // 2 + 1
+            items_per_side = len(self.SECTIONS) // 2
+        else:
+            rows = (len(self.SECTIONS) + columns - 1) // columns
+            items_per_side = rows
         gap = self.scale(14, 8)
         card_width = (viewport_rect.width - gap * (columns - 1)) // columns
         card_height = max(
@@ -675,30 +907,87 @@ class HowToPlayScreen(Screen):
 
         old_clip = surface.get_clip()
         surface.set_clip(viewport_rect)
-        for index, (heading, body) in enumerate(self.SECTIONS):
-            col = index // rows
-            row = index % rows
+        display_indices = list(range(len(self.SECTIONS)))
+        if columns == 2 and len(self.SECTIONS) % 2 == 1:
+            display_indices = [0, 1, 2, 4, 5, 6, 3]
+        for slot_index, section_index in enumerate(display_indices):
+            heading, body = self.SECTIONS[section_index]
+            if columns == 2 and len(self.SECTIONS) % 2 == 1:
+                if slot_index < items_per_side:
+                    col = 0
+                    row = slot_index
+                    x = viewport_rect.x
+                elif slot_index < 2 * items_per_side:
+                    col = 1
+                    row = slot_index - items_per_side
+                    x = viewport_rect.x + card_width + gap
+                else:
+                    col = 0
+                    row = items_per_side
+                    x = viewport_rect.x + (viewport_rect.width - card_width) // 2
+            else:
+                col = slot_index // rows
+                row = slot_index % rows
+                x = viewport_rect.x + col * (card_width + gap)
             card_rect = pygame.Rect(
-                viewport_rect.x + col * (card_width + gap),
+                x,
                 viewport_rect.y + row * (card_height + gap) - self.scroll_offset,
                 card_width,
                 card_height,
             )
             if card_rect.bottom < viewport_rect.top or card_rect.top > viewport_rect.bottom:
                 continue
-            pygame.draw.rect(surface, (28, 34, 48), card_rect, border_radius=self.scale(14, 8))
-            pygame.draw.rect(surface, (96, 112, 136), card_rect, 1, border_radius=self.scale(14, 8))
-
-            heading_surface = self.heading_font.render(heading, True, (244, 226, 164))
-            surface.blit(heading_surface, (card_rect.x + self.scale(18, 10), card_rect.y + self.scale(10, 7)))
+            self._render_stone_panel(surface, card_rect, dim_alpha=30)
+            content_rect = self._get_stone_content_rect(
+                card_rect,
+                extra_x=self.scale_x(6, 4),
+                extra_top=self.scale_y(2, 1),
+                extra_bottom=self.scale_y(4, 2),
+            )
+            heading_rect = pygame.Rect(
+                content_rect.x,
+                content_rect.y,
+                content_rect.width,
+                max(self.scale_y(26, 20), content_rect.height // 4),
+            )
+            heading_font = self._get_fitted_game_font(
+                heading,
+                self.font_size(30, 22),
+                heading_rect,
+                1,
+                self.font_size(20, 15),
+            )
+            self._render_carved_text(
+                surface,
+                heading_font,
+                heading,
+                (62, 54, 44),
+                (heading_rect.centerx, heading_rect.y + self.scale_y(2, 1)),
+                anchor="midtop",
+            )
 
             body_rect = pygame.Rect(
-                card_rect.x + self.scale(18, 10),
-                card_rect.y + self.scale(42, 30),
-                card_rect.width - self.scale(36, 20),
-                card_rect.height - self.scale(50, 36),
+                content_rect.x,
+                heading_rect.bottom + self.scale_y(6, 4),
+                content_rect.width,
+                max(1, content_rect.bottom - heading_rect.bottom - self.scale_y(8, 5)),
             )
-            self._draw_wrapped_text(surface, body, self.body_font, (222, 226, 232), body_rect, self.scale(22, 15), 4)
+            body_font = self._get_fitted_game_font(
+                body,
+                self.font_size(24, 17),
+                body_rect,
+                4,
+                self.font_size(16, 12),
+            )
+            self._draw_wrapped_carved_text(
+                surface,
+                body,
+                body_font,
+                (74, 66, 54),
+                body_rect,
+                max(self.scale(17, 13), body_font.get_linesize()),
+                4,
+            )
         surface.set_clip(old_clip)
         self._render_wood_button(
             surface,
@@ -1303,18 +1592,6 @@ class DraftScreen(Screen):
         self._render_value_legend(surface)
         compact = self.is_compact_layout()
 
-        title = self.title_font.render("INITIAL DRAFT", True, (235, 225, 190))
-        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(62, 44) if compact else self.scale_y(90, 64)))
-        surface.blit(title, title_rect)
-
-        prompt = self.body_font.render(
-            f"Player {self.current_player + 1} picks a card",
-            True,
-            (220, 220, 220),
-        )
-        prompt_rect = prompt.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(104, 76) if compact else self.scale_y(150, 112)))
-        surface.blit(prompt, prompt_rect)
-
         rules = (
             ["Draft 8 Satyrs/Oracles + 2 Heroes. Remaining Heroes become player cards."]
             if compact
@@ -1323,15 +1600,109 @@ class DraftScreen(Screen):
                 "The 2 Heroes left behind become the player cards.",
             ]
         )
-        for index, text in enumerate(rules):
-            line = self.small_font.render(text, True, (150, 150, 150))
-            line_rect = line.get_rect(
-                center=(
-                    self.window.WINDOW_WIDTH // 2,
-                    self.scale_y(134 + index * 18, 104 + index * 14) if compact else self.scale_y(190 + index * 28, 144 + index * 18),
-                )
+        if compact:
+            info_panel_rect = pygame.Rect(
+                self.scale_x(24, 14),
+                self.scale_y(28, 18),
+                self.window.WINDOW_WIDTH - 2 * self.scale_x(24, 14),
+                self.scale_y(154, 118),
             )
-            surface.blit(line, line_rect)
+        else:
+            legend_right = self.scale_x(28, 16) + self.scale_x(230, 170) + self.scale_x(26, 14)
+            info_width = min(
+                self.scale_x(800, 580),
+                self.window.WINDOW_WIDTH - legend_right - self.scale_x(36, 18),
+            )
+            info_panel_rect = pygame.Rect(
+                max(legend_right, (self.window.WINDOW_WIDTH - info_width) // 2),
+                self.scale_y(28, 18),
+                info_width,
+                self.scale_y(188, 144),
+            )
+        self._render_stone_panel(surface, info_panel_rect, dim_alpha=24)
+        info_content = self._get_stone_content_rect(
+            info_panel_rect,
+            extra_x=self.scale_x(8, 4),
+            extra_top=self.scale_y(4, 2),
+        )
+        title_area = pygame.Rect(
+            info_content.x,
+            info_content.y,
+            info_content.width,
+            self.scale_y(42, 30),
+        )
+        title_font = self._get_fitted_game_font(
+            "INITIAL DRAFT",
+            self.font_size(64, 38),
+            title_area,
+            1,
+            self.font_size(34, 24),
+        )
+        self._render_carved_text(
+            surface,
+            title_font,
+            "INITIAL DRAFT",
+            (78, 70, 58),
+            title_area.center,
+            anchor="center",
+        )
+
+        prompt_text = f"Player {self.current_player + 1} picks a card"
+        prompt_area = pygame.Rect(
+            info_content.x,
+            title_area.bottom + self.scale_y(6, 4),
+            info_content.width,
+            self.scale_y(30, 22),
+        )
+        prompt_font = self._get_fitted_game_font(
+            prompt_text,
+            self.font_size(34, 24),
+            prompt_area,
+            1,
+            self.font_size(22, 16),
+        )
+        self._render_carved_text(
+            surface,
+            prompt_font,
+            prompt_text,
+            (72, 64, 52),
+            prompt_area.center,
+            anchor="center",
+        )
+
+        rules_area = pygame.Rect(
+            info_content.x,
+            prompt_area.bottom + self.scale_y(4, 3),
+            info_content.width,
+            max(1, info_content.bottom - (prompt_area.bottom + self.scale_y(8, 5))),
+        )
+        rule_line_rect = pygame.Rect(
+            rules_area.x,
+            rules_area.y,
+            rules_area.width,
+            max(1, rules_area.height // len(rules)),
+        )
+        rule_font = self._get_fitted_game_font(
+            max(rules, key=len),
+            self.font_size(22, 15),
+            rule_line_rect,
+            1,
+            self.font_size(14, 11),
+        )
+        line_height = max(self.scale_y(18, 13), rule_font.get_linesize())
+        rules_top = rules_area.y + max(0, (rules_area.height - len(rules) * line_height) // 2)
+        old_clip = surface.get_clip()
+        surface.set_clip(rules_area)
+        for index, text in enumerate(rules):
+            self._render_carved_text(
+                surface,
+                rule_font,
+                text,
+                (66, 58, 48),
+                (rules_area.centerx, rules_top + index * line_height),
+                anchor="midtop",
+            )
+        surface.set_clip(old_clip)
 
         drafted_low_cards = len(self.player_hands[0]) + len(self.player_hands[1]) - self.kings_drafted
         count_text = (
@@ -1339,10 +1710,38 @@ class DraftScreen(Screen):
             if self.is_compact_layout()
             else f"Satyrs/Oracles drafted: {drafted_low_cards}/8   Heroes drafted: {self.kings_drafted}/2"
         )
-        counts = self.small_font.render(count_text, True, (185, 185, 185))
         counts_y = self.draft_grid_bottom + self.scale_y(28, 20)
-        counts_rect = counts.get_rect(center=(self.window.WINDOW_WIDTH // 2, counts_y))
-        surface.blit(counts, counts_rect)
+        counts_width = min(
+            max(self.small_font.size(count_text)[0] + self.scale_x(76, 44), self.scale_x(320, 240)),
+            self.window.WINDOW_WIDTH - 2 * self.scale_x(44, 24),
+        )
+        counts_rect = pygame.Rect(
+            (self.window.WINDOW_WIDTH - counts_width) // 2,
+            counts_y - self.scale_y(24, 18),
+            counts_width,
+            self.scale_y(50, 38),
+        )
+        self._render_stone_panel(surface, counts_rect, dim_alpha=24)
+        counts_content = self._get_stone_content_rect(
+            counts_rect,
+            extra_top=self.scale_y(2, 1),
+            extra_bottom=self.scale_y(2, 1),
+        )
+        count_font = self._get_fitted_game_font(
+            count_text,
+            self.font_size(24, 16),
+            counts_content,
+            1,
+            self.font_size(14, 11),
+        )
+        self._render_carved_text(
+            surface,
+            count_font,
+            count_text,
+            (66, 58, 48),
+            counts_content.center,
+            anchor="center",
+        )
 
         for index, rect in enumerate(self.card_rects):
             card = self.available_cards[index] if index < len(self.available_cards) else None
@@ -1394,7 +1793,7 @@ class DraftScreen(Screen):
         """Return a reserved tutorial panel slot below the draft grid and counts."""
         margin = self.scale_x(22, 14)
         width = min(self.scale_x(760, 320), self.window.WINDOW_WIDTH - 2 * margin)
-        height = self.scale_y(46, 36)
+        height = self.scale_y(62, 48)
         return pygame.Rect(
             (self.window.WINDOW_WIDTH - width) // 2,
             counts_rect.bottom + self.scale_y(8, 5),
@@ -1416,8 +1815,7 @@ class DraftScreen(Screen):
             counts_rect = pygame.Rect(0, self.draft_grid_bottom + self.scale_y(18, 12), 1, self.scale_y(24, 18))
             self.draft_tutorial_panel_rect = self._get_draft_tutorial_panel_rect(counts_rect)
         panel_rect = self.draft_tutorial_panel_rect
-        pygame.draw.rect(surface, (24, 28, 40), panel_rect, border_radius=self.scale(10, 6))
-        pygame.draw.rect(surface, (252, 222, 104), panel_rect, 2, border_radius=self.scale(10, 6))
+        self._render_stone_panel(surface, panel_rect, dim_alpha=28)
         button_width = min(self.scale_x(132, 92), max(self.scale_x(86, 72), panel_rect.width // 4))
         button_height = max(self.scale_y(24, 20), panel_rect.height - self.scale_y(12, 8))
         self.tutorial_toggle_rect = pygame.Rect(
@@ -1434,30 +1832,28 @@ class DraftScreen(Screen):
             self.font_size(16, 12),
         )
 
-        text_rect = panel_rect.inflate(-self.scale(20, 12), -self.scale(8, 6))
+        text_rect = self._get_stone_content_rect(panel_rect)
         text_rect.width -= button_width + self.scale_x(10, 6)
         self._draw_wrapped_draft_text(surface, text, text_rect)
 
     def _draw_wrapped_draft_text(self, surface: pygame.Surface, text: str, rect: pygame.Rect) -> None:
         """Draw compact wrapped tutorial text inside a reserved panel."""
-        words = text.split()
-        lines = []
-        current = ""
-        for word in words:
-            candidate = word if not current else f"{current} {word}"
-            if self.small_font.size(candidate)[0] <= rect.width:
-                current = candidate
-            else:
-                if current:
-                    lines.append(current)
-                current = word
-        if current:
-            lines.append(current)
-
-        y = rect.y
-        for line in lines[:2]:
-            surface.blit(self.small_font.render(line, True, (238, 238, 238)), (rect.x, y))
-            y += self.scale_y(18, 13)
+        font = self._get_fitted_game_font(
+            text,
+            self.font_size(24, 16),
+            rect,
+            2,
+            self.font_size(15, 11),
+        )
+        self._draw_wrapped_carved_text(
+            surface,
+            text,
+            font,
+            (74, 66, 54),
+            rect,
+            max(self.scale_y(16, 12), font.get_linesize()),
+            2,
+        )
 
     def on_enter(self) -> None:
         """Manual card rendering needs no UI activation."""
@@ -1527,19 +1923,49 @@ class DraftScreen(Screen):
         accent: tuple[int, int, int],
     ) -> None:
         """Draw one player's drafted hand as visible cards instead of text."""
-        self._render_wood_panel(surface, rect, accent, dim_alpha=112)
-
-        title_text = self.body_font.render(f"{title} ({len(cards)}/5)", True, (230, 230, 230))
-        inner_margin = self.scale(18, 10)
-        surface.blit(title_text, (rect.x + inner_margin, rect.y + self.scale(14, 10)))
+        self._render_stone_panel(surface, rect, dim_alpha=26)
+        content_rect = self._get_stone_content_rect(
+            rect,
+            extra_x=self.scale_x(8, 4),
+            extra_top=self.scale_y(4, 2),
+            extra_bottom=self.scale_y(4, 2),
+        )
+        title_text = f"{title} ({len(cards)}/5)"
+        title_rect = pygame.Rect(
+            content_rect.x,
+            content_rect.y,
+            content_rect.width,
+            self.scale_y(28, 20),
+        )
+        title_font = self._get_fitted_game_font(
+            title_text,
+            self.font_size(30, 20),
+            title_rect,
+            1,
+            self.font_size(18, 13),
+        )
+        self._render_carved_text(
+            surface,
+            title_font,
+            title_text,
+            (70, 62, 50),
+            title_rect.center,
+            anchor="center",
+        )
+        usable_rect = pygame.Rect(
+            content_rect.x,
+            title_rect.bottom + self.scale_y(8, 5),
+            content_rect.width,
+            max(1, content_rect.bottom - title_rect.bottom - self.scale_y(8, 5)),
+        )
 
         if rect.height < self.scale_y(112, 86):
-            label_y = rect.y + self.scale_y(42, 30)
-            label_width = max(self.scale_x(48, 38), (rect.width - 2 * inner_margin - 4 * self.scale(6, 4)) // 5)
+            label_y = usable_rect.y
+            label_width = max(self.scale_x(48, 38), (usable_rect.width - 4 * self.scale(6, 4)) // 5)
             spacing = self.scale(6, 4)
             for index in range(5):
                 chip_rect = pygame.Rect(
-                    rect.x + inner_margin + index * (label_width + spacing),
+                    usable_rect.x + index * (label_width + spacing),
                     label_y,
                     label_width,
                     self.scale_y(26, 20),
@@ -1554,14 +1980,14 @@ class DraftScreen(Screen):
         card_spacing = self.scale(10, 6)
         card_width = max(
             self.scale(52, 40),
-            (rect.width - 2 * inner_margin - 4 * card_spacing) // 5,
+            (usable_rect.width - 4 * card_spacing) // 5,
         )
         card_height = min(
-            max(self.scale(82, 62), rect.height - self.scale(70, 52)),
+            max(self.scale(82, 62), usable_rect.height),
             self.scale(120, 92),
         )
-        start_x = rect.x + inner_margin
-        start_y = rect.y + self.scale(58, 42)
+        start_x = usable_rect.x
+        start_y = usable_rect.y + max(0, (usable_rect.height - card_height) // 2)
 
         for index in range(5):
             card_rect = pygame.Rect(
@@ -1605,28 +2031,71 @@ class DraftScreen(Screen):
         panel_rect = pygame.Rect(
             self.scale_x(28, 16),
             self.scale_y(28, 16),
-            self.scale_x(230, 170),
-            self.scale_y(126, 94),
+            self.scale_x(260, 192),
+            self.scale_y(148, 110),
         )
-        self._render_wood_panel(surface, panel_rect, (106, 112, 132), dim_alpha=118)
-
-        title = self.small_font.render("Draft Value Guide", True, (232, 232, 232))
-        surface.blit(title, (panel_rect.x + self.scale(14, 8), panel_rect.y + self.scale(12, 8)))
+        self._render_stone_panel(surface, panel_rect, dim_alpha=26)
+        content_rect = self._get_stone_content_rect(panel_rect)
+        title_rect = pygame.Rect(
+            content_rect.x,
+            content_rect.y,
+            content_rect.width,
+            self.scale_y(24, 18),
+        )
+        title_font = self._get_fitted_game_font(
+            "Draft Value Guide",
+            self.font_size(22, 16),
+            title_rect,
+            1,
+            self.font_size(16, 12),
+        )
+        self._render_carved_text(
+            surface,
+            title_font,
+            "Draft Value Guide",
+            (70, 62, 50),
+            title_rect.center,
+            anchor="center",
+        )
 
         lines = [
             get_rank_name_with_value(CardRank.TEN),
             get_rank_name_with_value(CardRank.QUEEN),
             get_rank_name_with_value(CardRank.KING),
         ]
+        lines_rect = pygame.Rect(
+            content_rect.x,
+            title_rect.bottom + self.scale_y(8, 5),
+            content_rect.width,
+            max(1, content_rect.bottom - title_rect.bottom - self.scale_y(8, 5)),
+        )
+        line_slot_rect = pygame.Rect(
+            lines_rect.x,
+            lines_rect.y,
+            lines_rect.width,
+            max(1, lines_rect.height // len(lines)),
+        )
+        line_font = self._get_fitted_game_font(
+            max(lines, key=len),
+            self.font_size(20, 15),
+            line_slot_rect,
+            1,
+            self.font_size(15, 11),
+        )
+        old_clip = surface.get_clip()
+        surface.set_clip(lines_rect)
         for index, text in enumerate(lines):
-            line = self.small_font.render(text, True, (205, 205, 205))
-            surface.blit(
-                line,
+            self._render_carved_text(
+                surface,
+                line_font,
+                text,
+                (64, 56, 46),
                 (
-                    panel_rect.x + self.scale(18, 10),
-                    panel_rect.y + self.scale(42, 28) + index * self.scale(24, 16),
+                    lines_rect.x,
+                    lines_rect.y + index * max(self.scale(22, 15), line_font.get_linesize()),
                 ),
             )
+        surface.set_clip(old_clip)
 
 
 class JackRevealScreen(Screen):
@@ -1842,6 +2311,9 @@ class JackRevealScreen(Screen):
 class GameOverScreen(Screen):
     """Game over screen showing the winner and final damage totals."""
 
+    BANNER_PATH = Screen.ASSET_ROOT / "banner.png"
+    VICTORY_ART_PATH = Screen.ASSET_ROOT / "victory.png"
+
     def __init__(self, window: "GameWindow"):
         super().__init__(window)
         self.title_font = None
@@ -1852,6 +2324,10 @@ class GameOverScreen(Screen):
         self.winner_text = "Player 1 Wins!"
         self.damage_text = "Final damage - P1: 0 | P2: 0"
         self.match_summary = {}
+        self._banner_base = self._crop_overlay_asset(self._load_image(self.BANNER_PATH), pad=8)
+        self._banner_cache: dict[tuple[int, int], pygame.Surface] = {}
+        self._victory_art_base = self._crop_overlay_asset(self._load_image(self.VICTORY_ART_PATH), pad=8)
+        self._victory_art_cache: dict[tuple[int, int], pygame.Surface] = {}
 
         self.play_again_button = None
         self.menu_button = None
@@ -1864,10 +2340,61 @@ class GameOverScreen(Screen):
 
     def _refresh_fonts(self) -> None:
         """Refresh game-over fonts after a resize."""
-        self.title_font = pygame.font.Font(None, self.font_size(72, 42))
-        self.subtitle_font = pygame.font.Font(None, self.font_size(40, 26))
-        self.body_font = pygame.font.Font(None, self.font_size(32, 22))
-        self.small_font = pygame.font.Font(None, self.font_size(21, 15))
+        self.title_font = self._get_title_style_font(self.font_size(42, 28))
+        self.subtitle_font = self._get_game_font(self.font_size(38, 24))
+        self.body_font = self._get_game_font(self.font_size(28, 19))
+        self.small_font = self._get_game_font(self.font_size(21, 15))
+
+    @staticmethod
+    def _crop_overlay_asset(image: pygame.Surface | None, pad: int = 0) -> pygame.Surface | None:
+        """Trim transparent slack around a decorative overlay asset."""
+        if image is None:
+            return None
+        bounds = image.get_bounding_rect(min_alpha=6)
+        if bounds.width <= 0 or bounds.height <= 0:
+            return image
+        left = max(0, bounds.x - pad)
+        top = max(0, bounds.y - pad)
+        right = min(image.get_width(), bounds.right + pad)
+        bottom = min(image.get_height(), bounds.bottom + pad)
+        return image.subsurface(pygame.Rect(left, top, right - left, bottom - top)).copy()
+
+    @staticmethod
+    def _get_contain_scaled_size(image: pygame.Surface, frame_size: tuple[int, int]) -> tuple[int, int]:
+        """Return an image size that fits entirely within the frame."""
+        frame_width, frame_height = frame_size
+        if frame_width <= 0 or frame_height <= 0:
+            return (0, 0)
+        scale = min(frame_width / image.get_width(), frame_height / image.get_height())
+        return (
+            max(1, int(image.get_width() * scale)),
+            max(1, int(image.get_height() * scale)),
+        )
+
+    @staticmethod
+    def _get_scaled_overlay(
+        image: pygame.Surface | None,
+        cache: dict[tuple[int, int], pygame.Surface],
+        size: tuple[int, int],
+    ) -> pygame.Surface | None:
+        """Return a cached scaled decorative overlay."""
+        if image is None or size[0] <= 0 or size[1] <= 0:
+            return None
+        if size not in cache:
+            cache[size] = pygame.transform.smoothscale(image, size)
+        return cache[size]
+
+    def _get_banner_content_rect(self, rect: pygame.Rect) -> pygame.Rect:
+        """Return the parchment-safe text area inside the victory banner."""
+        pad_x = max(self.scale_x(82, 44), int(rect.width * 0.13))
+        pad_top = max(self.scale_y(86, 48), int(rect.height * 0.18))
+        pad_bottom = max(self.scale_y(82, 46), int(rect.height * 0.17))
+        return pygame.Rect(
+            rect.x + pad_x,
+            rect.y + pad_top,
+            max(1, rect.width - 2 * pad_x),
+            max(1, rect.height - pad_top - pad_bottom),
+        )
 
     def _create_ui(self):
         """Create UI elements."""
@@ -1887,16 +2414,18 @@ class GameOverScreen(Screen):
 
     def _layout_ui(self) -> None:
         """Lay out game-over buttons for the current window size."""
-        button_width = min(self.scale_x(360, 240), self.window.WINDOW_WIDTH - 2 * self.scale_x(40, 18))
+        horizontal_margin = self.scale_x(44, 18)
+        gap = self.scale_x(26, 12)
+        available_width = max(2, self.window.WINDOW_WIDTH - 2 * horizontal_margin - gap)
+        button_width = min(self.scale_x(330, 180), available_width // 2)
         button_height = self._get_wood_icon_height_for_width(button_width)
-        center_x = (self.window.WINDOW_WIDTH - button_width) // 2
-        gap = self.scale_y(2, 1)
-        menu_y = self.window.WINDOW_HEIGHT - button_height - self.scale_y(10, 6)
-        play_again_y = menu_y - button_height - gap
+        row_width = button_width * 2 + gap
+        row_x = (self.window.WINDOW_WIDTH - row_width) // 2
+        row_y = self.window.WINDOW_HEIGHT - button_height - self.scale_y(6, 4)
 
         self.game_over_button_rects = {
-            "play": pygame.Rect(center_x, play_again_y, button_width, button_height),
-            "menu": pygame.Rect(center_x, menu_y, button_width, button_height),
+            "play": pygame.Rect(row_x, row_y, button_width, button_height),
+            "menu": pygame.Rect(row_x + button_width + gap, row_y, button_width, button_height),
         }
         for key, button in [("play", self.play_again_button), ("menu", self.menu_button)]:
             rect = self.game_over_button_rects[key]
@@ -1948,24 +2477,16 @@ class GameOverScreen(Screen):
         """Render game-over screen."""
         self._render_screen_background(surface, (18, 18, 28))
 
-        title = self.title_font.render("VICTORY", True, (220, 180, 90))
-        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(150, 110)))
-        surface.blit(title, title_rect)
+        victory_frame = pygame.Rect(
+            self.scale_x(120, 44),
+            self.scale_y(34, 18),
+            self.window.WINDOW_WIDTH - 2 * self.scale_x(120, 44),
+            self.scale_y(116, 72),
+        )
+        victory_rect = self._render_victory_art(surface, victory_frame)
 
-        winner = self.subtitle_font.render(self.winner_text, True, (230, 230, 230))
-        winner_rect = winner.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(260, 192)))
-        surface.blit(winner, winner_rect)
-
-        damage = self.body_font.render(self.damage_text, True, (170, 170, 170))
-        damage_rect = damage.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(318, 232)))
-        surface.blit(damage, damage_rect)
-
-        self._render_match_summary(surface, damage_rect.bottom + self.scale_y(20, 14))
-
-        prompt = self.body_font.render("Choose what to do next.", True, (140, 140, 140))
         button_top = min(rect.top for rect in self.game_over_button_rects.values()) if self.game_over_button_rects else self.window.WINDOW_HEIGHT
-        prompt_rect = prompt.get_rect(center=(self.window.WINDOW_WIDTH // 2, button_top - self.scale_y(12, 8)))
-        surface.blit(prompt, prompt_rect)
+        self._render_match_summary(surface, victory_rect.bottom + self.scale_y(12, 8), button_top - self.scale_y(10, 6))
         self._render_game_over_buttons(surface)
 
     def _render_game_over_buttons(self, surface: pygame.Surface) -> None:
@@ -1980,26 +2501,66 @@ class GameOverScreen(Screen):
                 self.font_size(34, 24),
             )
 
-    def _render_match_summary(self, surface: pygame.Surface, start_y: int) -> None:
-        """Render final damage cards, recent requests, and major events."""
-        if not self.match_summary:
+    def _render_victory_art(self, surface: pygame.Surface, frame_rect: pygame.Rect) -> pygame.Rect:
+        """Render the victory ribbon art in the top header area."""
+        if self._victory_art_base is None:
+            fallback = self.title_font.render("Victory", True, (232, 212, 156))
+            fallback_rect = fallback.get_rect(center=frame_rect.center)
+            surface.blit(fallback, fallback_rect)
+            return fallback_rect
+
+        scaled_size = self._get_contain_scaled_size(self._victory_art_base, frame_rect.size)
+        art = self._get_scaled_overlay(self._victory_art_base, self._victory_art_cache, scaled_size)
+        art_rect = art.get_rect(center=frame_rect.center)
+        surface.blit(art, art_rect)
+        return art_rect
+
+    def _render_match_summary(self, surface: pygame.Surface, start_y: int, max_bottom: int) -> None:
+        """Render winner, damage, and summary text on the parchment banner."""
+        available_height = max_bottom - start_y
+        if available_height < self.scale_y(180, 120):
             return
 
-        margin = self.scale_x(56, 20)
+        max_width = min(self.window.WINDOW_WIDTH - 2 * self.scale_x(56, 24), self.scale_x(760, 420))
+        if self._banner_base is not None:
+            panel_size = self._get_contain_scaled_size(self._banner_base, (max_width, available_height))
+        else:
+            panel_size = (max_width, available_height)
+        if panel_size[0] <= 0 or panel_size[1] <= 0:
+            return
+
         panel_rect = pygame.Rect(
-            margin,
-            start_y,
-            self.window.WINDOW_WIDTH - 2 * margin,
-            min(self.scale_y(220, 160), self.window.WINDOW_HEIGHT - start_y - self.scale_y(210, 150)),
+            (self.window.WINDOW_WIDTH - panel_size[0]) // 2,
+            start_y + max(0, (available_height - panel_size[1]) // 2),
+            panel_size[0],
+            panel_size[1],
         )
-        if panel_rect.height < self.scale_y(120, 88):
-            return
+        banner = self._get_scaled_overlay(self._banner_base, self._banner_cache, panel_rect.size)
+        if banner is not None:
+            surface.blit(banner, panel_rect.topleft)
+        else:
+            pygame.draw.rect(surface, (228, 214, 187), panel_rect, border_radius=self.scale(16, 10))
+            pygame.draw.rect(surface, (98, 78, 54), panel_rect, self.scale(3, 2), border_radius=self.scale(16, 10))
 
-        pygame.draw.rect(surface, (28, 32, 44), panel_rect, border_radius=self.scale(14, 8))
-        pygame.draw.rect(surface, (104, 114, 138), panel_rect, 1, border_radius=self.scale(14, 8))
-
-        title = self.body_font.render("Match Summary", True, (238, 214, 142))
-        surface.blit(title, (panel_rect.x + self.scale(18, 10), panel_rect.y + self.scale(10, 7)))
+        content_rect = self._get_banner_content_rect(panel_rect)
+        winner_rect = pygame.Rect(
+            content_rect.x,
+            content_rect.y,
+            content_rect.width,
+            self.scale_y(52, 32),
+        )
+        damage_rect = pygame.Rect(
+            content_rect.x,
+            winner_rect.bottom + self.scale_y(8, 4),
+            content_rect.width,
+            self.scale_y(36, 24),
+        )
+        summary_title_rect = pygame.Rect(
+            content_rect.x,
+            damage_rect.bottom + self.scale_y(12, 8),
+            content_rect.width,
+            self.scale_y(34, 22),
+        )
 
         damage_cards = self.match_summary.get("damage_cards", {})
         p1_cards = ", ".join(get_card_display(card, compact=True) for card in damage_cards.get(0, [])[-6:]) or "None"
@@ -2012,44 +2573,90 @@ class GameOverScreen(Screen):
         lines.extend(self.match_summary.get("requests", [])[-2:])
         lines.extend(self.match_summary.get("events", [])[-3:])
 
-        text_rect = pygame.Rect(
-            panel_rect.x + self.scale(18, 10),
-            panel_rect.y + self.scale(48, 34),
-            panel_rect.width - self.scale(36, 20),
-            panel_rect.height - self.scale(58, 40),
+        winner_font = self._get_fitted_game_font(
+            self.winner_text,
+            self.font_size(40, 26),
+            winner_rect,
+            2,
+            self.font_size(22, 16),
         )
-        self._draw_wrapped_summary(surface, lines, text_rect, max_lines=8)
+        damage_font = self._get_fitted_game_font(
+            self.damage_text,
+            self.font_size(25, 18),
+            damage_rect,
+            2,
+            self.font_size(16, 12),
+        )
+        summary_font = self._get_fitted_game_font(
+            "Match Summary",
+            self.font_size(27, 18),
+            summary_title_rect,
+            1,
+            self.font_size(16, 12),
+        )
 
-    def _draw_wrapped_summary(
+        winner_surface = winner_font.render(self.winner_text, True, (72, 48, 24))
+        winner_surface_rect = winner_surface.get_rect(center=winner_rect.center)
+        surface.blit(winner_surface, winner_surface_rect)
+
+        damage_surface = damage_font.render(self.damage_text, True, (96, 74, 46))
+        damage_surface_rect = damage_surface.get_rect(center=damage_rect.center)
+        surface.blit(damage_surface, damage_surface_rect)
+
+        summary_title = summary_font.render("Match Summary", True, (82, 56, 28))
+        summary_title_surface_rect = summary_title.get_rect(center=summary_title_rect.center)
+        surface.blit(summary_title, summary_title_surface_rect)
+
+        text_rect = pygame.Rect(
+            content_rect.x,
+            summary_title_rect.bottom + self.scale_y(8, 4),
+            content_rect.width,
+            max(1, content_rect.bottom - (summary_title_rect.bottom + self.scale_y(8, 4))),
+        )
+        self._draw_wrapped_banner_summary(surface, lines, text_rect, max_lines=9)
+
+    def _draw_wrapped_banner_summary(
         self,
         surface: pygame.Surface,
         lines: list[str],
         rect: pygame.Rect,
         max_lines: int,
     ) -> None:
-        """Draw a wrapped summary list."""
+        """Draw a wrapped summary list inside the parchment banner."""
         y = rect.y
-        line_height = self.scale_y(21, 15)
+        font = self._get_fitted_game_font(
+            " ".join(lines) if lines else "None",
+            self.font_size(21, 15),
+            rect,
+            max_lines,
+            self.font_size(14, 11),
+        )
+        line_height = max(self.scale_y(20, 14), font.get_linesize())
         rendered = 0
+        old_clip = surface.get_clip()
+        surface.set_clip(rect)
         for line in lines:
             words = line.split()
             current = ""
             for word in words:
                 candidate = word if not current else f"{current} {word}"
-                if self.small_font.size(candidate)[0] <= rect.width:
+                if font.size(candidate)[0] <= rect.width:
                     current = candidate
                 else:
                     if current and rendered < max_lines:
-                        surface.blit(self.small_font.render(current, True, (222, 226, 232)), (rect.x, y))
+                        line_surface = font.render(current, True, (78, 58, 34))
+                        surface.blit(line_surface, (rect.x, y))
                         y += line_height
                         rendered += 1
                     current = word
             if current and rendered < max_lines:
-                surface.blit(self.small_font.render(current, True, (222, 226, 232)), (rect.x, y))
+                line_surface = font.render(current, True, (78, 58, 34))
+                surface.blit(line_surface, (rect.x, y))
                 y += line_height
                 rendered += 1
             if rendered >= max_lines:
                 break
+        surface.set_clip(old_clip)
 
     def on_enter(self) -> None:
         """Activate game-over screen."""

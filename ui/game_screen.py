@@ -1871,22 +1871,22 @@ class GameScreen(Screen):
         cards = self.game.get_player_hand(self.game.current_player)
         can_play_appeasing = self._can_play_appeasing_hand_cards()
         choosing_weapon = self._can_choose_hand_weapon()
-        title_rect = pygame.Rect(
-            rects[0][1].x,
-            rects[0][1].y - self.scale_y(32, 24),
-            min(self.scale_x(330, 210), self.window.WINDOW_WIDTH - rects[0][1].x - self.scale_x(16, 8)),
-            self.scale_y(26, 20),
-        )
-        pygame.draw.rect(surface, (22, 26, 36), title_rect, border_radius=self.scale(9, 6))
-        pygame.draw.rect(surface, (100, 108, 124), title_rect, 1, border_radius=self.scale(9, 6))
+        title_rect = self._get_active_hand_title_rect(rects)
+        self._render_stone_panel(surface, title_rect, dim_alpha=26, shadow_alpha=56)
         if choosing_weapon:
             prompt = "Pick a weapon from hand"
         elif can_play_appeasing:
             prompt = "Tap card to Inspect" if self.is_compact_layout() else "Click a card to play"
         else:
             prompt = "Active Hand"
-        title = self.popup_small_font.render(f"P{self.game.current_player + 1} {prompt}", True, (232, 232, 232))
-        surface.blit(title, title.get_rect(center=title_rect.center))
+        self._render_carved_text(
+            surface,
+            self.popup_small_font,
+            f"P{self.game.current_player + 1} {prompt}",
+            (70, 62, 50),
+            title_rect.center,
+            anchor="center",
+        )
 
         suit_role_render = {
             suit: role.value
@@ -1909,6 +1909,18 @@ class GameScreen(Screen):
             pygame.draw.rect(surface, border, rect, self.scale(3 if usable else 2, 1), border_radius=self.scale(8, 5))
             if self.is_compact_layout() and not choosing_weapon:
                 self._render_compact_hand_inspect_hint(surface, rect, usable)
+
+    def _get_active_hand_title_rect(self, rects: list[tuple[int, pygame.Rect]] | None = None) -> pygame.Rect | None:
+        """Return the plaque rect used for the active-hand label above the hand cards."""
+        rects = rects if rects is not None else self._get_hand_card_rects()
+        if not rects:
+            return None
+        return pygame.Rect(
+            rects[0][1].x,
+            rects[0][1].y - self.scale_y(32, 24),
+            min(self.scale_x(330, 210), self.window.WINDOW_WIDTH - rects[0][1].x - self.scale_x(16, 8)),
+            self.scale_y(26, 20),
+        )
 
     def _render_compact_hand_inspect_hint(self, surface: pygame.Surface, rect: pygame.Rect, usable: bool) -> None:
         """Draw a small compact-card hint that tapping opens Inspect first."""
@@ -2102,14 +2114,13 @@ class GameScreen(Screen):
             self.scale_x(600, 420),
             self.scale_y(44, 34),
         )
-        pygame.draw.rect(surface, (44, 52, 66), rect, border_radius=self.scale(12, 8))
-        pygame.draw.rect(surface, (154, 188, 218), rect, 2, border_radius=self.scale(12, 8))
-        text_rect = rect.inflate(-self.scale(24, 16), -self.scale(8, 6))
-        self._draw_wrapped_text(
+        self._render_stone_panel(surface, rect, dim_alpha=28, shadow_alpha=60)
+        text_rect = self._get_stone_content_rect(rect)
+        self._draw_wrapped_carved_text(
             surface,
             self.notice_text,
             self.popup_small_font,
-            (236, 238, 240),
+            (74, 66, 54),
             text_rect,
             self.scale(18, 13),
             2,
@@ -2160,12 +2171,11 @@ class GameScreen(Screen):
 
         pygame.draw.rect(surface, (252, 222, 104), target_rect.inflate(self.scale(10, 6), self.scale(10, 6)), 3, border_radius=10)
         panel_width = min(self.scale_x(720, 330), self.window.WINDOW_WIDTH - 2 * self.scale_x(20, 12))
-        panel_height = self.scale_y(46, 36)
+        panel_height = self.scale_y(60, 46)
         avoid_rects = self._get_tutorial_avoid_rects(target_rect)
         panel_rect = self._choose_tutorial_panel_rect(target_rect, (panel_width, panel_height), avoid_rects)
         self.tutorial_panel_rect = panel_rect
-        pygame.draw.rect(surface, (24, 28, 40), panel_rect, border_radius=self.scale(10, 6))
-        pygame.draw.rect(surface, (252, 222, 104), panel_rect, 2, border_radius=self.scale(10, 6))
+        self._render_stone_panel(surface, panel_rect, dim_alpha=28, shadow_alpha=62)
         button_width = min(self.scale_x(132, 92), max(self.scale_x(86, 72), panel_rect.width // 4))
         button_height = max(self.scale_y(24, 20), panel_rect.height - self.scale_y(14, 10))
         self.tutorial_toggle_rect = pygame.Rect(
@@ -2181,13 +2191,13 @@ class GameScreen(Screen):
             preferred_font_size=self.font_size(16, 12),
         )
 
-        text_rect = panel_rect.inflate(-self.scale(20, 12), -self.scale(8, 6))
+        text_rect = self._get_stone_content_rect(panel_rect)
         text_rect.width -= button_width + self.scale_x(10, 6)
-        self._draw_wrapped_text(
+        self._draw_wrapped_carved_text(
             surface,
             text,
             self.popup_small_font,
-            (238, 238, 238),
+            (74, 66, 54),
             text_rect,
             self.scale_y(18, 13),
             2,
@@ -2202,7 +2212,16 @@ class GameScreen(Screen):
             if rect is not None:
                 avoid_rects.append(rect.copy())
         avoid_rects.extend(self._get_damage_summary_rects().values())
-        avoid_rects.extend(rect for _, rect in self._get_hand_card_rects())
+        hand_rects = self._get_hand_card_rects()
+        avoid_rects.extend(rect for _, rect in hand_rects)
+        hand_title_rect = self._get_active_hand_title_rect(hand_rects)
+        if hand_title_rect is not None:
+            avoid_rects.append(hand_title_rect)
+            hand_band_rect = hand_title_rect.copy()
+            for _, rect in hand_rects:
+                hand_band_rect.union_ip(rect)
+            hand_band_rect.inflate_ip(self.scale_x(18, 12), self.scale_y(18, 12))
+            avoid_rects.append(hand_band_rect)
         avoid_rects.extend(rect for _, rect in self._get_pending_placement_card_rects())
 
         if self.game.phase == GamePhase.APPEASING:
@@ -2824,11 +2843,16 @@ class GameScreen(Screen):
                 max(group_rect.width, self.scale_x(178, 138)),
                 self.scale_y(34, 26),
             )
-        pygame.draw.rect(surface, (28, 32, 44), header_rect, border_radius=self.scale(10, 6))
-        pygame.draw.rect(surface, (98, 108, 126), header_rect, 1, border_radius=self.scale(10, 6))
-        header = self.popup_small_font.render("Drag a Played Card", True, (232, 232, 232))
-        header_rect_text = header.get_rect(center=header_rect.center)
-        surface.blit(header, header_rect_text)
+        self._render_stone_panel(surface, header_rect, dim_alpha=26, shadow_alpha=58)
+        content_rect = self._get_stone_content_rect(header_rect)
+        self._render_carved_text(
+            surface,
+            self.popup_small_font,
+            "Drag a Played Card",
+            (70, 62, 50),
+            content_rect.center,
+            anchor="center",
+        )
 
         if not self.is_compact_layout():
             instructions = self.popup_small_font.render("Hold, drag to a hole, release.", True, (186, 186, 186))
@@ -2934,12 +2958,16 @@ class GameScreen(Screen):
                     chip_width,
                     chip_height,
                 )
-                pygame.draw.rect(surface, (30, 34, 46), rect, border_radius=self.scale(9, 6))
-                pygame.draw.rect(surface, (92, 104, 124), rect, 1, border_radius=self.scale(9, 6))
+                self._render_stone_panel(surface, rect, dim_alpha=24, shadow_alpha=44)
                 draw_suit_icon(surface, suit, (rect.x + self.scale(14, 9), rect.centery), size=self.scale(8, 5))
                 role_text = role.value.title() if role else "Unknown"
-                label = self.renderer.font_small.render(f"{get_family_name(suit)}: {role_text}", True, (218, 218, 218))
-                surface.blit(label, (rect.x + self.scale(28, 18), rect.y + self.scale(4, 3)))
+                self._render_carved_text(
+                    surface,
+                    self.renderer.font_small,
+                    f"{get_family_name(suit)}: {role_text}",
+                    (72, 64, 52),
+                    (rect.x + self.scale(28, 18), rect.y + self.scale(4, 3)),
+                )
             return
 
         start_x = panel_rect.x + self.scale_x(14, 9)
@@ -2977,11 +3005,15 @@ class GameScreen(Screen):
 
         for index, suit in enumerate(hierarchy):
             rect = pygame.Rect(start_x + index * (chip_width + spacing), y, chip_width, chip_height)
-            pygame.draw.rect(surface, (42, 46, 60), rect, border_radius=self.scale(12, 8))
-            pygame.draw.rect(surface, (180, 180, 190), rect, 1, border_radius=self.scale(12, 8))
+            self._render_stone_panel(surface, rect, dim_alpha=24, shadow_alpha=44)
             draw_suit_icon(surface, suit, (rect.x + self.scale(15, 10), rect.centery), size=self.scale(8, 5))
-            label = self.renderer.font_small.render(get_family_name(suit), True, (225, 225, 225))
-            surface.blit(label, (rect.x + self.scale(30, 18), rect.y + self.scale(3, 2)))
+            self._render_carved_text(
+                surface,
+                self.renderer.font_small,
+                get_family_name(suit),
+                (72, 64, 52),
+                (rect.x + self.scale(30, 18), rect.y + self.scale(3, 2)),
+            )
 
     def _render_rank_guide(self, surface: pygame.Surface) -> None:
         """Show the themed high-rank mapping during every gameplay phase."""
@@ -2999,11 +3031,16 @@ class GameScreen(Screen):
             self.scale_x(190, 144),
             self.scale_y(122, 92),
         )
-        pygame.draw.rect(surface, (30, 34, 46), panel_rect, border_radius=self.scale(12, 8))
-        pygame.draw.rect(surface, (110, 115, 130), panel_rect, 1, border_radius=self.scale(12, 8))
-
-        title = self.renderer.font_small.render("Card Ranks (Always)", True, (230, 230, 230))
-        surface.blit(title, (panel_rect.x + self.scale(12, 8), panel_rect.y + self.scale(8, 6)))
+        self._render_stone_panel(surface, panel_rect, dim_alpha=30, shadow_alpha=64)
+        content_rect = self._get_stone_content_rect(panel_rect)
+        self._render_carved_text(
+            surface,
+            self.renderer.font_small,
+            "Card Ranks (Always)",
+            (64, 56, 44),
+            (content_rect.centerx, content_rect.y),
+            anchor="midtop",
+        )
 
         lines = [
             get_rank_name_with_value(CardRank.KING),
@@ -3014,11 +3051,13 @@ class GameScreen(Screen):
         ]
 
         for index, text in enumerate(lines):
-            line = self.renderer.font_small.render(text, True, (205, 205, 205))
-            surface.blit(
-                line,
+            self._render_carved_text(
+                surface,
+                self.renderer.font_small,
+                text,
+                (72, 64, 52),
                 (
-                    panel_rect.x + self.scale(12, 8),
-                    panel_rect.y + self.scale(32, 24) + index * self.scale(18, 14),
+                    content_rect.x,
+                    content_rect.y + self.scale(34, 24) + index * self.scale(18, 14),
                 ),
             )

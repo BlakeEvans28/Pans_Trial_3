@@ -19,8 +19,14 @@ class AudioManager:
     SAMPLE_RATE = 44100
     AUDIO_ROOT = Path(__file__).resolve().parent.parent / "audio"
     MUSIC_TRACKS = {
-        "intro": AUDIO_ROOT / "Pan_Intro.mp3",
-        "phase": AUDIO_ROOT / "PanPhase1.mp3",
+        "intro": (
+            AUDIO_ROOT / "Pan_Intro_Updated.mp3",
+            AUDIO_ROOT / "Pan_Intro.mp3",
+        ),
+        "phase": (
+            AUDIO_ROOT / "PanPhase1_Updated.mp3",
+            AUDIO_ROOT / "PanPhase1.mp3",
+        ),
     }
 
     def __init__(self) -> None:
@@ -69,8 +75,12 @@ class AudioManager:
         if self.current_music == track_name and pygame.mixer.music.get_busy():
             return
 
-        path = self.MUSIC_TRACKS.get(track_name)
-        if path is None or not path.exists():
+        candidates = self.MUSIC_TRACKS.get(track_name)
+        if not candidates:
+            return
+
+        path = next((candidate for candidate in candidates if candidate.exists()), None)
+        if path is None:
             return
 
         try:
