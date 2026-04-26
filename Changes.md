@@ -14,6 +14,15 @@ Use this file to track the most recent committed changes in reverse chronologica
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
 ## 2026-04-26 - Brandt Homan
+Commit: `pending` - Tuned stone popup layout and readability
+Summary:
+- Converted the damage-pile popup into a larger stone plaque and gave its rows more room so card labels stop overlapping.
+- Reworked the Appeasing Pan request popup and Restructure popup sizing, spacing, and inner layout so their text and buttons fit the visible stone face more cleanly.
+- Updated the shared stone-panel scaling and text-safe content box so tall plaques keep a wider usable center instead of pushing text onto the border.
+- Changed forest-background helper text to outlined white lettering for better contrast without losing readability against the art.
+- Refreshed `Future_Improvements.md` with a new handwritten note about the remaining Pan request / Restructure stone-fit issue.
+
+## 2026-04-26 - Brandt Homan
 Commit: `pending` - Polished request popups, settings layout, and coin flip animation
 Summary:
 - Enlarged the Appeasing Pan request chooser and Restructure selector, moved Restructure onto the shared stone panel style, and gave the request and role text more room so labels no longer crowd the panel borders.

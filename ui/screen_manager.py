@@ -234,12 +234,19 @@ class Screen:
             src_h = self._stone_panel_base.get_height()
             src_border_x = max(1, int(src_w * 0.125))
             src_border_y = max(1, int(src_h * 0.125))
+            # Cap preserved border thickness by width too, so tall plaques keep a usable center.
             dst_border_x = min(
-                max(self.scale_x(18, 12), int(size[1] * 0.20)),
+                max(
+                    self.scale_x(18, 12),
+                    min(int(size[1] * 0.20), int(size[0] * 0.125)),
+                ),
                 max(1, size[0] // 3),
             )
             dst_border_y = min(
-                max(self.scale_y(14, 8), int(size[1] * 0.16)),
+                max(
+                    self.scale_y(14, 8),
+                    min(int(size[1] * 0.16), int(size[0] * 0.20)),
+                ),
                 max(1, size[1] // 3),
             )
             src_x = [0, src_border_x, src_w - src_border_x, src_w]
@@ -372,15 +379,24 @@ class Screen:
     ) -> pygame.Rect:
         """Return a text-safe inner rect that stays away from moss and stone borders."""
         pad_x = min(
-            max(self.scale_x(18, 12), int(rect.height * 0.19)) + extra_x,
+            max(
+                self.scale_x(18, 12),
+                min(int(rect.height * 0.19), int(rect.width * 0.125)),
+            ) + extra_x,
             max(1, rect.width // 3),
         )
         pad_top = min(
-            max(self.scale_y(12, 8), int(rect.height * 0.14)) + extra_top,
+            max(
+                self.scale_y(12, 8),
+                min(int(rect.height * 0.14), int(rect.width * 0.18)),
+            ) + extra_top,
             max(1, rect.height // 3),
         )
         pad_bottom = min(
-            max(self.scale_y(11, 7), int(rect.height * 0.11)) + extra_bottom,
+            max(
+                self.scale_y(11, 7),
+                min(int(rect.height * 0.11), int(rect.width * 0.16)),
+            ) + extra_bottom,
             max(1, rect.height // 3),
         )
         return pygame.Rect(
@@ -414,6 +430,37 @@ class Screen:
             surface.blit(light, rect.move(dx, dy))
         for dx, dy in [(offset, 0), (0, offset), (offset, offset)]:
             surface.blit(dark, rect.move(dx, dy))
+        surface.blit(main, rect)
+        return rect
+
+    def _render_outlined_text(
+        self,
+        surface: pygame.Surface,
+        font: pygame.font.Font,
+        text: str,
+        face_color: tuple[int, int, int],
+        outline_color: tuple[int, int, int],
+        position: tuple[int, int],
+        anchor: str = "topleft",
+        outline_width: int | None = None,
+    ) -> pygame.Rect:
+        """Render bright text with a small dark outline for busy backgrounds."""
+        main = font.render(text, True, face_color)
+        outline = font.render(text, True, outline_color)
+        rect = main.get_rect()
+        setattr(rect, anchor, position)
+        width = outline_width if outline_width is not None else self.scale(1, 1)
+        for dx, dy in [
+            (-width, 0),
+            (width, 0),
+            (0, -width),
+            (0, width),
+            (-width, -width),
+            (-width, width),
+            (width, -width),
+            (width, width),
+        ]:
+            surface.blit(outline, rect.move(dx, dy))
         surface.blit(main, rect)
         return rect
 
@@ -930,8 +977,14 @@ class HowToPlayScreen(Screen):
         self.scroll_offset = min(self.scroll_offset, self.max_scroll)
 
         if self.max_scroll:
-            hint = self.small_font.render("Mouse wheel scrolls this guide.", True, (150, 158, 170))
-            surface.blit(hint, (viewport_rect.x, viewport_rect.bottom + self.scale_y(8, 5)))
+            self._render_outlined_text(
+                surface,
+                self.small_font,
+                "Mouse wheel scrolls this guide.",
+                (244, 244, 244),
+                (0, 0, 0),
+                (viewport_rect.x, viewport_rect.bottom + self.scale_y(8, 5)),
+            )
 
         old_clip = surface.get_clip()
         surface.set_clip(viewport_rect)
@@ -1344,9 +1397,15 @@ class SettingsScreen(Screen):
             "Turn Tutorial Tips on here if you want in-game guidance.",
         ]
         for index, text in enumerate(lines):
-            line = self.small_font.render(text, True, (190, 198, 210))
-            line_rect = line.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(132 + index * 28, 92 + index * 18)))
-            surface.blit(line, line_rect)
+            self._render_outlined_text(
+                surface,
+                self.small_font,
+                text,
+                (244, 244, 244),
+                (0, 0, 0),
+                (self.window.WINDOW_WIDTH // 2, self.scale_y(132 + index * 28, 92 + index * 18)),
+                anchor="center",
+            )
 
         missing_assets = self.get_missing_required_art_assets()
         if missing_assets:
@@ -1485,9 +1544,15 @@ class CoinFlipScreen(Screen):
         result_rect = result_text.get_rect(center=(self.window.WINDOW_WIDTH // 2, center[1] + radius + self.scale_y(60, 42)))
         surface.blit(result_text, result_rect)
 
-        hint = self.small_font.render("The draft starts automatically.", True, (160, 168, 180))
-        hint_rect = hint.get_rect(center=(self.window.WINDOW_WIDTH // 2, result_rect.bottom + self.scale_y(32, 22)))
-        surface.blit(hint, hint_rect)
+        self._render_outlined_text(
+            surface,
+            self.small_font,
+            "The draft starts automatically.",
+            (244, 244, 244),
+            (0, 0, 0),
+            (self.window.WINDOW_WIDTH // 2, result_rect.bottom + self.scale_y(32, 22)),
+            anchor="center",
+        )
 
     def on_enter(self) -> None:
         """Coin flip has no UI elements."""
@@ -2290,10 +2355,16 @@ class JackRevealScreen(Screen):
                 hidden_rect = hidden.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.44)))
                 surface.blit(hidden, hidden_rect)
 
-        footer = self.small_font.render("The Omens reveal automatically, then the labyrinth begins.", True, (145, 145, 160))
         grid_bottom = y + rows * card_height + (rows - 1) * spacing
-        footer_rect = footer.get_rect(center=(self.window.WINDOW_WIDTH // 2, grid_bottom + self.scale_y(28, 20)))
-        surface.blit(footer, footer_rect)
+        footer_rect = self._render_outlined_text(
+            surface,
+            self.small_font,
+            "The Omens reveal automatically, then the labyrinth begins.",
+            (244, 244, 244),
+            (0, 0, 0),
+            (self.window.WINDOW_WIDTH // 2, grid_bottom + self.scale_y(28, 20)),
+            anchor="center",
+        )
 
         if self.player_cards:
             card_w = self.scale_x(160, 112) if compact else self.scale_x(170, 120)
