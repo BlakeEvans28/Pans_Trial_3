@@ -33,7 +33,7 @@ class GameWindow:
         self.text_scale = 1.0
         self.animation_speed = 1.0
         self.sound_volume = 0.5
-        self.tutorial_enabled = True
+        self.tutorial_enabled = False
         self.audio = AudioManager()
         self.audio.set_volume(self.sound_volume)
 
@@ -190,8 +190,7 @@ class GameWindow:
         self.background.fill(color)
 
     def reset_tutorial_tips(self) -> None:
-        """Re-enable first-cycle tutorial tips and reset gameplay tutorial state."""
-        self.tutorial_enabled = True
+        """Reset gameplay tip state without forcing tutorial tips back on."""
         game_screen = getattr(self, "game_screen_ref", None)
         if game_screen is not None and hasattr(game_screen, "reset_tutorial_cycle"):
             game_screen.reset_tutorial_cycle()

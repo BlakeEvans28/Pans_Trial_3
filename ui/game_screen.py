@@ -74,6 +74,12 @@ REQUEST_POPUP_COPY = {
 
 class GameScreen(Screen):
     """Main gameplay screen."""
+
+    PHASE_BANNER_PATHS = {
+        GamePhase.TRAVERSING: Screen.ASSET_ROOT / "traversing.png",
+        GamePhase.APPEASING: Screen.ASSET_ROOT / "appeasing_pan.png",
+    }
+    PHASE_BANNER_TRANSITION_SECONDS = 0.9
     
     def __init__(self, window: "GameWindow", game: GameState):
         super().__init__(window)
@@ -115,6 +121,11 @@ class GameScreen(Screen):
         self.notice_text = None
         self.notice_timer = 0.0
         self.plane_shift_preview_elapsed = 0.0
+        self._phase_banner_base = self._load_phase_banners()
+        self._phase_banner_cache: dict[tuple[GamePhase, int, int], pygame.Surface] = {}
+        self._phase_banner_phase = self._get_phase_banner_phase(self.game.phase)
+        self._previous_phase_banner_phase = None
+        self._phase_banner_transition_progress = 1.0
         
         self._refresh_fonts()
         self._create_ui()
@@ -128,6 +139,123 @@ class GameScreen(Screen):
         self.popup_title_font = self._get_title_style_font(self.font_size(38, 26))
         self.popup_body_font = self._get_game_font(self.font_size(28, 20))
         self.popup_small_font = self._get_game_font(self.font_size(22, 16))
+
+    def _crop_phase_banner(self, image: pygame.Surface | None) -> pygame.Surface | None:
+        """Trim extra transparent padding from the phase art so it reads like a centered title."""
+        if image is None:
+            return None
+        bounds = image.get_bounding_rect(min_alpha=6)
+        if bounds.width <= 0 or bounds.height <= 0:
+            return image
+        pad = 6
+        left = max(0, bounds.x - pad)
+        top = max(0, bounds.y - pad)
+        right = min(image.get_width(), bounds.right + pad)
+        bottom = min(image.get_height(), bounds.bottom + pad)
+        return image.subsurface(pygame.Rect(left, top, right - left, bottom - top)).copy()
+
+    def _load_phase_banners(self) -> dict[GamePhase, pygame.Surface]:
+        """Load the Traversing and Appeasing title art."""
+        banners = {}
+        for phase, path in self.PHASE_BANNER_PATHS.items():
+            image = self._crop_phase_banner(self._load_image(path))
+            if image is not None:
+                banners[phase] = image
+        return banners
+
+    def _get_phase_banner_phase(self, phase: GamePhase | None) -> GamePhase | None:
+        """Return the gameplay phase that should currently own the title art."""
+        if phase in self.PHASE_BANNER_PATHS:
+            return phase
+        return None
+
+    def _sync_phase_banner_state(self) -> None:
+        """Start a new fade when the gameplay phase art changes."""
+        target_phase = self._get_phase_banner_phase(self.game.phase)
+        if target_phase == self._phase_banner_phase:
+            return
+        self._previous_phase_banner_phase = self._phase_banner_phase
+        self._phase_banner_phase = target_phase
+        self._phase_banner_transition_progress = 0.0
+
+    def _advance_phase_banner_transition(self, time_delta: float) -> None:
+        """Progress the phase-banner crossfade at a noticeable medium pace."""
+        if self._phase_banner_transition_progress >= 1.0:
+            self._previous_phase_banner_phase = None
+            return
+        duration = max(0.01, self.PHASE_BANNER_TRANSITION_SECONDS)
+        self._phase_banner_transition_progress = min(
+            1.0,
+            self._phase_banner_transition_progress + (time_delta / duration),
+        )
+        if self._phase_banner_transition_progress >= 1.0:
+            self._previous_phase_banner_phase = None
+
+    def _get_phase_banner_box(self) -> pygame.Rect | None:
+        """Return the top-center box that the phase art should fit inside."""
+        board_rect = self.renderer.get_board_rect()
+        top_margin = self.scale_y(14, 8)
+        gap = self.scale_x(18, 12)
+        damage_rects = self._get_damage_summary_rects()
+        legend_rect = self._get_suit_role_legend_panel_rect()
+        left_limit = max(
+            self.scale_x(12, 8),
+            damage_rects[0].right + gap if 0 in damage_rects else board_rect.left,
+        )
+        right_limit = legend_rect.left - gap if legend_rect is not None else self.window.WINDOW_WIDTH - self.scale_x(12, 8)
+        center_x = board_rect.centerx
+        half_width = min(center_x - left_limit, right_limit - center_x)
+        height = board_rect.top - top_margin - self.scale_y(8, 5)
+        if half_width <= self.scale_x(60, 48) or height <= self.scale_y(18, 12):
+            return None
+        return pygame.Rect(
+            center_x - half_width,
+            top_margin,
+            half_width * 2,
+            height,
+        )
+
+    def _get_scaled_phase_banner(self, phase: GamePhase, box_size: tuple[int, int]) -> pygame.Surface | None:
+        """Return cached phase art scaled to fit the current title area."""
+        base = self._phase_banner_base.get(phase)
+        if base is None or box_size[0] <= 0 or box_size[1] <= 0:
+            return None
+        scale = min(box_size[0] / base.get_width(), box_size[1] / base.get_height())
+        width = max(1, int(base.get_width() * scale))
+        height = max(1, int(base.get_height() * scale))
+        cache_key = (phase, width, height)
+        if cache_key not in self._phase_banner_cache:
+            self._phase_banner_cache[cache_key] = pygame.transform.smoothscale(base, (width, height))
+        return self._phase_banner_cache[cache_key]
+
+    def _render_phase_banner(self, surface: pygame.Surface) -> None:
+        """Draw the current phase art at the top center with a fade transition."""
+        if self._phase_banner_phase is None and self._previous_phase_banner_phase is None:
+            return
+
+        banner_box = self._get_phase_banner_box()
+        if banner_box is None:
+            return
+
+        progress = self._phase_banner_transition_progress
+        eased = progress * progress * (3 - 2 * progress)
+        draw_order = []
+        if self._previous_phase_banner_phase is not None and progress < 1.0:
+            draw_order.append((self._previous_phase_banner_phase, max(0, int(255 * (1.0 - eased)))))
+        if self._phase_banner_phase is not None:
+            alpha = 255 if self._previous_phase_banner_phase is None else int(255 * eased)
+            draw_order.append((self._phase_banner_phase, max(0, min(255, alpha))))
+
+        for phase, alpha in draw_order:
+            if alpha <= 0:
+                continue
+            banner = self._get_scaled_phase_banner(phase, banner_box.size)
+            if banner is None:
+                continue
+            banner_surface = banner.copy()
+            banner_surface.set_alpha(alpha)
+            rect = banner_surface.get_rect(center=banner_box.center)
+            surface.blit(banner_surface, rect)
 
     def _apply_element_rect(self, element, rect: pygame.Rect) -> None:
         """Resize and reposition one pygame_gui element."""
@@ -719,7 +847,7 @@ class GameScreen(Screen):
         """Turn off tutorial tips from the currently visible tutorial panel."""
         if not self.window.tutorial_enabled or self.tutorial_toggle_rect is None:
             return False
-        if not self.tutorial_toggle_rect.collidepoint(pos):
+        if not self._is_wood_button_hit(self.tutorial_toggle_rect, pos):
             return False
         self.window.tutorial_enabled = False
         self.tutorial_toggle_rect = None
@@ -769,6 +897,9 @@ class GameScreen(Screen):
         return_notice = self.game.consume_appeasing_return_notice()
         if return_notice:
             self._show_notice(return_notice)
+
+        self._sync_phase_banner_state()
+        self._advance_phase_banner_transition(time_delta)
 
         # Update status
         player = f"P{self.game.current_player + 1}"
@@ -865,15 +996,9 @@ class GameScreen(Screen):
         if not self._is_hand_inspect_popup_active():
             self.inspected_hand_card_index = None
 
-        # Update the small turn indicator above the card buttons.
-        for i, label in enumerate(self.hand_labels):
-            label.set_text(f"Player {i+1} Turn")
-            if self.is_compact_layout() and self.game.has_pending_card_placement():
-                label.hide()
-            elif i == self.game.current_player:
-                label.show()
-            else:
-                label.hide()
+        # The active-hand plaque is rendered manually, so keep the legacy bottom-left turn labels hidden.
+        for label in self.hand_labels:
+            label.hide()
         
         for _, btn in self.move_buttons:
             btn.hide()
@@ -955,10 +1080,9 @@ class GameScreen(Screen):
         self._render_pending_placement_hover(surface)
         self._render_suit_role_legend(surface)
         self._render_damage_summary(surface)
+        self._render_phase_banner(surface)
         self._render_hand_cards(surface)
         self._render_pending_placement_cards(surface)
-        if self.game.phase == GamePhase.APPEASING:
-            self._render_color_hierarchy_strip(surface)
         self._render_active_popups(surface)
         self._render_appeasing_result_banner(surface)
         self._render_notice_banner(surface)
@@ -968,7 +1092,7 @@ class GameScreen(Screen):
         """Activate game screen."""
         if getattr(self.window, "audio", None) is not None:
             self.window.audio.play_phase_music()
-        self.status_label.show()
+        self.status_label.hide()
         self.info_label.hide()
         for _, btn in self.move_buttons:
             btn.hide()
@@ -985,7 +1109,7 @@ class GameScreen(Screen):
         for label in self.jack_labels:
             label.hide()
         for label in self.hand_labels:
-            label.show()
+            label.hide()
         for label in self.damage_labels:
             label.hide()
         for buttons in self.damage_buttons.values():
@@ -1045,6 +1169,61 @@ class GameScreen(Screen):
         if self.is_compact_layout():
             return f"{get_rank_name(card.rank)} {get_family_code(card.suit)}\n{self._get_card_role_short_name(card)}"
         return f"{self._format_card_label(card)}\n{self._get_card_role_name(card)}"
+
+    def _is_wood_button_hit(
+        self,
+        rect: pygame.Rect,
+        pos: tuple[int, int],
+        alpha_threshold: int = 12,
+    ) -> bool:
+        """Return True when a click lands on the visible pixels of a wood button."""
+        return self._point_hits_wood_icon(rect, pos, alpha_threshold=alpha_threshold)
+
+    def _get_request_popup_button_rect(self, rect: pygame.Rect) -> pygame.Rect:
+        """Return the actual wood-button rect drawn inside a request option."""
+        wood_rect = pygame.Rect(
+            rect.x + self.scale_x(4, 3),
+            rect.y + self.scale_y(2, 1),
+            rect.width - self.scale_x(8, 6),
+            min(
+                rect.height - self.scale_y(30, 22),
+                self._get_wood_icon_height_for_width(rect.width - self.scale_x(8, 6)),
+            ),
+        )
+        wood_rect.height = max(self.scale_y(44, 34), wood_rect.height)
+        wood_rect.height = min(rect.height, wood_rect.height)
+        return wood_rect
+
+    def _render_wood_legend_label(
+        self,
+        surface: pygame.Surface,
+        label: str,
+        text_rect: pygame.Rect,
+        preferred_size: int,
+        min_size: int,
+        *,
+        anchor: str = "midleft",
+        color: tuple[int, int, int] = (246, 238, 208),
+    ) -> None:
+        """Render a bright readable legend label over the wooden board."""
+        size = max(preferred_size, min_size)
+        font = self._get_title_style_font(size)
+        while size > min_size and font.size(label)[0] > text_rect.width:
+            size -= 2
+            font = self._get_title_style_font(size)
+
+        shadow = font.render(label, True, (18, 10, 6))
+        text = font.render(label, True, color)
+        if anchor == "midright":
+            label_rect = text.get_rect(midright=(text_rect.right, text_rect.centery))
+            if label_rect.left < text_rect.x:
+                label_rect.left = text_rect.x
+        else:
+            label_rect = text.get_rect(midleft=(text_rect.x, text_rect.centery))
+            if label_rect.right > text_rect.right:
+                label_rect.right = text_rect.right
+        surface.blit(shadow, label_rect.move(self.scale(2, 1), self.scale(2, 1)))
+        surface.blit(text, label_rect)
 
     def _show_notice(self, text: str, seconds: float = 4.5) -> None:
         """Show a short gameplay notice banner."""
@@ -1419,7 +1598,7 @@ class GameScreen(Screen):
             return None
 
         for axis, index, rect in self._get_plane_shift_line_controls():
-            if rect.collidepoint(pos):
+            if self._is_wood_button_hit(rect, pos):
                 return axis, index
         return None
 
@@ -1577,11 +1756,11 @@ class GameScreen(Screen):
             return False
 
         panel_rect, _, play_rect, close_rect = self._get_hand_inspect_popup_layout()
-        if close_rect.collidepoint(pos) or not panel_rect.collidepoint(pos):
+        if self._is_wood_button_hit(close_rect, pos) or not panel_rect.collidepoint(pos):
             self.inspected_hand_card_index = None
             return True
 
-        if play_rect.collidepoint(pos):
+        if self._is_wood_button_hit(play_rect, pos):
             player_hand = self.game.get_player_hand(self.game.current_player)
             index = self.inspected_hand_card_index
             if index is not None and index < len(player_hand):
@@ -1614,7 +1793,7 @@ class GameScreen(Screen):
             if not panel_rect.collidepoint(pos):
                 return True
             for request_type, rect in option_rects:
-                if rect.collidepoint(pos):
+                if self._is_wood_button_hit(self._get_request_popup_button_rect(rect), pos):
                     if option_states.get(request_type, False):
                         action = ChooseRequestAction(self.game.current_player, REQUEST_TYPE_MAP[request_type])
                         self._apply_action(action)
@@ -1637,7 +1816,7 @@ class GameScreen(Screen):
             if not panel_rect.collidepoint(pos):
                 return True
             for suit, rect in suit_rects:
-                if rect.collidepoint(pos):
+                if self._is_wood_button_hit(rect, pos):
                     action = SelectRestructureSuitAction(self.game.current_player, suit)
                     self._apply_action(action)
                     return True
@@ -1649,7 +1828,7 @@ class GameScreen(Screen):
                 self.pending_plane_shift_line = None
                 return True
             for direction, rect in direction_rects:
-                if rect.collidepoint(pos):
+                if self._is_wood_button_hit(rect, pos):
                     self._commit_plane_shift_direction(direction)
                     return True
             return True
@@ -1658,10 +1837,10 @@ class GameScreen(Screen):
             panel_rect, buttons = self._get_plane_shift_confirmation_layout()
             if not panel_rect.collidepoint(pos):
                 return True
-            if buttons["confirm"].collidepoint(pos):
+            if self._is_wood_button_hit(buttons["confirm"], pos):
                 self._confirm_plane_shift()
                 return True
-            if buttons["change"].collidepoint(pos):
+            if self._is_wood_button_hit(buttons["change"], pos):
                 self.pending_plane_shift_confirmation = None
                 return True
             return True
@@ -1674,7 +1853,7 @@ class GameScreen(Screen):
             return False
 
         for player_id, rect in self._get_damage_summary_rects().items():
-            if rect.collidepoint(pos):
+            if self._is_wood_button_hit(rect, pos):
                 self.damage_popup_player = None if self.damage_popup_player == player_id else player_id
                 return True
         return False
@@ -1685,7 +1864,7 @@ class GameScreen(Screen):
             return False
 
         for player_id, rect in self._get_damage_summary_rects().items():
-            if rect.collidepoint(pos):
+            if self._is_wood_button_hit(rect, pos):
                 self.damage_popup_player = None if self.damage_popup_player == player_id else player_id
                 return True
 
@@ -1743,7 +1922,7 @@ class GameScreen(Screen):
         preferred_font_size: int | None = None,
     ) -> None:
         """Render an in-game action as a title-screen wood button."""
-        hovered = enabled and rect.collidepoint(pygame.mouse.get_pos())
+        hovered = enabled and self._is_wood_button_hit(rect, pygame.mouse.get_pos())
         self._render_wood_button(
             surface,
             rect,
@@ -1915,10 +2094,17 @@ class GameScreen(Screen):
         rects = rects if rects is not None else self._get_hand_card_rects()
         if not rects:
             return None
+        hand_band_rect = rects[0][1].copy()
+        for _, rect in rects[1:]:
+            hand_band_rect.union_ip(rect)
+        title_width = min(
+            self.window.WINDOW_WIDTH - 2 * self.scale_x(16, 8),
+            max(self.scale_x(250, 190), hand_band_rect.width + self.scale_x(24, 16)),
+        )
         return pygame.Rect(
-            rects[0][1].x,
-            rects[0][1].y - self.scale_y(32, 24),
-            min(self.scale_x(330, 210), self.window.WINDOW_WIDTH - rects[0][1].x - self.scale_x(16, 8)),
+            hand_band_rect.centerx - title_width // 2,
+            hand_band_rect.y - self.scale_y(32, 24),
+            title_width,
             self.scale_y(26, 20),
         )
 
@@ -2061,8 +2247,7 @@ class GameScreen(Screen):
             self.scale_x(660, 460),
             self.scale_y(62, 48),
         )
-        pygame.draw.rect(surface, (31, 36, 48), rect, border_radius=self.scale(14, 9))
-        pygame.draw.rect(surface, (226, 198, 102), rect, 2, border_radius=self.scale(14, 9))
+        self._render_stone_panel(surface, rect, dim_alpha=28, shadow_alpha=62)
 
         title_surface = self.popup_body_font.render(title, True, (246, 232, 172))
         surface.blit(title_surface, (rect.x + self.scale(18, 12), rect.y + self.scale(8, 5)))
@@ -2072,11 +2257,11 @@ class GameScreen(Screen):
             rect.width - self.scale(36, 24),
             rect.height - self.scale(36, 26),
         )
-        self._draw_wrapped_text(
+        self._draw_wrapped_carved_text(
             surface,
             detail,
             self.popup_small_font,
-            (228, 228, 228),
+            (74, 66, 54),
             detail_rect,
             self.scale(18, 13),
             2,
@@ -2211,6 +2396,9 @@ class GameScreen(Screen):
             rect = getattr(element, "relative_rect", None)
             if rect is not None:
                 avoid_rects.append(rect.copy())
+        phase_banner_box = self._get_phase_banner_box()
+        if phase_banner_box is not None:
+            avoid_rects.append(phase_banner_box)
         avoid_rects.extend(self._get_damage_summary_rects().values())
         hand_rects = self._get_hand_card_rects()
         avoid_rects.extend(rect for _, rect in hand_rects)
@@ -2319,8 +2507,7 @@ class GameScreen(Screen):
             request_type: (enabled, disabled_reason)
             for request_type, enabled, disabled_reason in self._get_request_popup_options()
         }
-        pygame.draw.rect(surface, (20, 24, 34), panel_rect, border_radius=18)
-        pygame.draw.rect(surface, (140, 146, 165), panel_rect, 2, border_radius=18)
+        self._render_stone_panel(surface, panel_rect, dim_alpha=28, shadow_alpha=62)
 
         title = self.popup_title_font.render("Choose Pan's Request", True, (240, 236, 214))
         surface.blit(title, (panel_rect.x + self.scale(28, 18), panel_rect.y + self.scale(18, 12)))
@@ -2337,15 +2524,7 @@ class GameScreen(Screen):
             enabled, disabled_reason = option_states[request_type]
             body_color = (208, 208, 208) if enabled else (136, 136, 144)
             detail_color = (170, 200, 220) if enabled else (200, 164, 124)
-
-            wood_rect = pygame.Rect(
-                rect.x + self.scale_x(4, 3),
-                rect.y + self.scale_y(2, 1),
-                rect.width - self.scale_x(8, 6),
-                min(rect.height - self.scale_y(30, 22), self._get_wood_icon_height_for_width(rect.width - self.scale_x(8, 6))),
-            )
-            wood_rect.height = max(self.scale_y(44, 34), wood_rect.height)
-            wood_rect.height = min(rect.height, wood_rect.height)
+            wood_rect = self._get_request_popup_button_rect(rect)
             self._render_game_wood_button(
                 surface,
                 wood_rect,
@@ -2381,8 +2560,7 @@ class GameScreen(Screen):
         card = player_hand[self.inspected_hand_card_index]
         panel_rect, card_rect, play_rect, close_rect = self._get_hand_inspect_popup_layout()
 
-        pygame.draw.rect(surface, (20, 24, 34), panel_rect, border_radius=18)
-        pygame.draw.rect(surface, (252, 222, 104), panel_rect, 2, border_radius=18)
+        self._render_stone_panel(surface, panel_rect, dim_alpha=28, shadow_alpha=62)
 
         title = self.popup_title_font.render("Inspect Card", True, (240, 236, 214))
         surface.blit(title, (panel_rect.x + self.scale(26, 16), panel_rect.y + self.scale(18, 12)))
@@ -2420,14 +2598,13 @@ class GameScreen(Screen):
         selected_own = self.game.get_pending_steal_life_card()
         first_selection_pending = selected_own is None
 
-        pygame.draw.rect(surface, (20, 24, 34), panel_rect, border_radius=18)
-        pygame.draw.rect(surface, (146, 126, 112), panel_rect, 2, border_radius=18)
+        self._render_stone_panel(surface, panel_rect, dim_alpha=28, shadow_alpha=62)
 
         title = self.popup_title_font.render("Steal Life", True, (240, 236, 214))
         surface.blit(title, (panel_rect.x + self.scale(30, 18), panel_rect.y + self.scale(18, 12)))
 
         instruction = "Select your damage card first. You can change it before choosing the enemy card."
-        self._draw_wrapped_text(
+        self._draw_wrapped_carved_text(
             surface,
             instruction,
             self.popup_small_font,
@@ -2907,32 +3084,90 @@ class GameScreen(Screen):
         border = (252, 222, 104) if selected or floating else (110, 116, 130)
         pygame.draw.rect(surface, border, rect, self.scale(3 if selected or floating else 2, 1), border_radius=self.scale(8, 5))
 
+    def _get_suit_role_label(self, role) -> str:
+        """Return the shorter role label shown in the top-right color legend."""
+        if role is None:
+            return "Unknown"
+        return {
+            "walls": "Wall",
+            "traps": "Trap",
+            "ballista": "Ballista",
+            "weapons": "Weapon",
+        }.get(role.value, role.value.title())
+
+    def _show_phase_two_legend_guide(self) -> bool:
+        """Return True when the top-right legend should explain Phase 2 strength order."""
+        return self.game.phase == GamePhase.APPEASING and not self.is_compact_layout()
+
     def _get_suit_role_legend_panel_rect(self) -> pygame.Rect | None:
         """Return the wood backing rect for the top-right suit role legend."""
-        if self.is_compact_layout():
+        labels = [self._get_suit_role_label(self.game.suit_roles.get(suit)) for suit in self.game.jack_order]
+        compact = self.is_compact_layout()
+        font = self._get_title_style_font(self.font_size(24, 17) if compact else self.font_size(20, 15))
+        max_text_width = max((font.size(label)[0] for label in labels), default=0)
+
+        if compact:
             if self.game.phase == GamePhase.APPEASING:
                 return None
             margin = self.scale_x(18, 12)
             gap = self.scale_x(10, 6)
-            chip_width = (self.window.WINDOW_WIDTH - 2 * margin - gap) // 2
-            chip_height = self.scale_y(24, 20)
+            padding_x = self.scale_x(18, 12)
+            padding_y = self.scale_y(12, 8)
+            row_gap = self.scale_y(10, 6)
+            panel_width = min(
+                self.window.WINDOW_WIDTH - 2 * margin,
+                max(
+                    self.scale_x(284, 214),
+                    2 * (max_text_width + self.scale_x(82, 60)) + gap + 2 * padding_x,
+                ),
+            )
             start_y = self.scale_y(88, 72)
-            height = 2 * chip_height + self.scale_y(6, 4)
             return pygame.Rect(
-                margin - self.scale_x(8, 5),
-                start_y - self.scale_y(6, 4),
-                2 * chip_width + gap + 2 * self.scale_x(8, 5),
-                height + 2 * self.scale_y(6, 4),
+                margin,
+                start_y - padding_y,
+                panel_width,
+                2 * self.scale_y(40, 30) + row_gap + 2 * padding_y,
             )
 
-        start_x = self.window.WINDOW_WIDTH - self.scale_x(235, 170)
+        board_rect = self.renderer.get_board_rect()
+        row_gap = self.scale_y(6, 4)
+        guide_font = self._get_title_style_font(self.font_size(17, 12))
+        guide_width = 0
+        guide_gap = 0
+        if self._show_phase_two_legend_guide():
+            guide_width = max(
+                guide_font.size("Strongest")[0],
+                guide_font.size("Weakest")[0],
+                self.scale_x(64, 48),
+            )
+            guide_gap = self.scale_x(12, 8)
+        row_height = max(
+            self.scale_y(36, 27),
+            max(font.get_height(), guide_font.get_height(), self.scale(24, 18)) + self.scale_y(4, 2),
+        )
+        left_pad = self.scale_x(26, 18)
+        right_pad = self.scale_x(28, 20)
+        top_pad = self.scale_y(16, 10)
+        bottom_pad = self.scale_y(18, 12)
+        icon_diameter = self.scale(24, 18)
+        text_gap = self.scale_x(12, 8)
+        content_width = icon_diameter + text_gap + max_text_width + guide_gap + guide_width
+        panel_width = content_width + left_pad + right_pad
+        available_width = max(
+            1,
+            self.window.WINDOW_WIDTH - board_rect.right - self.scale_x(18, 12) - self.scale_x(18, 12),
+        )
+        panel_width = max(1, min(panel_width, available_width))
+        start_x = min(
+            self.window.WINDOW_WIDTH - panel_width - self.scale_x(18, 12),
+            board_rect.right + self.scale_x(18, 12),
+        )
         start_y = self.scale_y(72, 54)
-        row_height = self.scale(30, 22)
         return pygame.Rect(
             start_x,
             start_y,
-            self.scale_x(220, 160),
-            4 * row_height + self.scale_y(20, 14),
+            panel_width,
+            4 * row_height + 3 * row_gap + top_pad + bottom_pad,
         )
 
     def _render_suit_role_legend(self, surface: pygame.Surface) -> None:
@@ -2940,48 +3175,145 @@ class GameScreen(Screen):
         panel_rect = self._get_suit_role_legend_panel_rect()
         if panel_rect is None:
             return
-        self._render_wood_panel(surface, panel_rect, (132, 118, 82), dim_alpha=104)
+        self._render_wood_panel(surface, panel_rect, dim_alpha=54)
 
         if self.is_compact_layout():
-            margin = self.scale_x(18, 12)
             gap = self.scale_x(10, 6)
-            chip_width = (self.window.WINDOW_WIDTH - 2 * margin - gap) // 2
-            chip_height = self.scale_y(24, 20)
-            start_y = self.scale_y(88, 72)
+            row_gap = self.scale_y(8, 5)
+            content_rect = pygame.Rect(
+                panel_rect.x + self.scale_x(18, 12),
+                panel_rect.y + self.scale_y(12, 8),
+                panel_rect.width - 2 * self.scale_x(18, 12),
+                panel_rect.height - 2 * self.scale_y(12, 8),
+            )
+            chip_width = max(1, (content_rect.width - gap) // 2)
+            chip_height = max(1, (content_rect.height - row_gap) // 2)
+            icon_size = self.scale(9, 6)
+            icon_radius = icon_size + self.scale(4, 2)
+            icon_x_pad = self.scale_x(8, 6)
+            text_gap = self.scale_x(16, 10)
+
             for index, suit in enumerate(self.game.jack_order):
                 role = self.game.suit_roles.get(suit)
                 row = index // 2
                 col = index % 2
                 rect = pygame.Rect(
-                    margin + col * (chip_width + gap),
-                    start_y + row * (chip_height + self.scale_y(6, 4)),
+                    content_rect.x + col * (chip_width + gap),
+                    content_rect.y + row * (chip_height + row_gap),
                     chip_width,
                     chip_height,
                 )
-                self._render_stone_panel(surface, rect, dim_alpha=24, shadow_alpha=44)
-                draw_suit_icon(surface, suit, (rect.x + self.scale(14, 9), rect.centery), size=self.scale(8, 5))
-                role_text = role.value.title() if role else "Unknown"
-                self._render_carved_text(
+                icon_center = (rect.x + icon_radius + icon_x_pad, rect.centery)
+                pygame.draw.circle(surface, (250, 240, 206), icon_center, icon_radius)
+                draw_suit_icon(surface, suit, icon_center, size=icon_size)
+                self._render_wood_legend_label(
                     surface,
-                    self.renderer.font_small,
-                    f"{get_family_name(suit)}: {role_text}",
-                    (72, 64, 52),
-                    (rect.x + self.scale(28, 18), rect.y + self.scale(4, 3)),
+                    self._get_suit_role_label(role),
+                    pygame.Rect(
+                        icon_center[0] + text_gap,
+                        rect.y,
+                        rect.right - (icon_center[0] + text_gap) - self.scale_x(8, 5),
+                        rect.height,
+                    ),
+                    self.font_size(22, 16),
+                    self.font_size(14, 11),
                 )
             return
 
-        start_x = panel_rect.x + self.scale_x(14, 9)
-        start_y = panel_rect.y + self.scale_y(12, 8)
-        row_height = self.scale(30, 22)
+        content_rect = pygame.Rect(
+            panel_rect.x + self.scale_x(26, 18),
+            panel_rect.y + self.scale_y(16, 10),
+            max(1, panel_rect.width - self.scale_x(54, 38)),
+            max(1, panel_rect.height - self.scale_y(34, 22)),
+        )
+        row_gap = self.scale_y(6, 4)
+        row_height = max(1, (content_rect.height - 3 * row_gap) // 4)
+        icon_size = self.scale(9, 6)
+        icon_radius = icon_size + self.scale(3, 2)
+        icon_x_pad = self.scale_x(6, 4)
+        text_gap = self.scale_x(12, 8)
+        guide_enabled = self._show_phase_two_legend_guide()
+        guide_width = self.scale_x(76, 56) if guide_enabled else 0
+        guide_gap = self.scale_x(12, 8) if guide_enabled else 0
+        guide_left = content_rect.right - guide_width if guide_enabled else content_rect.right
+
+        if guide_enabled:
+            strongest_rect = pygame.Rect(
+                guide_left,
+                content_rect.y,
+                guide_width,
+                row_height,
+            )
+            weakest_rect = pygame.Rect(
+                guide_left,
+                content_rect.y + 3 * (row_height + row_gap),
+                guide_width,
+                row_height,
+            )
+            self._render_wood_legend_label(
+                surface,
+                "Strongest",
+                strongest_rect,
+                self.font_size(17, 12),
+                self.font_size(12, 10),
+                anchor="midright",
+                color=(242, 218, 150),
+            )
+            self._render_wood_legend_label(
+                surface,
+                "Weakest",
+                weakest_rect,
+                self.font_size(17, 12),
+                self.font_size(12, 10),
+                anchor="midright",
+                color=(214, 226, 206),
+            )
+            arrow_x = guide_left + guide_width // 2
+            arrow_top = strongest_rect.bottom - self.scale_y(2, 1)
+            arrow_bottom = weakest_rect.y + self.scale_y(4, 2)
+            arrow_color = (236, 224, 176)
+            pygame.draw.line(
+                surface,
+                arrow_color,
+                (arrow_x, arrow_top),
+                (arrow_x, arrow_bottom),
+                max(2, self.scale(2, 2)),
+            )
+            arrow_head = self.scale(7, 5)
+            pygame.draw.polygon(
+                surface,
+                arrow_color,
+                [
+                    (arrow_x, arrow_bottom + arrow_head),
+                    (arrow_x - arrow_head, arrow_bottom - arrow_head),
+                    (arrow_x + arrow_head, arrow_bottom - arrow_head),
+                ],
+            )
 
         for index, suit in enumerate(self.game.jack_order):
             role = self.game.suit_roles.get(suit)
-            y = start_y + index * row_height
-            draw_suit_icon(surface, suit, (start_x + self.scale(12, 8), y + self.scale(10, 6)), size=self.scale(12, 7))
-            family = get_family_name(suit)
-            text = f"{family}: {role.value.title()}" if role else f"{family}: Unknown"
-            legend = self.renderer.font_small.render(text, True, (210, 210, 210))
-            surface.blit(legend, (start_x + self.scale(28, 18), y))
+            row_rect = pygame.Rect(
+                content_rect.x,
+                content_rect.y + index * (row_height + row_gap),
+                content_rect.width,
+                row_height,
+            )
+            icon_center = (row_rect.x + icon_radius + icon_x_pad, row_rect.centery)
+            pygame.draw.circle(surface, (250, 240, 206), icon_center, icon_radius)
+            draw_suit_icon(surface, suit, icon_center, size=icon_size)
+            role_text_right = guide_left - guide_gap if guide_enabled else row_rect.right
+            self._render_wood_legend_label(
+                surface,
+                self._get_suit_role_label(role),
+                pygame.Rect(
+                    icon_center[0] + text_gap,
+                    row_rect.y,
+                    max(1, role_text_right - (icon_center[0] + text_gap)),
+                    row_rect.height,
+                ),
+                self.font_size(20, 15),
+                self.font_size(10, 9),
+            )
 
     def _render_color_hierarchy_strip(self, surface: pygame.Surface) -> None:
         """Show the user-facing Phase 2 color strip across the top."""

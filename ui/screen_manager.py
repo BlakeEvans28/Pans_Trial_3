@@ -181,6 +181,34 @@ class Screen:
             self._wood_icon_cache[key] = icon
         return self._wood_icon_cache[key]
 
+    def _point_hits_surface_alpha(
+        self,
+        rect: pygame.Rect,
+        pos: tuple[int, int],
+        surface: pygame.Surface | None,
+        alpha_threshold: int = 12,
+    ) -> bool:
+        """Return True when a point hits a non-transparent pixel of a rendered surface."""
+        if not rect.collidepoint(pos):
+            return False
+        if surface is None or rect.width <= 0 or rect.height <= 0:
+            return True
+
+        local_x = pos[0] - rect.x
+        local_y = pos[1] - rect.y
+        if not (0 <= local_x < surface.get_width() and 0 <= local_y < surface.get_height()):
+            return False
+        return surface.get_at((int(local_x), int(local_y))).a >= alpha_threshold
+
+    def _point_hits_wood_icon(self, rect: pygame.Rect, pos: tuple[int, int], alpha_threshold: int = 12) -> bool:
+        """Return True when a point hits the visible wood-button art instead of its transparent padding."""
+        return self._point_hits_surface_alpha(
+            rect,
+            pos,
+            self._get_scaled_wood_icon(rect.size, False),
+            alpha_threshold=alpha_threshold,
+        )
+
     def _blit_scaled_patch(
         self,
         target: pygame.Surface,
@@ -719,7 +747,7 @@ class StartScreen(Screen):
     def _menu_action_at(self, pos: tuple[int, int]) -> str | None:
         """Return the title-menu action at a mouse position."""
         for action, _, rect in self.menu_buttons:
-            if rect.collidepoint(pos):
+            if self._point_hits_surface_alpha(rect, pos, self._get_scaled_icon(rect.size, False)):
                 return action
         return None
     
@@ -840,9 +868,9 @@ class HowToPlayScreen(Screen):
         if event.type == pygame_gui.UI_BUTTON_PRESSED and event.ui_element == self.back_button:
             return "MENU"
         if event.type == pygame.MOUSEMOTION:
-            self.hovered_button = "back" if self.back_button_rect.collidepoint(event.pos) else None
+            self.hovered_button = "back" if self._point_hits_wood_icon(self.back_button_rect, event.pos) else None
             return False
-        if event.type == pygame.MOUSEBUTTONDOWN and self.back_button_rect.collidepoint(event.pos):
+        if event.type == pygame.MOUSEBUTTONDOWN and self._point_hits_wood_icon(self.back_button_rect, event.pos):
             return "MENU"
         if event.type == pygame.MOUSEWHEEL:
             self.scroll_offset = max(0, min(self.max_scroll, self.scroll_offset - event.y * self.scale(48, 32)))
@@ -1215,7 +1243,7 @@ class SettingsScreen(Screen):
             "animation": f"Animation Speed: {self._label_for_value(self.ANIMATION_SPEEDS, self.window.animation_speed)}",
             "sound": f"Sound Volume: {self._label_for_value(self.SOUND_LEVELS, self.window.sound_volume)}",
             "tutorial": f"Tutorial Tips: {'On' if self.window.tutorial_enabled else 'Off'}",
-            "tutorial_reset": "Reset First Tutorial",
+            "tutorial_reset": "Reset Tip Cycle",
             "back": "Back",
         }
         self.fullscreen_button.set_text(self.button_labels["fullscreen"])
@@ -1253,7 +1281,7 @@ class SettingsScreen(Screen):
     def _setting_key_at(self, pos: tuple[int, int]) -> str | None:
         """Return the setting control key at a mouse position."""
         for key, rect in self.setting_button_rects.items():
-            if rect.collidepoint(pos):
+            if self._point_hits_wood_icon(rect, pos):
                 return key
         return None
 
@@ -1276,6 +1304,8 @@ class SettingsScreen(Screen):
             self.window.audio.set_volume(self.window.sound_volume)
         elif key == "tutorial":
             self.window.tutorial_enabled = not self.window.tutorial_enabled
+            if self.window.tutorial_enabled:
+                self.window.reset_tutorial_tips()
         elif key == "tutorial_reset":
             self.window.reset_tutorial_tips()
         self._refresh_button_text()
@@ -1294,7 +1324,7 @@ class SettingsScreen(Screen):
 
         lines = [
             "Use these controls to make the UI fit your device.",
-            "Reset First Tutorial turns the one-cycle tips back on.",
+            "Turn Tutorial Tips on here if you want in-game guidance.",
         ]
         for index, text in enumerate(lines):
             line = self.small_font.render(text, True, (190, 198, 210))
@@ -1537,7 +1567,7 @@ class DraftScreen(Screen):
         if (
             self.window.tutorial_enabled
             and self.tutorial_toggle_rect is not None
-            and self.tutorial_toggle_rect.collidepoint(event.pos)
+            and self._point_hits_wood_icon(self.tutorial_toggle_rect, event.pos)
         ):
             self.window.tutorial_enabled = False
             self.tutorial_toggle_rect = None
@@ -1828,7 +1858,7 @@ class DraftScreen(Screen):
             surface,
             self.tutorial_toggle_rect,
             "Tips Off",
-            self.tutorial_toggle_rect.collidepoint(pygame.mouse.get_pos()),
+            self._point_hits_wood_icon(self.tutorial_toggle_rect, pygame.mouse.get_pos()),
             self.font_size(16, 12),
         )
 
@@ -2465,7 +2495,7 @@ class GameOverScreen(Screen):
     def _game_over_button_at(self, pos: tuple[int, int]) -> str | None:
         """Return the Game Over wood button at a mouse position."""
         for key, rect in self.game_over_button_rects.items():
-            if rect.collidepoint(pos):
+            if self._point_hits_wood_icon(rect, pos):
                 return key
         return None
 
