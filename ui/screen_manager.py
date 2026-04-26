@@ -1158,15 +1158,35 @@ class SettingsScreen(Screen):
         outer_margin = self.scale_x(52, 22)
         column_gap = self.scale_x(26, 14)
         row_gap = self.scale_y(4, 2)
+        back_gap = self.scale_y(10, 6)
+        bottom_margin = self.scale_y(8, 5)
         columns = 1 if self.is_compact_layout() else 2
-        available_width = self.window.WINDOW_WIDTH - 2 * outer_margin - (columns - 1) * column_gap
-        button_width = min(self.scale_x(390, 250), max(self.scale_x(230, 190), available_width // columns))
-        button_height = self._get_wood_icon_height_for_width(button_width)
-        start_y = self.scale_y(212, 156) if self.get_missing_required_art_assets() else self.scale_y(188, 138)
         option_controls = self._setting_option_controls()
         rows = (len(option_controls) + columns - 1) // columns
+        available_width = self.window.WINDOW_WIDTH - 2 * outer_margin - (columns - 1) * column_gap
+        start_y = self.scale_y(212, 156) if self.get_missing_required_art_assets() else self.scale_y(188, 138)
+        button_width_cap = min(self.scale_x(390, 250), max(1, available_width // columns))
+        desired_back_width = min(self.scale_x(320, 220), self.window.WINDOW_WIDTH - 2 * outer_margin)
+        desired_back_height = self._get_wood_icon_height_for_width(desired_back_width)
+        available_grid_height = max(
+            1,
+            self.window.WINDOW_HEIGHT - start_y - desired_back_height - back_gap - bottom_margin,
+        )
+        button_height_cap = max(1, (available_grid_height - (rows - 1) * row_gap) // rows)
+        button_width = max(1, min(button_width_cap, self._get_wood_icon_width_for_height(button_height_cap)))
+        button_height = self._get_wood_icon_height_for_width(button_width)
         grid_width = columns * button_width + (columns - 1) * column_gap
         start_x = (self.window.WINDOW_WIDTH - grid_width) // 2
+        grid_height = rows * button_height + (rows - 1) * row_gap
+
+        back_width = min(
+            self.window.WINDOW_WIDTH - 2 * outer_margin,
+            min(self.scale_x(320, 220), max(button_width, self.scale_x(180, 140))),
+        )
+        back_height = self._get_wood_icon_height_for_width(back_width)
+        back_y = self.window.WINDOW_HEIGHT - back_height - bottom_margin
+        min_grid_y = self.scale_y(150, 108) if self.get_missing_required_art_assets() else self.scale_y(126, 92)
+        grid_y = max(min_grid_y, min(start_y, back_y - back_gap - grid_height))
 
         self.setting_button_rects = {}
         for index, (key, button) in enumerate(option_controls):
@@ -1174,7 +1194,7 @@ class SettingsScreen(Screen):
             col = index % columns
             rect = pygame.Rect(
                 start_x + col * (button_width + column_gap),
-                start_y + row * (button_height + row_gap),
+                grid_y + row * (button_height + row_gap),
                 button_width,
                 button_height,
             )
@@ -1182,9 +1202,6 @@ class SettingsScreen(Screen):
             button.set_relative_position((rect.x, rect.y))
             button.set_dimensions((button_width, button_height))
 
-        back_width = min(self.scale_x(320, 220), button_width)
-        back_height = self._get_wood_icon_height_for_width(back_width)
-        back_y = start_y + rows * (button_height + row_gap) + self.scale_y(2, 1)
         back_rect = pygame.Rect((self.window.WINDOW_WIDTH - back_width) // 2, back_y, back_width, back_height)
         self.setting_button_rects["back"] = back_rect
         self.back_button.set_relative_position((back_rect.x, back_rect.y))
@@ -1398,6 +1415,9 @@ class SettingsScreen(Screen):
 class CoinFlipScreen(Screen):
     """Animated coin flip that chooses the first drafter."""
 
+    FLIP_DURATION = 2.0
+    FLIPS_PER_SECOND = 10
+
     def __init__(self, window: "GameWindow"):
         super().__init__(window)
         self.title_font = None
@@ -1429,8 +1449,16 @@ class CoinFlipScreen(Screen):
     def update(self, time_delta: float) -> None:
         """Advance the flip timer."""
         self.elapsed += time_delta * self.window.animation_speed
-        if self.elapsed >= 2.0:
+        if self.elapsed >= self.FLIP_DURATION:
+            self.elapsed = self.FLIP_DURATION
             self.finished = True
+
+    def _get_visible_coin_label(self) -> str:
+        """Return the coin face that should currently be visible."""
+        if self.finished:
+            return f"P{self.first_player + 1}"
+        flip_index = int(self.elapsed * self.FLIPS_PER_SECOND)
+        return "P1" if flip_index % 2 == 0 else "P2"
 
     def render(self, surface: pygame.Surface) -> None:
         """Render the coin flip screen."""
@@ -1441,8 +1469,7 @@ class CoinFlipScreen(Screen):
 
         center = (self.window.WINDOW_WIDTH // 2, self.window.WINDOW_HEIGHT // 2 - self.scale_y(18, 12))
         radius = self.scale(82, 54)
-        flipping = not self.finished and int(self.elapsed * 10) % 2 == 0
-        label = "P1" if (flipping or self.first_player == 0) else "P2"
+        label = self._get_visible_coin_label()
         fill = (208, 84, 84) if label == "P1" else (84, 118, 216)
         pygame.draw.circle(surface, fill, center, radius)
         pygame.draw.circle(surface, (248, 232, 166), center, radius, self.scale(5, 3))

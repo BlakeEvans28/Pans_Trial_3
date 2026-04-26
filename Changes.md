@@ -13,6 +13,14 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-04-26 - Brandt Homan
+Commit: `pending` - Polished request popups, settings layout, and coin flip animation
+Summary:
+- Enlarged the Appeasing Pan request chooser and Restructure selector, moved Restructure onto the shared stone panel style, and gave the request and role text more room so labels no longer crowd the panel borders.
+- Hid the Appeasing Pan winner banner immediately after the winning player makes the first request choice instead of leaving it up through the rest of request resolution.
+- Reworked the Settings layout so the `Back` button stays visible at any screen size by sizing the option planks from the remaining space.
+- Fixed the Coin Flip screen so the coin always alternates between `P1` and `P2` during the animation before settling on the actual starting player.
+
 ## 2026-04-22 - Brandt Homan
 Commit: `pending` - Extended title theming into gameplay controls
 Summary:

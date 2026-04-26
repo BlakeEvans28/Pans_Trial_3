@@ -1324,12 +1324,19 @@ class GameScreen(Screen):
         request_options = self._get_request_popup_options()
         cols = 1 if self.is_compact_layout() else (2 if len(request_options) > 1 else 1)
         rows = max(1, (len(request_options) + cols - 1) // cols)
-        button_width = self.scale_x(360 if cols == 2 else 420, 250 if self.is_compact_layout() else 220)
-        button_height = self.scale_y(82, 64) if self.is_compact_layout() else self.scale_y(100, 74)
+        button_width = self.scale_x(386 if cols == 2 else 452, 270 if self.is_compact_layout() else 236)
+        detail_line_height = max(self.scale_y(22, 16), self.popup_small_font.get_linesize())
+        button_height = max(
+            self.scale_y(122, 92) if self.is_compact_layout() else self.scale_y(128, 98),
+            self.scale_y(34, 26) + detail_line_height * 2,
+        )
         spacing_x = self.scale(20, 12)
         spacing_y = self.scale(18, 10)
-        panel_width = cols * button_width + (cols - 1) * spacing_x + self.scale_x(60, 36)
-        panel_height = rows * button_height + (rows - 1) * spacing_y + self.scale_y(110, 82)
+        side_padding = self.scale_x(42, 26)
+        header_padding = self.scale_y(78, 56)
+        bottom_padding = self.scale_y(30, 22)
+        panel_width = cols * button_width + (cols - 1) * spacing_x + side_padding * 2
+        panel_height = header_padding + rows * button_height + (rows - 1) * spacing_y + bottom_padding
         panel_rect = self._get_centered_panel_rect(panel_width, panel_height)
 
         rects = []
@@ -1337,8 +1344,8 @@ class GameScreen(Screen):
             row = index // cols
             col = index % cols
             rect = pygame.Rect(
-                panel_rect.x + self.scale(30, 18) + col * (button_width + spacing_x),
-                panel_rect.y + self.scale_y(66, 46) + row * (button_height + spacing_y),
+                panel_rect.x + side_padding + col * (button_width + spacing_x),
+                panel_rect.y + header_padding + row * (button_height + spacing_y),
                 min(button_width, panel_rect.width - 2 * self.scale(30, 18)),
                 button_height,
             )
@@ -1392,33 +1399,59 @@ class GameScreen(Screen):
     def _get_restructure_popup_layout(self) -> tuple[pygame.Rect, list[tuple[object, pygame.Rect]]]:
         """Return Restructure side-panel and suit button rects without covering the maze."""
         board_rect = self.renderer.get_board_rect()
-        margin = self.scale(16, 10)
-        gap = self.scale(12, 8)
+        margin = self.scale(12, 8)
+        gap = self.scale(10, 6)
         compact = self.is_compact_layout()
-        button_height = self.scale_y(50, 38)
-        spacing_y = self.scale_y(8, 6)
-        header_height = self.scale_y(84, 62)
-        panel_height = header_height + 4 * button_height + 3 * spacing_y + self.scale_y(22, 16)
+        side_panel_target_width = self.scale_x(292, 220)
 
-        if board_rect.left >= self.scale_x(220, 170):
-            panel_width = min(self.scale_x(250, 190), board_rect.left - margin - gap)
+        if board_rect.left >= self.scale_x(236, 182):
+            placement = "left"
+            panel_width = min(side_panel_target_width, board_rect.left - margin - gap)
+        elif board_rect.right + self.scale_x(236, 182) + margin <= self.window.WINDOW_WIDTH:
+            placement = "right"
+            panel_width = min(side_panel_target_width, self.window.WINDOW_WIDTH - board_rect.right - margin - gap)
+        elif compact:
+            placement = "compact"
+            panel_width = min(self.window.WINDOW_WIDTH - 2 * margin, self.scale_x(420, 330))
+        else:
+            placement = "fallback"
+            panel_width = min(side_panel_target_width, self.window.WINDOW_WIDTH - 2 * margin)
+
+        side_padding = self.scale_x(22, 14)
+        top_padding = self.scale_y(18, 12)
+        bottom_padding = self.scale_y(20, 14)
+        header_height = self.scale_y(96, 72)
+        row_gap = self.scale_y(10, 7)
+        col_gap = self.scale_x(12, 8)
+        cols = 2 if compact and panel_width >= self.scale_x(324, 272) else 1
+        rows = max(1, (len(self.game.jack_order) + cols - 1) // cols)
+        content_width = max(1, panel_width - 2 * side_padding)
+        option_width = (
+            (content_width - (cols - 1) * col_gap) // cols
+            if cols > 1
+            else content_width
+        )
+        wood_button_height = self.scale_y(48, 38)
+        detail_height = max(self.scale_y(20, 16), self.popup_small_font.get_linesize())
+        option_height = wood_button_height + self.scale_y(16, 12) + detail_height
+        panel_height = top_padding + header_height + rows * option_height + (rows - 1) * row_gap + bottom_padding
+        panel_height = min(panel_height, self.window.WINDOW_HEIGHT - 2 * margin)
+
+        if placement == "left":
             panel_rect = pygame.Rect(
                 margin,
                 max(margin, board_rect.centery - panel_height // 2),
                 panel_width,
-                min(panel_height, self.window.WINDOW_HEIGHT - 2 * margin),
+                panel_height,
             )
-        elif board_rect.right + self.scale_x(220, 170) + margin <= self.window.WINDOW_WIDTH:
-            panel_width = min(self.scale_x(250, 190), self.window.WINDOW_WIDTH - board_rect.right - margin - gap)
+        elif placement == "right":
             panel_rect = pygame.Rect(
                 board_rect.right + gap,
                 max(margin, board_rect.centery - panel_height // 2),
                 panel_width,
-                min(panel_height, self.window.WINDOW_HEIGHT - 2 * margin),
+                panel_height,
             )
-        elif compact:
-            panel_width = min(self.window.WINDOW_WIDTH - 2 * margin, self.scale_x(360, 300))
-            panel_height = self.scale_y(154, 132)
+        elif placement == "compact":
             y = board_rect.bottom + gap
             if y + panel_height > self.window.WINDOW_HEIGHT - margin:
                 y = max(margin, board_rect.top - panel_height - gap)
@@ -1429,33 +1462,40 @@ class GameScreen(Screen):
                 panel_height,
             )
         else:
-            panel_width = min(self.scale_x(250, 190), self.window.WINDOW_WIDTH - 2 * margin)
             panel_rect = pygame.Rect(
                 margin,
                 max(margin, board_rect.top),
                 panel_width,
-                min(panel_height, self.window.WINDOW_HEIGHT - 2 * margin),
+                panel_height,
             )
 
         rects = []
-        cols = 2 if compact and panel_rect.width >= self.scale_x(300, 260) else 1
-        button_width = (
-            (panel_rect.width - 2 * margin - (cols - 1) * gap) // cols
+        option_width = (
+            (panel_rect.width - 2 * side_padding - (cols - 1) * col_gap) // cols
             if cols > 1
-            else panel_rect.width - 2 * margin
+            else panel_rect.width - 2 * side_padding
         )
-        start_y = panel_rect.y + (self.scale_y(74, 54) if cols == 1 else self.scale_y(72, 54))
+        start_y = panel_rect.y + top_padding + header_height
         for index, suit in enumerate(self.game.jack_order):
             row = index // cols
             col = index % cols
             rect = pygame.Rect(
-                panel_rect.x + margin + col * (button_width + gap),
-                start_y + row * (button_height + spacing_y),
-                button_width,
-                button_height,
+                panel_rect.x + side_padding + col * (option_width + col_gap),
+                start_y + row * (option_height + row_gap),
+                option_width,
+                option_height,
             )
             rects.append((suit, rect))
         return panel_rect, rects
+
+    def _get_restructure_popup_button_rect(self, rect: pygame.Rect) -> pygame.Rect:
+        """Return the wood button area inside one Restructure choice row."""
+        return pygame.Rect(
+            rect.x + self.scale_x(4, 3),
+            rect.y + self.scale_y(2, 1),
+            rect.width - self.scale_x(8, 6),
+            min(self.scale_y(52, 40), rect.height - self.scale_y(26, 20)),
+        )
 
     def _get_plane_shift_popup_layout(self) -> tuple[pygame.Rect, list[tuple[str, pygame.Rect]]]:
         """Return Plane Shift direction popup panel and direction rects."""
@@ -1816,7 +1856,7 @@ class GameScreen(Screen):
             if not panel_rect.collidepoint(pos):
                 return True
             for suit, rect in suit_rects:
-                if self._is_wood_button_hit(rect, pos):
+                if self._is_wood_button_hit(self._get_restructure_popup_button_rect(rect), pos):
                     action = SelectRestructureSuitAction(self.game.current_player, suit)
                     self._apply_action(action)
                     return True
@@ -2219,11 +2259,7 @@ class GameScreen(Screen):
 
     def _render_appeasing_result_banner(self, surface: pygame.Surface) -> None:
         """Render a short explanation of the latest Appeasing Pan duel result."""
-        if (
-            self.game.phase != GamePhase.APPEASING
-            or self.game.current_request_winner is None
-            or len(self.game.phase_started_cards) != 2
-        ):
+        if not self._should_show_appeasing_result_banner():
             return
 
         played_cards = {player_id: card for player_id, card in self.game.phase_started_cards}
@@ -2287,11 +2323,7 @@ class GameScreen(Screen):
         if not self.notice_text or self.notice_timer <= 0:
             return
 
-        result_banner_active = (
-            self.game.phase == GamePhase.APPEASING
-            and self.game.current_request_winner is not None
-            and len(self.game.phase_started_cards) == 2
-        )
+        result_banner_active = self._should_show_appeasing_result_banner()
         y = self.scale_y(184, 136) if result_banner_active else self.scale_y(112, 82)
         rect = pygame.Rect(
             self.window.WINDOW_WIDTH // 2 - self.scale_x(300, 210),
@@ -2309,6 +2341,18 @@ class GameScreen(Screen):
             text_rect,
             self.scale(18, 13),
             2,
+        )
+
+    def _should_show_appeasing_result_banner(self) -> bool:
+        """Return True only while the winner is still choosing the first request."""
+        return (
+            self.game.phase == GamePhase.APPEASING
+            and self.game.current_request_winner is not None
+            and len(self.game.phase_started_cards) == 2
+            and not self.game.has_pending_request_resolution()
+            and len(self.game.pending_request_players) == 2
+            and self.game.pending_request_players[0] == self.game.current_request_winner
+            and self.game.current_player == self.game.current_request_winner
         )
 
     def _render_tutorial_overlay(self, surface: pygame.Surface) -> None:
@@ -2510,14 +2554,17 @@ class GameScreen(Screen):
         self._render_stone_panel(surface, panel_rect, dim_alpha=28, shadow_alpha=62)
 
         title = self.popup_title_font.render("Choose Pan's Request", True, (240, 236, 214))
-        surface.blit(title, (panel_rect.x + self.scale(28, 18), panel_rect.y + self.scale(18, 12)))
+        title_x = panel_rect.x + self.scale_x(42, 24)
+        surface.blit(title, (title_x, panel_rect.y + self.scale(18, 12)))
 
         subtitle = self.popup_small_font.render(
             f"Player {self.game.current_player + 1} chooses now.",
             True,
             (198, 198, 198),
         )
-        surface.blit(subtitle, (panel_rect.x + self.scale(30, 18), panel_rect.y + self.scale(50, 36)))
+        surface.blit(subtitle, (title_x, panel_rect.y + self.scale_y(54, 38)))
+
+        detail_line_height = max(self.scale_y(22, 16), self.popup_small_font.get_linesize())
 
         for request_type, rect in option_rects:
             copy = REQUEST_POPUP_COPY[request_type]
@@ -2535,10 +2582,10 @@ class GameScreen(Screen):
 
             detail_top = wood_rect.bottom + self.scale_y(2, 1)
             detail_rect = pygame.Rect(
-                rect.x + self.scale(16, 10),
+                rect.x + self.scale_x(24, 14),
                 detail_top,
-                rect.width - self.scale(32, 20),
-                max(self.scale_y(18, 14), rect.bottom - detail_top - self.scale_y(2, 1)),
+                rect.width - self.scale_x(48, 28),
+                max(detail_line_height * 2, rect.bottom - detail_top - self.scale_y(6, 4)),
             )
 
             self._draw_wrapped_text(
@@ -2547,7 +2594,7 @@ class GameScreen(Screen):
                 self.popup_small_font,
                 detail_color if not enabled and disabled_reason else body_color,
                 detail_rect,
-                line_height=self.scale(18, 14),
+                line_height=detail_line_height,
                 max_lines=2,
             )
 
@@ -2655,49 +2702,61 @@ class GameScreen(Screen):
         """Render the off-board Restructure color selector."""
         panel_rect, suit_rects = self._get_restructure_popup_layout()
         selected_suits = set(self.game.get_pending_restructure_suits())
-
-        shadow = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
-        pygame.draw.rect(shadow, (0, 0, 0, 110), shadow.get_rect(), border_radius=18)
-        surface.blit(shadow, panel_rect.move(self.scale(5, 3), self.scale(7, 4)).topleft)
-        pygame.draw.rect(surface, (20, 24, 34), panel_rect, border_radius=18)
-        pygame.draw.rect(surface, (128, 158, 188), panel_rect, 2, border_radius=18)
+        self._render_stone_panel(surface, panel_rect, dim_alpha=22, shadow_alpha=60)
 
         title = self.popup_title_font.render("Restructure", True, (240, 236, 214))
-        surface.blit(title, (panel_rect.x + self.scale(18, 12), panel_rect.y + self.scale(14, 10)))
+        content_x = panel_rect.x + self.scale_x(28, 18)
+        surface.blit(title, (content_x, panel_rect.y + self.scale_y(18, 12)))
+
+        subtitle_line_height = max(self.scale_y(18, 14), self.popup_small_font.get_linesize())
 
         self._draw_wrapped_text(
             surface,
             "Choose two colors to swap. The maze stays visible for planning.",
             self.popup_small_font,
-            (210, 210, 210),
+            (214, 214, 214),
             pygame.Rect(
-                panel_rect.x + self.scale(18, 12),
-                panel_rect.y + self.scale(44, 32),
-                panel_rect.width - self.scale(36, 24),
-                self.scale_y(34, 26),
+                content_x,
+                panel_rect.y + self.scale_y(54, 38),
+                panel_rect.width - self.scale_x(56, 36),
+                subtitle_line_height * 2,
             ),
-            self.scale_y(16, 12),
+            subtitle_line_height,
             2,
         )
 
         for suit, rect in suit_rects:
             role = self.game.suit_roles.get(suit)
             selected = suit in selected_suits
+            wood_rect = self._get_restructure_popup_button_rect(rect)
             self._render_game_wood_button(
                 surface,
-                rect,
+                wood_rect,
                 get_family_name(suit),
                 selected=selected,
-                preferred_font_size=self.font_size(20, 14),
+                preferred_font_size=self.font_size(22, 16),
             )
 
-            icon_x = rect.x + self.scale(18, 12)
-            draw_suit_icon(surface, suit, (icon_x, rect.centery), size=self.scale(10, 6))
+            icon_x = wood_rect.x + self.scale_x(18, 12)
+            draw_suit_icon(surface, suit, (icon_x, wood_rect.centery), size=self.scale(10, 6))
 
             role_text = role.value.title() if role else "Unknown"
-            detail = self.popup_small_font.render(role_text, True, (232, 222, 192) if selected else (194, 204, 220))
-            detail_rect = detail.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.70)))
-            surface.blit(detail, detail_rect)
+            detail_rect = pygame.Rect(
+                rect.x + self.scale_x(12, 8),
+                wood_rect.bottom + self.scale_y(4, 2),
+                rect.width - self.scale_x(24, 16),
+                max(self.scale_y(18, 14), rect.bottom - wood_rect.bottom - self.scale_y(4, 2)),
+            )
+            self._draw_wrapped_carved_text(
+                surface,
+                role_text,
+                self.popup_small_font,
+                (236, 228, 198) if selected else (218, 214, 196),
+                detail_rect,
+                detail_rect.height,
+                1,
+                align="center",
+            )
 
     def _render_plane_shift_direction_popup(self, surface: pygame.Surface) -> None:
         """Render the centered Plane Shift direction picker."""
