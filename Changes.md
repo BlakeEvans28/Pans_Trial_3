@@ -6,8 +6,8 @@ Use this file to track the most recent committed changes in reverse chronologica
 
 1. Add each new log entry directly below this instruction section.
 2. Keep the newest entry at the top and the older entrys as you go down to the bottom. 
-3. Create one entry per commit you are documenting.
-4. Include the calendar day of the commit in `YYYY-MM-DD` format.
+3. Create one entry per calendar day of related work you are documenting.
+4. Include the calendar day of that work in `YYYY-MM-DD` format.
 5. Say who made the change. Use the commit author name when possible.
 6. Summarize what changed in a short sentence or a few short bullet points.
 7. Keep the summary focused on meaningful code, content, or behavior changes.
@@ -26,6 +26,13 @@ Summary:
 - Shortened the victory screen's scrollable match-summary parchment to about `80%` of its previous height while keeping its top edge anchored in place.
 - Removed the resolved handwritten Pan request stone-fit note from `Future_Improvements.md`.
 
+## 2026-04-27 - Blake Evans
+Commits: `aea4b5f`, `66b7085` - Added scrollable victory-summary and labyrinth-art revisions
+Summary:
+- Added a mouse-wheel-scrollable match-summary viewport on the victory banner and regression coverage that keeps the wrapped text clipped inside the parchment frame.
+- Iterated on decorative board and player art by adding labyrinth-frame and player-face assets, then refining coin-face scaling/alignment while keeping the square grid as the default fallback.
+- Updated Appeasing Pan hierarchy expectations and added renderer/UI checks around the board layout, coin art, and scroll-wheel behavior.
+
 ## 2026-04-26 - Brandt Homan
 Commit: `pending` - Tuned stone popup layout and readability
 Summary:
@@ -43,6 +50,20 @@ Summary:
 - Reworked the Settings layout so the `Back` button stays visible at any screen size by sizing the option planks from the remaining space.
 - Fixed the Coin Flip screen so the coin always alternates between `P1` and `P2` during the animation before settling on the actual starting player.
 
+## 2026-04-25 - Blake Evans
+Commit: `e6ece44` - Added phase-banner art and stone gameplay popups
+Summary:
+- Added `traversing.png` and `appeasing_pan.png` and rendered them as crossfading gameplay phase banners at the top of the main game screen.
+- Switched several major gameplay popups to the shared stone-panel style and tightened request/inspect/Steal Life click handling around the wood-plank buttons.
+- Refined tutorial and HUD layout so the phase banner, legend, damage chips, and popup surfaces avoid each other more cleanly.
+
+## 2026-04-24 - Blake Evans
+Commit: `f13a7cc` - Added shared stone panels, victory art, and refreshed audio assets
+Summary:
+- Added `stone.png`, `banner.png`, and `victory.png`, plus updated intro/phase music files for the title and game-over presentation.
+- Introduced shared stone-panel rendering and text-safe content helpers and applied them across popups, tutorial panels, settings/help surfaces, and draft/gameplay info boxes.
+- Reworked the game-over screen into a parchment-and-victory-art layout with a wrapped match summary and side-by-side wood action buttons.
+
 ## 2026-04-22 - Brandt Homan
 Commit: `pending` - Extended title theming into gameplay controls
 Summary:
@@ -51,6 +72,13 @@ Summary:
 - Moved the wood treatment off individual cards and onto larger text panels like the draft value guide, trial-hand panels, and top-right suit-role legend.
 - Removed the gameplay card-rank key from the labyrinth screens.
 - Repositioned tutorial text panels so they avoid highlighted gameplay areas and added smoke checks for draft/gameplay tutorial placement.
+
+## 2026-04-22 - Blake Evans
+Commits: `6c4aa0e`, `050ccc7`, `1f90f30` - Expanded the forest/title UI theme
+Summary:
+- Added `Pan_Background.png` and pushed the forest-and-title presentation deeper across menus, gameplay panels, and supporting UI surfaces.
+- Continued the wood/stone theming pass through gameplay controls, tutorial panels, and information boxes while tightening layout and readability.
+- Reworked supporting audio/UI plumbing and added more rules/UI regression coverage alongside the day's theming updates.
 
 ## 2026-04-21 - Brandt Homan
 Commit: `pending` - Added title art, music, and UI smoke checks
@@ -115,6 +143,13 @@ Summary:
 - Added Appeasing Pan result and card-return notice banners, role labels on bottom hand cards, and a clearer Ballista targeting overlay with path lines and dimmed unreachable tiles.
 - Replaced the completed AI todo items in `Future_Improvements.md` with new improvement ideas for review and added regression coverage for automatic card-return notices.
 
+## 2026-04-21 - Blake Evans
+Commits: `e250154`, `5f34949`, `bfb7f1f`, `bc21656` - Added title/audio and card-art assets
+Summary:
+- Added `PanTitle.png`, `Pan_Icon.png`, `Pan_Intro.mp3`, and `PanPhase1.mp3` to prepare the title-screen art and music pass.
+- Added full Trap and Weapon card image sets under `assets/cards/` for the gameplay/deck visuals.
+- Added refreshed standalone `Trap.png` and `Ballista.png` board art assets and logged follow-up ideas in `Future_Improvements.md`.
+
 ## 2026-04-17 - Brandt Homan
 Commit: `pending` - Flipped the Appeasing Pan hierarchy strip order
 Summary:
@@ -136,23 +171,23 @@ Summary:
 - Updated the board, menus, draft screen, gameplay overlays, legends, and popups to scale and stay aligned with the current window dimensions.
 
 ## 2026-04-15 - Blake Evans
-Commit: `pending` - Added portrait-based player markers
-Summary:
-- Created a circular portrait asset from `Micah.jpg` for use as the in-game player icon.
-- Replaced the board's text-only `P1` and `P2` markers with circular portrait markers that show `Player 1` or `Player 2` above the icon instead of inside it.
-- Added scaling, caching, and shared-tile label spacing so the new player markers render cleanly even when both players occupy the same space.
-
-## 2026-04-14 - Blake Evans
-Commit: `pending` - Updated gameplay popups and traversal interactions
+Commits: `8dee5ca`, `44d9203` - Expanded gameplay popups and portrait player markers
 Summary:
 - Replaced the old side-button request flow with centered request, Steal Life, Restructure, and Plane Shift popups, and made the top damage totals clickable to open a damage-pile popup.
-- Removed the visible left-side movement and pickup controls, fixed toroidal edge click movement, offset the two player markers so shared tiles stay readable, and added the draft value legend plus colored draft suit markers.
-- Prevented players from placing Appeasing cards into occupied holes, limited `Ignore Us` to the winning appeaser, and added regression coverage for ballista landings, toroidal click directions, request availability, and hole placement.
+- Refined traversal/gameplay interactions by fixing toroidal edge clicks, tightening request and hole-placement rules, and adding draft/board clarity updates plus new regression coverage.
+- Added `player_portrait_micah.png` and replaced the board's text-only `P1` and `P2` markers with circular portrait-based player markers that scale cleanly on shared tiles.
+
+## 2026-04-14 - Blake Evans
+Commits: `c5b9975`, `4519dfe` - Created the Project 3 codebase and docs
+Summary:
+- Added the initial engine, UI screens, main loop, tests, balancing scripts, executable/spec files, and project documentation for Project 3.
+- Checked in the early reports, reference guides, and media artifacts that supported the initial delivery.
+- Followed up with a small cleanup in `latex_apr_12_report.txt`.
 
 ## Entry Template
 
 ## YYYY-MM-DD - Author Name (laptop owner, not codex)
-Commit: `short-hash` - Commit title
+Commit(s): `short-hash[, short-hash]` - Daily title
 Summary:
 - Short summary of the main change.
 - Short summary of another important change.
