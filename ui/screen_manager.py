@@ -2922,11 +2922,13 @@ class GameOverScreen(Screen):
         if panel_size[0] <= 0 or panel_size[1] <= 0:
             return
 
+        panel_top = start_y + max(0, (available_height - panel_size[1]) // 2)
+        panel_height = max(1, int(panel_size[1] * 0.8))
         panel_rect = pygame.Rect(
             (self.window.WINDOW_WIDTH - panel_size[0]) // 2,
-            start_y + max(0, (available_height - panel_size[1]) // 2),
+            panel_top,
             panel_size[0],
-            panel_size[1],
+            panel_height,
         )
         self.match_summary_panel_rect = panel_rect.copy()
         banner = self._get_scaled_overlay(self._banner_base, self._banner_cache, panel_rect.size)

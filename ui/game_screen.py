@@ -1319,8 +1319,8 @@ class GameScreen(Screen):
             1: pygame.Rect(x, top + gap, width, height),
         }
 
-    def _get_request_popup_layout(self) -> tuple[pygame.Rect, list[tuple[str, pygame.Rect]]]:
-        """Return request popup panel and button rects."""
+    def _get_request_popup_layout(self) -> tuple[pygame.Rect, pygame.Rect, list[tuple[str, pygame.Rect]]]:
+        """Return the request popup panel, fixed content rect, and button rects."""
         request_options = self._get_request_popup_options()
         cols = 1 if self.is_compact_layout() else (2 if len(request_options) > 1 else 1)
         rows = max(1, (len(request_options) + cols - 1) // cols)
@@ -1333,13 +1333,25 @@ class GameScreen(Screen):
         )
         spacing_x = self.scale(20, 12)
         spacing_y = self.scale(18, 10)
-        side_padding = self.scale_x(18, 12)
-        top_padding = self.scale_y(10, 8)
-        bottom_padding = self.scale_y(30, 22)
-        panel_width = cols * button_width + (cols - 1) * spacing_x + side_padding * 2
-        panel_height = top_padding + title_block_height + rows * button_height + (rows - 1) * spacing_y + bottom_padding
+        content_width = cols * button_width + (cols - 1) * spacing_x
+        content_height = title_block_height + rows * button_height + (rows - 1) * spacing_y
+        stone_side_padding = self.scale_x(52, 34)
+        base_top_padding = self.scale_y(18, 12)
+        base_bottom_padding = self.scale_y(42, 28)
+        panel_width = content_width + stone_side_padding * 2
+        base_panel_height = content_height + base_top_padding + base_bottom_padding
+        panel_height = max(1, int(round(base_panel_height * 1.2)))
+        extra_height = max(0, panel_height - base_panel_height)
+        total_vertical_padding = max(1, base_top_padding + base_bottom_padding)
+        stone_top_padding = base_top_padding + int(round(extra_height * (base_top_padding / total_vertical_padding)))
+        stone_bottom_padding = panel_height - content_height - stone_top_padding
         panel_rect = self._get_centered_panel_rect(panel_width, panel_height)
-        content_rect = self._get_request_popup_content_rect(panel_rect)
+        content_rect = pygame.Rect(
+            panel_rect.centerx - content_width // 2,
+            panel_rect.y + stone_top_padding,
+            content_width,
+            content_height,
+        )
 
         rects = []
         option_width = (
@@ -1357,16 +1369,7 @@ class GameScreen(Screen):
                 button_height,
             )
             rects.append((request_type, rect))
-        return panel_rect, rects
-
-    def _get_request_popup_content_rect(self, panel_rect: pygame.Rect) -> pygame.Rect:
-        """Return the larger inner text-and-buttons box for the request stone popup."""
-        return pygame.Rect(
-            panel_rect.x + self.scale_x(18, 12),
-            panel_rect.y + self.scale_y(10, 8),
-            panel_rect.width - self.scale_x(36, 24),
-            panel_rect.height - self.scale_y(22, 16),
-        )
+        return panel_rect, content_rect, rects
 
     def _get_request_popup_options(self) -> list[tuple[str, bool, str]]:
         """Return request popup entries with enabled state and optional disabled reason."""
@@ -1862,7 +1865,7 @@ class GameScreen(Screen):
             return True
 
         if self._is_request_popup_active():
-            panel_rect, option_rects = self._get_request_popup_layout()
+            panel_rect, _, option_rects = self._get_request_popup_layout()
             option_states = {
                 request_type: enabled
                 for request_type, enabled, _ in self._get_request_popup_options()
@@ -2517,7 +2520,7 @@ class GameScreen(Screen):
             return panel_rect, "Tutorial: inspect the enlarged card, then play it or close this view."
 
         if self._is_request_popup_active():
-            panel_rect, _ = self._get_request_popup_layout()
+            panel_rect, _, _ = self._get_request_popup_layout()
             return (
                 panel_rect,
                 "Tutorial: choose a request. The winner chooses first; the loser chooses second unless Ignore Us is picked.",
@@ -2583,8 +2586,7 @@ class GameScreen(Screen):
 
     def _render_request_popup(self, surface: pygame.Surface) -> None:
         """Render the centered request-selection popup."""
-        panel_rect, option_rects = self._get_request_popup_layout()
-        content_rect = self._get_request_popup_content_rect(panel_rect)
+        panel_rect, content_rect, option_rects = self._get_request_popup_layout()
         option_states = {
             request_type: (enabled, disabled_reason)
             for request_type, enabled, disabled_reason in self._get_request_popup_options()

@@ -13,6 +13,14 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-04-27 - Brandt Homan
+Commit: `pending` - Expanded Pan request stone spacing and shortened victory summary
+Summary:
+- Reworked the `Choose Pan's Request` popup so the stone grows around a fixed text-and-plank layout instead of stretching the content into the stone border.
+- Made the Pan request stone panel taller while keeping the words and wood planks at the same size, giving the border more breathing room above and below the content.
+- Shortened the victory screen's scrollable match-summary parchment to about `80%` of its previous height while keeping its top edge anchored in place.
+- Removed the resolved handwritten Pan request stone-fit note from `Future_Improvements.md`.
+
 ## 2026-04-26 - Brandt Homan
 Commit: `pending` - Tuned stone popup layout and readability
 Summary:
