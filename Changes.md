@@ -14,6 +14,11 @@ Use this file to track the most recent committed changes in reverse chronologica
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
 ## 2026-04-27 - Brandt Homan
+Commit: `pending` - Matched the omen-resolution subtitle to the outlined forest text
+Summary:
+- Changed `Resolving the color roles...` on the omen reveal screen to use the same outlined white text treatment as the forest-background helper copy so it stays readable against the art.
+
+## 2026-04-27 - Brandt Homan
 Commit: `pending` - Expanded Pan request stone spacing and shortened victory summary
 Summary:
 - Reworked the `Choose Pan's Request` popup so the stone grows around a fixed text-and-plank layout instead of stretching the content into the stone border.

@@ -2521,9 +2521,15 @@ class JackRevealScreen(Screen):
         title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(100, 74)))
         surface.blit(title, title_rect)
 
-        subtitle = self.body_font.render("Resolving the color roles...", True, (150, 150, 170))
-        subtitle_rect = subtitle.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(150, 112)))
-        surface.blit(subtitle, subtitle_rect)
+        self._render_outlined_text(
+            surface,
+            self.body_font,
+            "Resolving the color roles...",
+            (244, 244, 244),
+            (0, 0, 0),
+            (self.window.WINDOW_WIDTH // 2, self.scale_y(150, 112)),
+            anchor="center",
+        )
 
         compact = self.is_compact_layout()
         columns = 2 if compact else 4
