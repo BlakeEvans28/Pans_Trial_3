@@ -32,6 +32,7 @@ class BoardRenderer:
     PLAYER_MARKER_RADIUS = 17
     ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
     PLAYER_PORTRAIT_PATH = Path(__file__).resolve().parent.parent / "assets" / "player_portrait_micah.png"
+    LABYRINTH_FRAME_PATH = ASSET_ROOT / "labrynth.png"
     MEDIEVAL_SHARP_PATH = ASSET_ROOT / "MedievalSharp.ttf"
     
     def __init__(self):
@@ -49,6 +50,9 @@ class BoardRenderer:
         self._player_portrait_cache: dict[int, pygame.Surface] = {}
         self._tile_art_base = self._load_tile_art()
         self._tile_art_cache: dict[tuple[str, int], pygame.Surface] = {}
+        self._labyrinth_frame_base = self._load_labyrinth_frame()
+        self._labyrinth_frame_cache: dict[tuple[int, int], pygame.Surface] = {}
+        self._labyrinth_frame_grid_rect = self._measure_labyrinth_frame_grid_rect(self._labyrinth_frame_base)
 
     def _refresh_fonts(self) -> None:
         """Refresh fonts to match the current cell size."""
@@ -91,6 +95,69 @@ class BoardRenderer:
                 if path.exists():
                     art[f"{role}_{value}"] = pygame.image.load(str(path)).convert_alpha()
         return art
+
+    def _load_labyrinth_frame(self) -> Optional[pygame.Surface]:
+        """Load the decorative labyrinth frame overlay."""
+        if not self.LABYRINTH_FRAME_PATH.exists():
+            return None
+        return pygame.image.load(str(self.LABYRINTH_FRAME_PATH)).convert_alpha()
+
+    def _measure_labyrinth_frame_grid_rect(self, image: Optional[pygame.Surface]) -> Optional[pygame.Rect]:
+        """Measure the transparent 6x6 cutout region inside the labyrinth frame art."""
+        if image is None:
+            return None
+
+        visible = image.get_bounding_rect(min_alpha=6)
+        if visible.width <= 0 or visible.height <= 0:
+            return None
+
+        min_x = image.get_width()
+        min_y = image.get_height()
+        max_x = -1
+        max_y = -1
+        for y in range(visible.y, visible.bottom):
+            for x in range(visible.x, visible.right):
+                if image.get_at((x, y)).a == 0:
+                    min_x = min(min_x, x)
+                    min_y = min(min_y, y)
+                    max_x = max(max_x, x)
+                    max_y = max(max_y, y)
+
+        if max_x < min_x or max_y < min_y:
+            return None
+
+        return pygame.Rect(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
+
+    def _get_scaled_labyrinth_frame(self) -> tuple[Optional[pygame.Surface], Optional[pygame.Rect]]:
+        """Return the labyrinth frame scaled so its transparent grid aligns to the board rect."""
+        if self._labyrinth_frame_base is None or self._labyrinth_frame_grid_rect is None:
+            return None, None
+
+        grid_rect = self._labyrinth_frame_grid_rect
+        scale = min(self.BOARD_WIDTH / grid_rect.width, self.BOARD_HEIGHT / grid_rect.height)
+        scaled_size = (
+            max(1, int(round(self._labyrinth_frame_base.get_width() * scale))),
+            max(1, int(round(self._labyrinth_frame_base.get_height() * scale))),
+        )
+        if scaled_size not in self._labyrinth_frame_cache:
+            self._labyrinth_frame_cache[scaled_size] = pygame.transform.smoothscale(
+                self._labyrinth_frame_base,
+                scaled_size,
+            )
+
+        scaled_grid = pygame.Rect(
+            int(round(grid_rect.x * scale)),
+            int(round(grid_rect.y * scale)),
+            max(1, int(round(grid_rect.width * scale))),
+            max(1, int(round(grid_rect.height * scale))),
+        )
+        frame_rect = pygame.Rect(
+            self.BOARD_X - scaled_grid.x,
+            self.BOARD_Y - scaled_grid.y,
+            scaled_size[0],
+            scaled_size[1],
+        )
+        return self._labyrinth_frame_cache[scaled_size], frame_rect
 
     def _get_scaled_tile_art(self, key: str, size: tuple[int, int]) -> Optional[pygame.Surface]:
         """Return cached artwork scaled to one board cell."""
@@ -192,7 +259,15 @@ class BoardRenderer:
         self.update_layout(surface.get_width(), surface.get_height())
         self._render_grid(surface)
         self._render_cells(surface, board, suit_roles, phase, highlight_positions or set())
+        self._render_labyrinth_frame(surface)
         self._render_players(surface, board)
+
+    def _render_labyrinth_frame(self, surface: pygame.Surface) -> None:
+        """Render the decorative labyrinth frame above the tiles and grid lines."""
+        frame, rect = self._get_scaled_labyrinth_frame()
+        if frame is None or rect is None:
+            return
+        surface.blit(frame, rect.topleft)
     
     def _render_grid(self, surface: pygame.Surface) -> None:
         """Render grid lines."""

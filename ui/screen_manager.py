@@ -933,25 +933,53 @@ class HowToPlayScreen(Screen):
         self._render_screen_background(surface, (16, 20, 30))
 
         header_rect = pygame.Rect(
-            self.scale_x(120, 48),
+            self.scale_x(64, 26),
             self.scale_y(18, 12),
-            self.window.WINDOW_WIDTH - 2 * self.scale_x(120, 48),
-            self.scale_y(126, 94),
+            self.window.WINDOW_WIDTH - 2 * self.scale_x(64, 26),
+            self.scale_y(138, 104),
         )
         self._render_wood_panel(surface, header_rect, dim_alpha=78)
-        header_content = header_rect.inflate(-self.scale_x(42, 20), -self.scale_y(18, 10))
+        header_content = header_rect.inflate(-self.scale_x(28, 16), -self.scale_y(18, 10))
 
-        title = self.title_font.render("HOW TO PLAY", True, (238, 214, 142))
-        title_rect = title.get_rect(center=(header_content.centerx, header_content.y + self.scale_y(30, 22)))
+        title_area = pygame.Rect(
+            header_content.x,
+            header_content.y + self.scale_y(4, 2),
+            header_content.width,
+            self.scale_y(42, 30),
+        )
+        title_font = self._get_fitted_game_font(
+            "HOW TO PLAY",
+            self.font_size(60, 36),
+            title_area,
+            1,
+            self.font_size(28, 20),
+        )
+        title = title_font.render("HOW TO PLAY", True, (238, 214, 142))
+        title_rect = title.get_rect(center=title_area.center)
         surface.blit(title, title_rect)
 
-        subtitle = self.small_font.render(
-            "A quick guide to the draft, labyrinth, and Appeasing Pan.",
-            True,
-            (190, 198, 210),
+        subtitle_rect = pygame.Rect(
+            header_content.x + self.scale_x(10, 6),
+            title_area.bottom + self.scale_y(10, 6),
+            header_content.width - 2 * self.scale_x(10, 6),
+            self.scale_y(34, 24),
         )
-        subtitle_rect = subtitle.get_rect(center=(header_content.centerx, header_content.bottom - self.scale_y(18, 12)))
-        surface.blit(subtitle, subtitle_rect)
+        subtitle_font = self._get_fitted_game_font(
+            "A quick guide to the draft, labyrinth, and Appeasing Pan.",
+            self.font_size(22, 15),
+            subtitle_rect,
+            2,
+            self.font_size(14, 11),
+        )
+        self._render_outlined_text(
+            surface,
+            subtitle_font,
+            "A quick guide to the draft, labyrinth, and Appeasing Pan.",
+            (222, 224, 228),
+            (26, 18, 10),
+            subtitle_rect.center,
+            anchor="center",
+        )
 
         viewport_rect = pygame.Rect(
             self.scale_x(48, 24),
@@ -1476,6 +1504,10 @@ class CoinFlipScreen(Screen):
 
     FLIP_DURATION = 2.0
     FLIPS_PER_SECOND = 10
+    COIN_ART_PATHS = {
+        0: Screen.ASSET_ROOT / "p1.png",
+        1: Screen.ASSET_ROOT / "p2.png",
+    }
 
     def __init__(self, window: "GameWindow"):
         super().__init__(window)
@@ -1486,6 +1518,8 @@ class CoinFlipScreen(Screen):
         self.first_player = 0
         self.finished = False
         self._consumed = False
+        self._coin_art_base = self._load_coin_art()
+        self._coin_art_cache: dict[tuple[int, int], pygame.Surface] = {}
         self._refresh_fonts()
 
     def _refresh_fonts(self) -> None:
@@ -1493,6 +1527,45 @@ class CoinFlipScreen(Screen):
         self.title_font = self._get_game_font(self.font_size(64, 38))
         self.body_font = self._get_game_font(self.font_size(34, 24))
         self.small_font = self._get_game_font(self.font_size(24, 16))
+
+    def _load_coin_art(self) -> dict[int, pygame.Surface]:
+        """Load and prepare the P1/P2 flip art so both faces animate on the same footprint."""
+        art = {}
+        for player_id, path in self.COIN_ART_PATHS.items():
+            image = self._load_image(path)
+            if image is None:
+                continue
+            art[player_id] = self._prepare_coin_art(image)
+        return art
+
+    def _prepare_coin_art(self, image: pygame.Surface) -> pygame.Surface:
+        """Center an imported coin face on a square canvas and mask away any background."""
+        side = min(image.get_width(), image.get_height())
+        source_rect = pygame.Rect(
+            (image.get_width() - side) // 2,
+            (image.get_height() - side) // 2,
+            side,
+            side,
+        )
+        square = pygame.Surface((side, side), pygame.SRCALPHA)
+        square.blit(image, (0, 0), source_rect)
+
+        masked = square.copy()
+        mask = pygame.Surface((side, side), pygame.SRCALPHA)
+        radius = max(1, int(side * 0.46))
+        pygame.draw.circle(mask, (255, 255, 255, 255), (side // 2, side // 2), radius)
+        masked.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        return masked
+
+    def _get_scaled_coin_art(self, player_id: int, diameter: int) -> pygame.Surface | None:
+        """Return one prepared coin face scaled to the shared animation size."""
+        base = self._coin_art_base.get(player_id)
+        if base is None or diameter <= 0:
+            return None
+        cache_key = (player_id, diameter)
+        if cache_key not in self._coin_art_cache:
+            self._coin_art_cache[cache_key] = pygame.transform.smoothscale(base, (diameter, diameter))
+        return self._coin_art_cache[cache_key]
 
     def start_flip(self, first_player: int) -> None:
         """Start a new flip animation for the chosen first drafter."""
@@ -1519,38 +1592,169 @@ class CoinFlipScreen(Screen):
         flip_index = int(self.elapsed * self.FLIPS_PER_SECOND)
         return "P1" if flip_index % 2 == 0 else "P2"
 
+    def _get_visible_coin_player(self) -> int:
+        """Return which player's coin art should currently be visible."""
+        if self.finished:
+            return self.first_player
+        flip_index = int(self.elapsed * self.FLIPS_PER_SECOND)
+        return 0 if flip_index % 2 == 0 else 1
+
     def render(self, surface: pygame.Surface) -> None:
         """Render the coin flip screen."""
         self._render_screen_background(surface, (14, 18, 28))
-        title = self.title_font.render("COIN FLIP", True, (238, 214, 142))
-        title_rect = title.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(110, 78)))
-        surface.blit(title, title_rect)
 
-        center = (self.window.WINDOW_WIDTH // 2, self.window.WINDOW_HEIGHT // 2 - self.scale_y(18, 12))
-        radius = self.scale(82, 54)
-        label = self._get_visible_coin_label()
-        fill = (208, 84, 84) if label == "P1" else (84, 118, 216)
-        pygame.draw.circle(surface, fill, center, radius)
-        pygame.draw.circle(surface, (248, 232, 166), center, radius, self.scale(5, 3))
-        coin_text = self.title_font.render(label, True, (24, 24, 30))
-        surface.blit(coin_text, coin_text.get_rect(center=center))
+        top_panel = pygame.Rect(
+            self.scale_x(190, 48),
+            self.scale_y(28, 18),
+            self.window.WINDOW_WIDTH - 2 * self.scale_x(190, 48),
+            self.scale_y(124, 96),
+        )
+        self._render_stone_panel(surface, top_panel, dim_alpha=28, shadow_alpha=64)
+        top_content = self._get_stone_content_rect(
+            top_panel,
+            extra_x=self.scale_x(8, 4),
+            extra_top=self.scale_y(2, 1),
+            extra_bottom=self.scale_y(2, 1),
+        )
+        title_area = pygame.Rect(
+            top_content.x,
+            top_content.y,
+            top_content.width,
+            self.scale_y(40, 28),
+        )
+        title_font = self._get_fitted_game_font(
+            "COIN FLIP",
+            self.font_size(56, 34),
+            title_area,
+            1,
+            self.font_size(28, 20),
+        )
+        self._render_carved_text(
+            surface,
+            title_font,
+            "COIN FLIP",
+            (72, 64, 52),
+            title_area.center,
+            anchor="center",
+        )
+        subtitle_area = pygame.Rect(
+            top_content.x,
+            title_area.bottom + self.scale_y(8, 5),
+            top_content.width,
+            max(1, top_content.bottom - title_area.bottom - self.scale_y(8, 5)),
+        )
+        subtitle_font = self._get_fitted_game_font(
+            "Determining who drafts first.",
+            self.font_size(24, 16),
+            subtitle_area,
+            1,
+            self.font_size(14, 11),
+        )
+        self._render_carved_text(
+            surface,
+            subtitle_font,
+            "Determining who drafts first.",
+            (78, 70, 58),
+            subtitle_area.center,
+            anchor="center",
+        )
+
+        bottom_panel = pygame.Rect(
+            self.scale_x(220, 60),
+            self.window.WINDOW_HEIGHT - self.scale_y(164, 126),
+            self.window.WINDOW_WIDTH - 2 * self.scale_x(220, 60),
+            self.scale_y(116, 90),
+        )
+        self._render_wood_panel(surface, bottom_panel, dim_alpha=46)
+
+        available_height = max(1, bottom_panel.top - top_panel.bottom - self.scale_y(40, 28))
+        coin_diameter = min(
+            self.scale_x(360, 240),
+            self.window.WINDOW_WIDTH - 2 * self.scale_x(120, 70),
+            available_height,
+        )
+        center = (
+            self.window.WINDOW_WIDTH // 2,
+            top_panel.bottom + available_height // 2,
+        )
+        shadow_surface = pygame.Surface((coin_diameter + self.scale(40, 24), coin_diameter + self.scale(40, 24)), pygame.SRCALPHA)
+        shadow_center = (shadow_surface.get_width() // 2, shadow_surface.get_height() // 2 + self.scale(10, 6))
+        pygame.draw.circle(
+            shadow_surface,
+            (0, 0, 0, 90),
+            shadow_center,
+            coin_diameter // 2 + self.scale(8, 5),
+        )
+        shadow_rect = shadow_surface.get_rect(center=center)
+        surface.blit(shadow_surface, shadow_rect.topleft)
+
+        player_id = self._get_visible_coin_player()
+        coin_art = self._get_scaled_coin_art(player_id, coin_diameter)
+        if coin_art is not None:
+            surface.blit(coin_art, coin_art.get_rect(center=center))
+        else:
+            label = self._get_visible_coin_label()
+            fill = (208, 84, 84) if label == "P1" else (84, 118, 216)
+            pygame.draw.circle(surface, fill, center, coin_diameter // 2)
+            pygame.draw.circle(surface, (248, 232, 166), center, coin_diameter // 2, self.scale(5, 3))
+            coin_text = self.title_font.render(label, True, (24, 24, 30))
+            surface.blit(coin_text, coin_text.get_rect(center=center))
 
         result = (
             f"Player {self.first_player + 1} drafts first."
             if self.finished
             else "Flipping to decide who drafts first..."
         )
-        result_text = self.body_font.render(result, True, (228, 228, 228))
-        result_rect = result_text.get_rect(center=(self.window.WINDOW_WIDTH // 2, center[1] + radius + self.scale_y(60, 42)))
-        surface.blit(result_text, result_rect)
-
+        bottom_content = pygame.Rect(
+            bottom_panel.x + self.scale_x(26, 18),
+            bottom_panel.y + self.scale_y(18, 12),
+            bottom_panel.width - 2 * self.scale_x(26, 18),
+            bottom_panel.height - 2 * self.scale_y(18, 12),
+        )
+        result_rect = pygame.Rect(
+            bottom_content.x,
+            bottom_content.y,
+            bottom_content.width,
+            max(1, bottom_content.height // 2),
+        )
+        result_font = self._get_fitted_game_font(
+            result,
+            self.font_size(34, 24),
+            result_rect,
+            1,
+            self.font_size(18, 14),
+        )
         self._render_outlined_text(
             surface,
-            self.small_font,
+            result_font,
+            result,
+            (248, 238, 206),
+            (28, 18, 10),
+            result_rect.center,
+            anchor="center",
+            outline_width=self.scale(2, 1),
+        )
+
+        note_rect = pygame.Rect(
+            bottom_content.x,
+            result_rect.bottom + self.scale_y(4, 2),
+            bottom_content.width,
+            max(1, bottom_content.bottom - result_rect.bottom - self.scale_y(4, 2)),
+        )
+        note_font = self._get_fitted_game_font(
             "The draft starts automatically.",
-            (244, 244, 244),
-            (0, 0, 0),
-            (self.window.WINDOW_WIDTH // 2, result_rect.bottom + self.scale_y(32, 22)),
+            self.font_size(22, 15),
+            note_rect,
+            1,
+            self.font_size(13, 10),
+        )
+        self._render_outlined_text(
+            surface,
+            note_font,
+            "The draft starts automatically.",
+            (236, 228, 196),
+            (20, 12, 8),
+            note_rect.center,
             anchor="center",
         )
 

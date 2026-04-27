@@ -404,11 +404,11 @@ class GameState:
     def _execute_move(self, player_id: int, direction: str) -> None:
         """Execute movement and apply card effects."""
         pos = self.board.get_player_position(player_id)
-        
+
         # Calculate new position
         movements = {"up": (-1, 0), "down": (1, 0), "left": (0, -1), "right": (0, 1)}
         dr, dc = movements[direction]
-        new_pos = Position(pos.row + dr, pos.col + dc)
+        new_pos = Position((pos.row + dr) % 6, (pos.col + dc) % 6)
         
         # Move player
         self.board.place_player(player_id, new_pos)

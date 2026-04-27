@@ -46,7 +46,7 @@ class SmokeWindow:
         self.text_scale = 1.0
         self.animation_speed = 1.0
         self.sound_volume = 0.5
-        self.tutorial_enabled = True
+        self.tutorial_enabled = False
         self.audio = SmokeAudio()
         self.ui_manager = pygame_gui.UIManager((width, height))
         self.reset_calls = 0
@@ -82,7 +82,6 @@ class SmokeWindow:
 
     def reset_tutorial_tips(self) -> None:
         self.reset_calls += 1
-        self.tutorial_enabled = True
         game_screen = getattr(self, "game_screen_ref", None)
         if game_screen is not None and hasattr(game_screen, "reset_tutorial_cycle"):
             game_screen.reset_tutorial_cycle()
@@ -451,6 +450,55 @@ def test_combat_uses_chosen_weapon_suit_card_from_hand(game_setup):
     assert chosen_card in game.damage[1].cards
 
 
+def test_wraparound_move_into_weapon_holder_starts_combat(game_setup):
+    """Wrapping onto the opponent's tile should still start combat if either player has a weapon."""
+    game = game_setup
+    weapon_suit = next(suit for suit, role in game.suit_roles.items() if role == SuitRole.WEAPONS)
+    defender_weapon = Card(CardRank.SEVEN, weapon_suit)
+
+    game.hands[0].cards.clear()
+    game.hands[1].cards.clear()
+    game.add_card_to_hand(1, defender_weapon)
+    game.board.place_player(0, Position(0, 0))
+    game.board.place_player(1, Position(5, 0))
+    game.board.set_card(Position(5, 0), None)
+    game.current_player = 0
+    game.phase = GamePhase.TRAVERSING
+
+    assert game.apply_action(MoveAction(0, "up"))
+    assert game.has_pending_combat()
+    assert game.pending_combat_players == [1]
+    assert game.current_player == 1
+
+
+def test_both_players_can_resolve_wraparound_combat_in_sequence(game_setup):
+    """When both players have weapons after a wrap move, both should get a combat turn."""
+    game = game_setup
+    weapon_suit = next(suit for suit, role in game.suit_roles.items() if role == SuitRole.WEAPONS)
+    attacker_weapon = Card(CardRank.NINE, weapon_suit)
+    defender_weapon = Card(CardRank.SIX, weapon_suit)
+
+    game.hands[0].cards.clear()
+    game.hands[1].cards.clear()
+    game.add_card_to_hand(0, attacker_weapon)
+    game.add_card_to_hand(1, defender_weapon)
+    game.board.place_player(0, Position(0, 0))
+    game.board.place_player(1, Position(5, 0))
+    game.board.set_card(Position(5, 0), None)
+    game.current_player = 0
+    game.phase = GamePhase.TRAVERSING
+
+    assert game.apply_action(MoveAction(0, "up"))
+    assert game.pending_combat_players == [0, 1]
+    assert game.current_player == 0
+    assert game.apply_action(ChooseCombatCardAction(0, attacker_weapon))
+    assert game.current_player == 1
+    assert game.apply_action(ChooseCombatCardAction(1, defender_weapon))
+    assert attacker_weapon in game.damage[1].cards
+    assert defender_weapon in game.damage[0].cards
+    assert not game.has_pending_combat()
+
+
 def test_initial_deal_weapon_suit_high_card_can_be_used_in_combat(game_setup):
     """Drafted high-rank cards keep their suit and can fight if their suit is Weapons."""
     game = game_setup
@@ -789,7 +837,7 @@ def test_player_tokens_only_offset_when_sharing_a_tile():
 
 
 def test_settings_tutorial_reset_smoke():
-    """Settings reset button should re-enable first-cycle tutorial state."""
+    """Settings reset should only reset the tip cycle, not force tips back on."""
     window = SmokeWindow()
     screen = SettingsScreen(window)
     window.tutorial_enabled = False
@@ -809,6 +857,31 @@ def test_settings_tutorial_reset_smoke():
     )
 
     assert screen.handle_events(event) is True
+    assert window.tutorial_enabled is False
+    assert window.reset_calls == 1
+    assert gameplay_stub.reset_called is True
+
+
+def test_settings_tutorial_toggle_turns_tips_on_and_resets_cycle():
+    """Turning tutorial tips on from Settings should opt in and reset the cycle."""
+    window = SmokeWindow()
+    screen = SettingsScreen(window)
+
+    class GameplayStub:
+        reset_called = False
+
+        def reset_tutorial_cycle(self):
+            self.reset_called = True
+
+    gameplay_stub = GameplayStub()
+    window.game_screen_ref = gameplay_stub
+
+    event = pygame.event.Event(
+        pygame_gui.UI_BUTTON_PRESSED,
+        {"ui_element": screen.tutorial_button},
+    )
+
+    assert screen.handle_events(event) is True
     assert window.tutorial_enabled is True
     assert window.reset_calls == 1
     assert gameplay_stub.reset_called is True
@@ -817,6 +890,7 @@ def test_settings_tutorial_reset_smoke():
 def test_draft_tutorial_panel_avoids_card_grid_smoke():
     """Draft tutorial text should not cover the highlighted draft-card grid."""
     window = SmokeWindow(width=1200, height=900)
+    window.tutorial_enabled = True
     screen = DraftScreen(window)
     draft_cards = [
         Card(rank, suit)
@@ -858,6 +932,7 @@ def test_compact_hand_card_inspect_smoke(game_setup):
 def test_game_tutorial_panel_avoids_board_smoke(game_setup):
     """Gameplay tutorial text should not cover the highlighted board area."""
     window = SmokeWindow(width=900, height=700)
+    window.tutorial_enabled = True
     game = game_setup
     game.phase = GamePhase.TRAVERSING
     game.current_player = 0
