@@ -1538,21 +1538,52 @@ class CoinFlipScreen(Screen):
             art[player_id] = self._prepare_coin_art(image)
         return art
 
-    def _prepare_coin_art(self, image: pygame.Surface) -> pygame.Surface:
-        """Center an imported coin face on a square canvas and mask away any background."""
-        side = min(image.get_width(), image.get_height())
-        source_rect = pygame.Rect(
-            (image.get_width() - side) // 2,
-            (image.get_height() - side) // 2,
-            side,
-            side,
+    def _get_coin_content_bounds(self, image: pygame.Surface) -> pygame.Rect:
+        """Measure the visible coin face so both P1/P2 graphics scale from the same true bounds."""
+        alpha_bounds = image.get_bounding_rect(min_alpha=12)
+        if alpha_bounds.width > 0 and alpha_bounds.height > 0 and (
+            alpha_bounds.width < image.get_width() or alpha_bounds.height < image.get_height()
+        ):
+            opaque_mask = pygame.mask.from_surface(image, 12)
+            component = opaque_mask.connected_component((image.get_width() // 2, image.get_height() // 2))
+            rects = component.get_bounding_rects()
+            if rects:
+                return rects[0]
+            return alpha_bounds
+
+        corners = [
+            image.get_at((0, 0)),
+            image.get_at((image.get_width() - 1, 0)),
+            image.get_at((0, image.get_height() - 1)),
+            image.get_at((image.get_width() - 1, image.get_height() - 1)),
+        ]
+        background = tuple(sum(color[index] for color in corners) // 4 for index in range(3))
+        background_mask = pygame.mask.from_threshold(
+            image,
+            (*background, 255),
+            (16, 16, 16, 255),
         )
+        foreground_mask = background_mask.copy()
+        foreground_mask.invert()
+        component = foreground_mask.connected_component((image.get_width() // 2, image.get_height() // 2))
+        rects = component.get_bounding_rects()
+        if rects:
+            return rects[0]
+        return pygame.Rect(0, 0, image.get_width(), image.get_height())
+
+    def _prepare_coin_art(self, image: pygame.Surface) -> pygame.Surface:
+        """Normalize one coin face so both players render centered at the same scale."""
+        bounds = self._get_coin_content_bounds(image)
+        cropped = image.subsurface(bounds).copy()
+        pad = max(4, int(round(max(bounds.width, bounds.height) * 0.02)))
+        side = max(cropped.get_width(), cropped.get_height()) + pad * 2
         square = pygame.Surface((side, side), pygame.SRCALPHA)
-        square.blit(image, (0, 0), source_rect)
+        crop_rect = cropped.get_rect(center=(side // 2, side // 2))
+        square.blit(cropped, crop_rect)
 
         masked = square.copy()
         mask = pygame.Surface((side, side), pygame.SRCALPHA)
-        radius = max(1, int(side * 0.46))
+        radius = max(1, side // 2 - pad)
         pygame.draw.circle(mask, (255, 255, 255, 255), (side // 2, side // 2), radius)
         masked.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
         return masked
@@ -2665,6 +2696,10 @@ class GameOverScreen(Screen):
         self.menu_button = None
         self.game_over_button_rects: dict[str, pygame.Rect] = {}
         self.hovered_button = None
+        self.match_summary_panel_rect: pygame.Rect | None = None
+        self.match_summary_scroll_rect: pygame.Rect | None = None
+        self.match_summary_scroll_offset = 0
+        self.match_summary_scroll_max = 0
         self._refresh_fonts()
         self._create_ui()
         self.on_resize()
@@ -2769,6 +2804,8 @@ class GameOverScreen(Screen):
         self.winner_text = f"Player {winner + 1} Wins!"
         self.damage_text = f"Final damage - P1: {p1_damage} | P2: {p2_damage}"
         self.match_summary = match_summary or {}
+        self.match_summary_scroll_offset = 0
+        self.match_summary_scroll_max = 0
 
     def _hide_all_elements(self):
         """Hide all UI elements initially."""
@@ -2779,6 +2816,10 @@ class GameOverScreen(Screen):
         """Handle game-over screen events."""
         if event.type == pygame.MOUSEMOTION:
             self.hovered_button = self._game_over_button_at(event.pos)
+            return False
+        if event.type == pygame.MOUSEWHEEL:
+            if self._scroll_match_summary(event.y, pygame.mouse.get_pos()):
+                return True
             return False
         if event.type == pygame.MOUSEBUTTONDOWN:
             key = self._game_over_button_at(event.pos)
@@ -2800,6 +2841,23 @@ class GameOverScreen(Screen):
             if self._point_hits_wood_icon(rect, pos):
                 return key
         return None
+
+    def _scroll_match_summary(self, wheel_y: int, mouse_pos: tuple[int, int]) -> bool:
+        """Scroll the match summary viewport when the pointer is over the parchment text frame."""
+        if self.match_summary_scroll_rect is None or self.match_summary_scroll_max <= 0:
+            return False
+        if not self.match_summary_scroll_rect.collidepoint(mouse_pos):
+            return False
+
+        step = self.scale_y(34, 22)
+        new_offset = max(
+            0,
+            min(self.match_summary_scroll_max, self.match_summary_scroll_offset - wheel_y * step),
+        )
+        if new_offset == self.match_summary_scroll_offset:
+            return False
+        self.match_summary_scroll_offset = new_offset
+        return True
 
     def update(self, time_delta: float) -> None:
         """Update."""
@@ -2849,6 +2907,9 @@ class GameOverScreen(Screen):
 
     def _render_match_summary(self, surface: pygame.Surface, start_y: int, max_bottom: int) -> None:
         """Render winner, damage, and summary text on the parchment banner."""
+        self.match_summary_panel_rect = None
+        self.match_summary_scroll_rect = None
+        self.match_summary_scroll_max = 0
         available_height = max_bottom - start_y
         if available_height < self.scale_y(180, 120):
             return
@@ -2867,6 +2928,7 @@ class GameOverScreen(Screen):
             panel_size[0],
             panel_size[1],
         )
+        self.match_summary_panel_rect = panel_rect.copy()
         banner = self._get_scaled_overlay(self._banner_base, self._banner_cache, panel_rect.size)
         if banner is not None:
             surface.blit(banner, panel_rect.topleft)
@@ -2939,72 +3001,83 @@ class GameOverScreen(Screen):
         summary_title_surface_rect = summary_title.get_rect(center=summary_title_rect.center)
         surface.blit(summary_title, summary_title_surface_rect)
 
-        text_rect = pygame.Rect(
-            content_rect.x,
-            summary_title_rect.bottom + self.scale_y(8, 4),
-            content_rect.width,
-            max(1, content_rect.bottom - (summary_title_rect.bottom + self.scale_y(8, 4))),
+        text_frame_rect = pygame.Rect(
+            content_rect.x + self.scale_x(6, 4),
+            summary_title_rect.bottom + self.scale_y(10, 6),
+            max(1, content_rect.width - 2 * self.scale_x(6, 4)),
+            max(
+                1,
+                content_rect.bottom
+                - self.scale_y(28, 20)
+                - (summary_title_rect.bottom + self.scale_y(10, 6)),
+            ),
         )
-        self._draw_wrapped_banner_summary(surface, lines, text_rect, max_lines=9)
+        frame_fill = pygame.Surface(text_frame_rect.size, pygame.SRCALPHA)
+        frame_fill.fill((255, 250, 240, 42))
+        surface.blit(frame_fill, text_frame_rect.topleft)
+        pygame.draw.rect(surface, (138, 112, 74), text_frame_rect, 1, border_radius=self.scale(6, 4))
+        self.match_summary_scroll_rect = text_frame_rect.copy()
+        self._draw_wrapped_banner_summary(surface, lines, text_frame_rect)
 
     def _draw_wrapped_banner_summary(
         self,
         surface: pygame.Surface,
         lines: list[str],
         rect: pygame.Rect,
-        max_lines: int,
     ) -> None:
-        """Draw a wrapped summary list inside the parchment banner."""
-        y = rect.y
-        font = self._get_fitted_game_font(
-            " ".join(lines) if lines else "None",
-            self.font_size(21, 15),
-            rect,
-            max_lines,
-            self.font_size(14, 11),
-        )
+        """Draw a scrollable wrapped summary list inside the parchment text frame."""
+        font = self._get_game_font(self.font_size(21, 15))
         line_height = max(self.scale_y(20, 14), font.get_linesize())
-        rendered = 0
-        old_clip = surface.get_clip()
-        surface.set_clip(rect)
-        for line in lines:
+        wrapped_lines: list[str] = []
+        for line in lines or ["None"]:
             words = line.split()
-            current = ""
-            for word in words:
-                candidate = word if not current else f"{current} {word}"
+            if not words:
+                wrapped_lines.append("")
+                continue
+            current = words[0]
+            for word in words[1:]:
+                candidate = f"{current} {word}"
                 if font.size(candidate)[0] <= rect.width:
                     current = candidate
                 else:
-                    if current and rendered < max_lines:
-                        line_surface = font.render(current, True, (78, 58, 34))
-                        surface.blit(line_surface, (rect.x, y))
-                        y += line_height
-                        rendered += 1
+                    wrapped_lines.append(current)
                     current = word
-            if current and rendered < max_lines:
-                line_surface = font.render(current, True, (78, 58, 34))
-                surface.blit(line_surface, (rect.x, y))
-                y += line_height
-                rendered += 1
-            if rendered >= max_lines:
-                break
+            wrapped_lines.append(current)
+
+        total_height = len(wrapped_lines) * line_height
+        self.match_summary_scroll_max = max(0, total_height - rect.height)
+        self.match_summary_scroll_offset = max(0, min(self.match_summary_scroll_offset, self.match_summary_scroll_max))
+
+        y = rect.y - self.match_summary_scroll_offset
+        old_clip = surface.get_clip()
+        surface.set_clip(rect)
+        for line in wrapped_lines:
+            line_surface = font.render(line, True, (78, 58, 34))
+            surface.blit(line_surface, (rect.x, y))
+            y += line_height
         surface.set_clip(old_clip)
 
     def on_enter(self) -> None:
         """Activate game-over screen."""
         self.play_again_button.hide()
         self.menu_button.hide()
+        self.match_summary_scroll_offset = 0
 
     def on_exit(self) -> None:
         """Deactivate game-over screen."""
         self.play_again_button.hide()
         self.menu_button.hide()
         self.hovered_button = None
+        self.match_summary_panel_rect = None
+        self.match_summary_scroll_rect = None
+        self.match_summary_scroll_offset = 0
+        self.match_summary_scroll_max = 0
 
     def on_resize(self) -> None:
         """Refresh fonts and buttons after a resize."""
         self._refresh_fonts()
         self._layout_ui()
+        self.match_summary_scroll_offset = 0
 
 
 class ScreenManager:

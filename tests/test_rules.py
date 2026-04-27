@@ -20,7 +20,7 @@ from deck_utils import setup_game_deck, create_6x6_labyrinth, draft_hands, get_j
 from ui.input_handler import InputHandler
 from ui.board_renderer import BoardRenderer
 from ui.game_screen import GameScreen
-from ui.screen_manager import DraftScreen, SettingsScreen
+from ui.screen_manager import CoinFlipScreen, DraftScreen, GameOverScreen, SettingsScreen
 
 
 class SmokeAudio:
@@ -599,30 +599,30 @@ def test_ignore_us_skips_second_request_only(game_setup):
 
 
 def test_appeasing_stronger_color_beats_higher_rank(game_setup):
-    """A stronger trump color should beat a weaker color regardless of rank."""
+    """A lower card in a stronger trump suit should beat a higher card in a weaker suit."""
     game = game_setup
     game.setup_suit_roles([CardSuit.HEARTS, CardSuit.DIAMONDS, CardSuit.CLUBS, CardSuit.SPADES])
     game.phase_started_cards = [
-        (0, Card(CardRank.NINE, CardSuit.HEARTS)),
-        (1, Card(CardRank.EIGHT, CardSuit.SPADES)),
+        (0, Card(CardRank.TWO, CardSuit.HEARTS)),
+        (1, Card(CardRank.KING, CardSuit.SPADES)),
     ]
     game.current_player = 1
 
     game._resolve_appeasing_phase()
 
-    assert game.current_request_winner == 1
+    assert game.current_request_winner == 0
 
 
-def test_appeasing_hierarchy_runs_weapons_to_walls(game_setup):
-    """Phase 2 trump order should be Weapons > Ballista > Traps > Walls."""
+def test_appeasing_hierarchy_runs_walls_to_weapons(game_setup):
+    """Phase 2 trump order should be Walls > Traps > Ballista > Weapons."""
     game = game_setup
     game.setup_suit_roles([CardSuit.HEARTS, CardSuit.DIAMONDS, CardSuit.CLUBS, CardSuit.SPADES])
 
     assert game.get_appeasing_hierarchy() == [
-        CardSuit.SPADES,
-        CardSuit.CLUBS,
-        CardSuit.DIAMONDS,
         CardSuit.HEARTS,
+        CardSuit.DIAMONDS,
+        CardSuit.CLUBS,
+        CardSuit.SPADES,
     ]
 
 
@@ -836,6 +836,44 @@ def test_player_tokens_only_offset_when_sharing_a_tile():
     assert BoardRenderer.get_player_x_offset(1, sharing_tile=True) > 0
 
 
+def test_board_renderer_uses_square_grid_without_labyrinth_overlay():
+    """The board renderer should stay on the classic square grid when the labyrinth frame is disabled."""
+    renderer = BoardRenderer()
+    assert renderer._labyrinth_frame_base is None
+    assert renderer._labyrinth_frame_grid_rect is None
+
+    renderer.update_layout(1200, 900)
+    top_left = renderer.get_cell_rect(Position(0, 0))
+    right_neighbor = renderer.get_cell_rect(Position(0, 1))
+    below_neighbor = renderer.get_cell_rect(Position(1, 0))
+
+    assert top_left.width == renderer.CELL_SIZE - 4
+    assert top_left.height == renderer.CELL_SIZE - 4
+    assert right_neighbor.x - top_left.x == renderer.CELL_SIZE
+    assert below_neighbor.y - top_left.y == renderer.CELL_SIZE
+
+
+def test_coin_flip_faces_share_one_centered_footprint():
+    """P1 and P2 coin faces should scale to the same centered on-screen footprint."""
+    window = SmokeWindow(width=1200, height=900)
+    screen = CoinFlipScreen(window)
+
+    p1_face = screen._get_scaled_coin_art(0, 240)
+    p2_face = screen._get_scaled_coin_art(1, 240)
+
+    assert p1_face is not None
+    assert p2_face is not None
+    assert p1_face.get_size() == (240, 240)
+    assert p2_face.get_size() == (240, 240)
+
+    p1_bounds = p1_face.get_bounding_rect(min_alpha=12)
+    p2_bounds = p2_face.get_bounding_rect(min_alpha=12)
+    assert abs(p1_bounds.centerx - p2_bounds.centerx) <= 1
+    assert abs(p1_bounds.centery - p2_bounds.centery) <= 1
+    assert abs(p1_bounds.width - p2_bounds.width) <= 2
+    assert abs(p1_bounds.height - p2_bounds.height) <= 2
+
+
 def test_settings_tutorial_reset_smoke():
     """Settings reset should only reset the tip cycle, not force tips back on."""
     window = SmokeWindow()
@@ -943,6 +981,45 @@ def test_game_tutorial_panel_avoids_board_smoke(game_setup):
 
     assert screen.tutorial_panel_rect is not None
     assert not screen.tutorial_panel_rect.colliderect(screen.renderer.get_board_rect())
+
+
+def test_game_over_summary_scrolls_inside_parchment_frame():
+    """Long match summaries should stay clipped inside the scroll body and respond to wheel scrolling."""
+    window = SmokeWindow(width=1200, height=900)
+    screen = GameOverScreen(window)
+    long_line = (
+        "P1 wandered through the labyrinth during Appeasing Pan and triggered a very long "
+        "summary entry that should wrap across several lines inside the parchment viewport."
+    )
+    screen.set_result(
+        1,
+        29,
+        22,
+        {
+            "damage_cards": {
+                0: [Card(CardRank.QUEEN, CardSuit.HEARTS)] * 6,
+                1: [Card(CardRank.KING, CardSuit.SPADES)] * 6,
+            },
+            "appeasing": [long_line, long_line],
+            "requests": [long_line, long_line],
+            "events": [long_line, long_line, long_line],
+        },
+    )
+
+    surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
+    screen.render(surface)
+
+    assert screen.match_summary_panel_rect is not None
+    assert screen.match_summary_scroll_rect is not None
+    assert screen.match_summary_scroll_rect.bottom < screen.match_summary_panel_rect.bottom
+    assert screen.match_summary_scroll_max > 0
+
+    old_offset = screen.match_summary_scroll_offset
+    assert screen._scroll_match_summary(-1, screen.match_summary_scroll_rect.center)
+    assert screen.match_summary_scroll_offset > old_offset
+
+    screen.render(surface)
+    assert screen.match_summary_scroll_offset > 0
 
 
 def test_plane_shift_confirmation_preview_smoke(game_setup):

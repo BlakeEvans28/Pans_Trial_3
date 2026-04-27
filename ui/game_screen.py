@@ -3452,7 +3452,7 @@ class GameScreen(Screen):
     def _render_color_hierarchy_strip(self, surface: pygame.Surface) -> None:
         """Show the user-facing Phase 2 color strip across the top."""
         # Keep the duel-resolution helper untouched and flip only the visual strip order.
-        hierarchy = list(reversed(self.game.get_appeasing_hierarchy()))
+        hierarchy = self.game.get_appeasing_hierarchy()
         if not hierarchy:
             return
 

@@ -50,9 +50,12 @@ class BoardRenderer:
         self._player_portrait_cache: dict[int, pygame.Surface] = {}
         self._tile_art_base = self._load_tile_art()
         self._tile_art_cache: dict[tuple[str, int], pygame.Surface] = {}
-        self._labyrinth_frame_base = self._load_labyrinth_frame()
+        self._labyrinth_frame_base = None
         self._labyrinth_frame_cache: dict[tuple[int, int], pygame.Surface] = {}
-        self._labyrinth_frame_grid_rect = self._measure_labyrinth_frame_grid_rect(self._labyrinth_frame_base)
+        self._labyrinth_frame_cell_rects_base: dict[tuple[int, int], pygame.Rect] = {}
+        self._labyrinth_frame_grid_rect = None
+        self._labyrinth_frame_rect: Optional[pygame.Rect] = None
+        self._scaled_labyrinth_cell_rects: dict[tuple[int, int], pygame.Rect] = {}
 
     def _refresh_fonts(self) -> None:
         """Refresh fonts to match the current cell size."""
@@ -102,42 +105,97 @@ class BoardRenderer:
             return None
         return pygame.image.load(str(self.LABYRINTH_FRAME_PATH)).convert_alpha()
 
-    def _measure_labyrinth_frame_grid_rect(self, image: Optional[pygame.Surface]) -> Optional[pygame.Rect]:
-        """Measure the transparent 6x6 cutout region inside the labyrinth frame art."""
+    def _measure_labyrinth_frame_cell_rects(self, image: Optional[pygame.Surface]) -> dict[tuple[int, int], pygame.Rect]:
+        """Detect the 36 transparent window cutouts inside the labyrinth frame art."""
         if image is None:
+            return {}
+
+        opaque_mask = pygame.mask.from_surface(image, 6)
+        transparent_mask = opaque_mask.copy()
+        transparent_mask.invert()
+        min_component_area = max(3000, int(image.get_width() * image.get_height() * 0.003))
+        candidate_rects: list[pygame.Rect] = []
+
+        for component in transparent_mask.connected_components():
+            rects = component.get_bounding_rects()
+            if not rects:
+                continue
+            rect = rects[0].copy()
+            for extra_rect in rects[1:]:
+                rect.union_ip(extra_rect)
+            if (
+                rect.left <= 0
+                or rect.top <= 0
+                or rect.right >= image.get_width()
+                or rect.bottom >= image.get_height()
+            ):
+                continue
+            if component.count() < min_component_area:
+                continue
+            candidate_rects.append(rect)
+
+        if len(candidate_rects) != self.GRID_WIDTH * self.GRID_HEIGHT:
+            return {}
+
+        rows: list[list[pygame.Rect]] = []
+        sorted_rects = sorted(candidate_rects, key=lambda rect: (rect.centery, rect.centerx))
+        for rect in sorted_rects:
+            if not rows:
+                rows.append([rect])
+                continue
+            previous_row = rows[-1]
+            row_center = sum(existing.centery for existing in previous_row) / len(previous_row)
+            tolerance = max(rect.height, previous_row[0].height) // 2
+            if abs(rect.centery - row_center) <= tolerance:
+                previous_row.append(rect)
+            else:
+                rows.append([rect])
+
+        if len(rows) != self.GRID_HEIGHT or any(len(row) != self.GRID_WIDTH for row in rows):
+            return {}
+
+        cell_rects: dict[tuple[int, int], pygame.Rect] = {}
+        for row_index, row in enumerate(rows):
+            row.sort(key=lambda rect: rect.centerx)
+            for col_index, rect in enumerate(row):
+                cell_rects[(row_index, col_index)] = rect.copy()
+        return cell_rects
+
+    def _get_labyrinth_grid_rect(
+        self,
+        cell_rects: dict[tuple[int, int], pygame.Rect],
+    ) -> Optional[pygame.Rect]:
+        """Return the outer bounds of all detected transparent cell windows."""
+        if not cell_rects:
             return None
+        rects = list(cell_rects.values())
+        left = min(rect.left for rect in rects)
+        top = min(rect.top for rect in rects)
+        right = max(rect.right for rect in rects)
+        bottom = max(rect.bottom for rect in rects)
+        return pygame.Rect(left, top, right - left, bottom - top)
 
-        visible = image.get_bounding_rect(min_alpha=6)
-        if visible.width <= 0 or visible.height <= 0:
-            return None
+    def _use_labyrinth_frame_layout(self) -> bool:
+        """Return True when the detected labyrinth windows should drive board layout."""
+        return (
+            self._labyrinth_frame_base is not None
+            and self._labyrinth_frame_grid_rect is not None
+            and bool(self._labyrinth_frame_cell_rects_base)
+        )
 
-        min_x = image.get_width()
-        min_y = image.get_height()
-        max_x = -1
-        max_y = -1
-        for y in range(visible.y, visible.bottom):
-            for x in range(visible.x, visible.right):
-                if image.get_at((x, y)).a == 0:
-                    min_x = min(min_x, x)
-                    min_y = min(min_y, y)
-                    max_x = max(max_x, x)
-                    max_y = max(max_y, y)
-
-        if max_x < min_x or max_y < min_y:
-            return None
-
-        return pygame.Rect(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
-
-    def _get_scaled_labyrinth_frame(self) -> tuple[Optional[pygame.Surface], Optional[pygame.Rect]]:
-        """Return the labyrinth frame scaled so its transparent grid aligns to the board rect."""
-        if self._labyrinth_frame_base is None or self._labyrinth_frame_grid_rect is None:
-            return None, None
+    def _update_labyrinth_frame_layout(self) -> None:
+        """Scale the labyrinth frame and its 36 detected cell windows to the current board box."""
+        self._labyrinth_frame_rect = None
+        self._scaled_labyrinth_cell_rects = {}
+        if not self._use_labyrinth_frame_layout():
+            return
 
         grid_rect = self._labyrinth_frame_grid_rect
-        scale = min(self.BOARD_WIDTH / grid_rect.width, self.BOARD_HEIGHT / grid_rect.height)
+        scale_x = self.BOARD_WIDTH / grid_rect.width
+        scale_y = self.BOARD_HEIGHT / grid_rect.height
         scaled_size = (
-            max(1, int(round(self._labyrinth_frame_base.get_width() * scale))),
-            max(1, int(round(self._labyrinth_frame_base.get_height() * scale))),
+            max(1, int(round(self._labyrinth_frame_base.get_width() * scale_x))),
+            max(1, int(round(self._labyrinth_frame_base.get_height() * scale_y))),
         )
         if scaled_size not in self._labyrinth_frame_cache:
             self._labyrinth_frame_cache[scaled_size] = pygame.transform.smoothscale(
@@ -145,19 +203,19 @@ class BoardRenderer:
                 scaled_size,
             )
 
-        scaled_grid = pygame.Rect(
-            int(round(grid_rect.x * scale)),
-            int(round(grid_rect.y * scale)),
-            max(1, int(round(grid_rect.width * scale))),
-            max(1, int(round(grid_rect.height * scale))),
-        )
-        frame_rect = pygame.Rect(
-            self.BOARD_X - scaled_grid.x,
-            self.BOARD_Y - scaled_grid.y,
+        self._labyrinth_frame_rect = pygame.Rect(
+            self.BOARD_X - int(round(grid_rect.x * scale_x)),
+            self.BOARD_Y - int(round(grid_rect.y * scale_y)),
             scaled_size[0],
             scaled_size[1],
         )
-        return self._labyrinth_frame_cache[scaled_size], frame_rect
+        for key, base_rect in self._labyrinth_frame_cell_rects_base.items():
+            self._scaled_labyrinth_cell_rects[key] = pygame.Rect(
+                self._labyrinth_frame_rect.x + int(round(base_rect.x * scale_x)),
+                self._labyrinth_frame_rect.y + int(round(base_rect.y * scale_y)),
+                max(1, int(round(base_rect.width * scale_x))),
+                max(1, int(round(base_rect.height * scale_y))),
+            )
 
     def _get_scaled_tile_art(self, key: str, size: tuple[int, int]) -> Optional[pygame.Surface]:
         """Return cached artwork scaled to one board cell."""
@@ -242,6 +300,8 @@ class BoardRenderer:
         self.BOARD_HEIGHT = self.CELL_SIZE * self.GRID_HEIGHT
         self.BOARD_X = (surface_width - self.BOARD_WIDTH) // 2
         self.BOARD_Y = max(top_margin, (surface_height - bottom_margin - self.BOARD_HEIGHT) // 2)
+        self._labyrinth_frame_rect = None
+        self._scaled_labyrinth_cell_rects = {}
 
     def get_board_rect(self) -> pygame.Rect:
         """Return the board rect for the most recent layout."""
@@ -259,15 +319,16 @@ class BoardRenderer:
         self.update_layout(surface.get_width(), surface.get_height())
         self._render_grid(surface)
         self._render_cells(surface, board, suit_roles, phase, highlight_positions or set())
-        self._render_labyrinth_frame(surface)
         self._render_players(surface, board)
 
     def _render_labyrinth_frame(self, surface: pygame.Surface) -> None:
         """Render the decorative labyrinth frame above the tiles and grid lines."""
-        frame, rect = self._get_scaled_labyrinth_frame()
-        if frame is None or rect is None:
+        if self._labyrinth_frame_rect is None:
             return
-        surface.blit(frame, rect.topleft)
+        frame = self._labyrinth_frame_cache.get(self._labyrinth_frame_rect.size)
+        if frame is None:
+            return
+        surface.blit(frame, self._labyrinth_frame_rect.topleft)
     
     def _render_grid(self, surface: pygame.Surface) -> None:
         """Render grid lines."""
@@ -304,25 +365,27 @@ class BoardRenderer:
             for col in range(self.GRID_WIDTH):
                 pos = Position(row, col)
                 cell_content = board.get_cell(pos)
-                
-                x = self.BOARD_X + col * self.CELL_SIZE + 2
-                y = self.BOARD_Y + row * self.CELL_SIZE + 2
-                w = self.CELL_SIZE - 4
-                h = self.CELL_SIZE - 4
-                
+                rect = self.get_cell_rect(pos)
+
                 # Draw cell background based on card type
                 if cell_content.card is None:
-                    color = self.HOLE_COLOR
-                    pygame.draw.rect(surface, color, (x, y, w, h))
+                    pygame.draw.rect(surface, self.HOLE_COLOR, rect)
                 else:
                     card = cell_content.card
                     suit_role = suit_roles.get(card.suit)
-                    self.render_card_tile(surface, card, suit_role, pygame.Rect(x, y, w, h), phase)
+                    self.render_card_tile(surface, card, suit_role, rect, phase)
 
                 if pos in highlight_positions:
+                    inset_x = max(4, rect.width // 14)
+                    inset_y = max(4, rect.height // 14)
                     self.draw_value_safe_outline(
                         surface,
-                        pygame.Rect(x + 6, y + 6, w - 12, h - 12),
+                        pygame.Rect(
+                            rect.x + inset_x,
+                            rect.y + inset_y,
+                            max(1, rect.width - 2 * inset_x),
+                            max(1, rect.height - 2 * inset_y),
+                        ),
                         (245, 220, 120),
                         3,
                     )
@@ -335,7 +398,7 @@ class BoardRenderer:
         width: int = 3,
     ) -> None:
         """Draw a target outline while leaving top-left card values readable."""
-        label_gap = max(24, int(self.CELL_SIZE * 0.38))
+        label_gap = max(24, int(rect.width * 0.38))
         top_start_x = min(rect.right, rect.left + label_gap)
         left_start_y = min(rect.bottom, rect.top + label_gap)
 
@@ -352,6 +415,7 @@ class BoardRenderer:
         rect: pygame.Rect,
         phase=None,
         dimmed: bool = False,
+        draw_grid_border: bool = True,
     ) -> None:
         """Render a card exactly like a labyrinth tile, reusable for hands and dragging."""
         if suit_role is not None and not isinstance(suit_role, str):
@@ -359,21 +423,31 @@ class BoardRenderer:
 
         color = get_family_color(card.suit) if suit_role in ["walls", "traps", "ballista", "weapons"] else self.CELL_COLOR
         pygame.draw.rect(surface, color, rect)
-        pygame.draw.rect(surface, self.GRID_COLOR, rect, 2)
-        self._render_card_art(surface, card, suit_role, rect, phase)
+        if draw_grid_border:
+            pygame.draw.rect(surface, self.GRID_COLOR, rect, 2)
+        self._render_card_art(surface, card, suit_role, rect, phase, draw_grid_border)
 
         if dimmed:
             veil = pygame.Surface(rect.size, pygame.SRCALPHA)
             veil.fill((6, 8, 12, 150))
             surface.blit(veil, rect.topleft)
 
-    def _render_card_art(self, surface: pygame.Surface, card, suit_role: str, rect: pygame.Rect, phase) -> None:
+    def _render_card_art(
+        self,
+        surface: pygame.Surface,
+        card,
+        suit_role: str,
+        rect: pygame.Rect,
+        phase,
+        draw_grid_border: bool,
+    ) -> None:
         """Render role artwork for a labyrinth card."""
         art_key = self._get_card_art_key(card, suit_role)
         art = self._get_scaled_tile_art(art_key, rect.size) if art_key else None
         if art is not None:
             surface.blit(art, rect.topleft)
-            pygame.draw.rect(surface, self.GRID_COLOR, rect, 2)
+            if draw_grid_border:
+                pygame.draw.rect(surface, self.GRID_COLOR, rect, 2)
             if suit_role in {"walls", "ballista", "traps"}:
                 self._render_card_info(surface, card, rect.x + 5, rect.y + 5, suit_role, phase)
             return
@@ -399,10 +473,10 @@ class BoardRenderer:
             pos = board.get_player_position(player_id)
             if pos is not None:
                 color = self.PLAYER1_COLOR if player_id == 0 else self.PLAYER2_COLOR
-
-                x_offset = self.get_player_x_offset(player_id, shared_tile, self.CELL_SIZE)
-                x = self.BOARD_X + pos.col * self.CELL_SIZE + self.CELL_SIZE // 2 + x_offset
-                y = self.BOARD_Y + pos.row * self.CELL_SIZE + self.CELL_SIZE // 2
+                cell_rect = self.get_cell_rect(pos)
+                x_offset = self.get_player_x_offset(player_id, shared_tile, min(cell_rect.width, cell_rect.height))
+                x = cell_rect.centerx + x_offset
+                y = cell_rect.centery
                 self._render_player_marker(surface, player_id, color, x, y, shared_tile)
 
     def _render_player_marker(
@@ -460,18 +534,16 @@ class BoardRenderer:
     def get_cell_at_mouse(self, mouse_pos: tuple[int, int]) -> Optional[Position]:
         """Get grid cell at mouse position."""
         x, y = mouse_pos
-        
-        # Check if mouse is in board area
-        if not (self.BOARD_X <= x <= self.BOARD_X + self.BOARD_WIDTH and
-                self.BOARD_Y <= y <= self.BOARD_Y + self.BOARD_HEIGHT):
+        if not (
+            self.BOARD_X <= x <= self.BOARD_X + self.BOARD_WIDTH
+            and self.BOARD_Y <= y <= self.BOARD_Y + self.BOARD_HEIGHT
+        ):
             return None
-        
+
         col = (x - self.BOARD_X) // self.CELL_SIZE
         row = (y - self.BOARD_Y) // self.CELL_SIZE
-        
         if 0 <= row < self.GRID_HEIGHT and 0 <= col < self.GRID_WIDTH:
             return Position(row, col)
-        
         return None
 
     def get_cell_rect(self, pos: Position) -> pygame.Rect:

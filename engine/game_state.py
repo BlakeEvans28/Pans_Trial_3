@@ -87,10 +87,10 @@ class GameState:
         """Return Phase 2 suits ordered from strongest trump to weakest."""
         suits_by_role = {role: suit for suit, role in self.suit_roles.items()}
         role_priority = [
-            SuitRole.WEAPONS,
-            SuitRole.BALLISTA,
-            SuitRole.TRAPS,
             SuitRole.WALLS,
+            SuitRole.TRAPS,
+            SuitRole.BALLISTA,
+            SuitRole.WEAPONS,
         ]
         return [suits_by_role[role] for role in role_priority if role in suits_by_role]
 
@@ -640,7 +640,7 @@ class GameState:
             return
         
         # Determine winner by the explicit Phase 2 role priority:
-        # Weapons > Ballista > Traps > Walls. Matching suits use card rank.
+        # Walls > Traps > Ballista > Weapons. Matching suits use card rank.
         (p1_id, card1), (p2_id, card2) = self.phase_started_cards
         hierarchy = self.get_appeasing_hierarchy()
         strength = {suit: index for index, suit in enumerate(hierarchy)}
