@@ -14,14 +14,6 @@ Use this file to track the most recent committed changes in reverse chronologica
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
 ## 2026-04-28 - Codex
-Commit: `pending` - Added browser rooms and localhost web play
-Summary:
-- Added a dependency-free localhost browser server plus static web client so Pan's Trial can now be opened in two browser tabs or windows and played through a shared room.
-- Inserted a `Start Game -> Room Selection` flow for the desktop client too, including room creation, joining by code, waiting for a second player, and synchronized two-player startup.
-- Added shared multiplayer setup helpers and localhost room networking so both the browser version and the desktop room flow use the live Python game engine.
-- Updated gameplay rendering to respect per-player perspective during networked matches so each client sees only its own hand while the board state stays synchronized.
-
-## 2026-04-28 - Codex
 Commit: `pending` - Retuned Restructure and scrollable UI layouts
 Summary:
 - Lowered the `Restructure` title so it starts closer to the old `Choose` baseline, and shifted the subtitle plus color-choice rows down to match.

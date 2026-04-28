@@ -4,16 +4,14 @@ Initializes game and runs the game loop.
 """
 
 import sys
+from random import choice, shuffle
 import pygame
-from engine import GamePhase
-from game_setup import initialize_game
-from multiplayer import LocalRoomClient
+from engine import GameState, GamePhase, Position
 from ui import (
     GameWindow,
     ScreenManager,
     ScreenType,
     StartScreen,
-    RoomSelectionScreen,
     HowToPlayScreen,
     SettingsScreen,
     CoinFlipScreen,
@@ -22,6 +20,39 @@ from ui import (
     GameOverScreen,
     GameScreen,
 )
+from deck_utils import setup_pregame_cards, create_6x6_labyrinth
+
+
+def initialize_game(
+    labyrinth_cards: list,
+    p0_hand: list,
+    p1_hand: list,
+    jack_order: list,
+    starting_player: int = 1,
+) -> GameState:
+    """Initialize a new game from the completed pregame setup."""
+    game = GameState()
+    game.setup_suit_roles(jack_order)
+
+    for _ in range(100):
+        labyrinth_grid = create_6x6_labyrinth(labyrinth_cards)
+        game.setup_board(labyrinth_grid)
+        game.place_player(0, Position(5, 3))  # Bottom: col 3 (4th to the right)
+        game.place_player(1, Position(0, 2))  # Top: col 2 (4th to the right)
+        if game.get_legal_moves(0) and game.get_legal_moves(1):
+            break
+        shuffle(labyrinth_cards)
+
+    for card in p0_hand:
+        game.add_card_to_hand(0, card)
+    for card in p1_hand:
+        game.add_card_to_hand(1, card)
+
+    game.current_player = starting_player
+    game.traversing_resume_player = starting_player
+    game.phase = GamePhase.TRAVERSING
+    
+    return game
 
 
 def main():
@@ -29,11 +60,9 @@ def main():
     # Initialize window
     window = GameWindow()
     screen_manager = ScreenManager(window)
-    multiplayer_client = LocalRoomClient()
     
     # Create screens
     start_screen = StartScreen(window)
-    room_screen = RoomSelectionScreen(window, multiplayer_client)
     how_to_play_screen = HowToPlayScreen(window)
     settings_screen = SettingsScreen(window)
     coin_flip_screen = CoinFlipScreen(window)
@@ -46,7 +75,6 @@ def main():
     
     # Add screens to manager
     screen_manager.add_screen(ScreenType.START, start_screen)
-    screen_manager.add_screen(ScreenType.ROOM_SELECT, room_screen)
     screen_manager.add_screen(ScreenType.HOW_TO_PLAY, how_to_play_screen)
     screen_manager.add_screen(ScreenType.SETTINGS, settings_screen)
     screen_manager.add_screen(ScreenType.COIN_FLIP, coin_flip_screen)
@@ -60,8 +88,9 @@ def main():
     print("=" * 60)
     print("PAN'S TRIAL - PART 2: INTERACTIVE GAMEPLAY")
     print("=" * 60)
-    print("Click 'Start Game' to open the localhost room screen")
-    print("Two players must enter the same room code before the match begins")
+    print("Click 'Start Game' to begin the draft")
+    print("Draft Satyrs, Oracles, and 2 Heroes before the labyrinth begins")
+    print("The Omen reveal runs automatically before gameplay starts")
     print("=" * 60)
     
     try:
@@ -82,14 +111,22 @@ def main():
                 
                 window.ui_manager.process_events(event)
                 
-                active_screen = screen_manager.current_screen
                 result = screen_manager.handle_events(event)
                 
                 # Handle screen transitions
                 if result == "PLAY":
-                    if active_screen in {ScreenType.START, ScreenType.GAME_OVER}:
-                        room_screen.prepare_for_new_session()
-                        screen_manager.set_screen(ScreenType.ROOM_SELECT)
+                    labyrinth_cards, draft_cards, jack_cards = setup_pregame_cards()
+                    pregame_setup = {
+                        "labyrinth_cards": labyrinth_cards,
+                        "draft_cards": draft_cards,
+                        "jack_cards": jack_cards,
+                        "hands": ([], []),
+                        "player_cards": [],
+                        "draft_starting_player": choice([0, 1]),
+                        "starting_player": 1,
+                    }
+                    coin_flip_screen.start_flip(pregame_setup["draft_starting_player"])
+                    screen_manager.set_screen(ScreenType.COIN_FLIP)
 
                 elif result == "HOW_TO_PLAY":
                     screen_manager.set_screen(ScreenType.HOW_TO_PLAY)
@@ -108,8 +145,6 @@ def main():
                     screen_manager.set_screen(ScreenType.JACK_REVEAL)
                 
                 elif result == "MENU":
-                    if active_screen in {ScreenType.ROOM_SELECT, ScreenType.GAME_OVER}:
-                        multiplayer_client.close()
                     screen_manager.set_screen(ScreenType.START)
 
                 elif result == "QUIT":
@@ -119,38 +154,6 @@ def main():
             dt = window.clock.tick(window.FPS) / 1000.0
             screen_manager.update(dt)
             window.ui_manager.update(dt)
-
-            for message in multiplayer_client.poll_messages():
-                message_type = message.get("type")
-                if message_type in {"room_joined", "room_update", "error", "room_closed", "disconnected"}:
-                    room_screen.apply_network_message(message)
-                    if message_type in {"room_closed", "disconnected"} and screen_manager.current_screen == ScreenType.GAME:
-                        room_screen.status_message = message.get("message", room_screen.status_message)
-                        screen_manager.set_screen(ScreenType.ROOM_SELECT)
-                    continue
-
-                if message_type == "game_start":
-                    room_screen.apply_network_message(message)
-                    game = message["game_state"]
-                    if game_screen is None:
-                        game_screen = GameScreen(
-                            window,
-                            game,
-                            local_player_id=multiplayer_client.player_id,
-                            network_client=multiplayer_client,
-                        )
-                        window.game_screen_ref = game_screen
-                        screen_manager.add_screen(ScreenType.GAME, game_screen)
-                    else:
-                        game_screen.local_player_id = multiplayer_client.player_id
-                        game_screen.network_client = multiplayer_client
-                        game_screen.sync_game_state(game)
-                    screen_manager.set_screen(ScreenType.GAME)
-                    continue
-
-                if message_type == "game_state" and game_screen is not None:
-                    game = message["game_state"]
-                    game_screen.sync_game_state(game, notice=message.get("notice"))
 
             if screen_manager.current_screen == ScreenType.JACK_REVEAL:
                 jack_order = jack_reveal_screen.consume_result()
@@ -187,15 +190,11 @@ def main():
             pygame.display.flip()
             
             # Check game over
-            if game is None or screen_manager.current_screen != ScreenType.GAME:
-                continue
-
-            if game_screen is not None and game_screen.is_networked_match():
-                game_over = game.phase == GamePhase.GAME_OVER and game.winner is not None
-            else:
-                game_over = game.check_game_over()
-
-            if game_over:
+            if (
+                game is not None
+                and screen_manager.current_screen == ScreenType.GAME
+                and game.check_game_over()
+            ):
                 print(f"\nGAME OVER! Player {game.winner + 1} wins!")
                 print(f"Final damage - P1: {game.get_damage_total(0)}, P2: {game.get_damage_total(1)}")
                 game_over_screen.set_result(
@@ -209,7 +208,6 @@ def main():
     except KeyboardInterrupt:
         print("\nGame interrupted by user.")
     finally:
-        multiplayer_client.close()
         window.quit()
         print("Game closed.")
 

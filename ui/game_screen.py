@@ -81,18 +81,9 @@ class GameScreen(Screen):
     }
     PHASE_BANNER_TRANSITION_SECONDS = 0.9
     
-    def __init__(
-        self,
-        window: "GameWindow",
-        game: GameState,
-        *,
-        local_player_id: int | None = None,
-        network_client=None,
-    ):
+    def __init__(self, window: "GameWindow", game: GameState):
         super().__init__(window)
         self.game = game
-        self.local_player_id = local_player_id
-        self.network_client = network_client
         self.renderer = BoardRenderer()
         self.input_handler = InputHandler(self.renderer)
         
@@ -142,30 +133,6 @@ class GameScreen(Screen):
         
         # Start with all elements hidden (will be shown when screen is activated)
         self._hide_all_elements()
-
-    def is_networked_match(self) -> bool:
-        """Return True when this screen is mirroring a localhost room game."""
-        return self.local_player_id is not None and self.network_client is not None
-
-    def _get_view_player_id(self) -> int:
-        """Return the player whose hand this client should render."""
-        if self.is_networked_match():
-            return self.local_player_id
-        return self.game.current_player
-
-    def _is_local_turn(self) -> bool:
-        """Return True when this client may submit gameplay actions."""
-        return not self.is_networked_match() or self.game.current_player == self.local_player_id
-
-    def sync_game_state(self, game: GameState, notice: str | None = None) -> None:
-        """Replace local mirrored game state from the room server."""
-        had_combat = self.game.has_pending_combat() if self.game is not None else False
-        self.game = game
-        if notice:
-            self._show_notice(notice)
-        audio = getattr(self.window, "audio", None)
-        if audio is not None and not had_combat and self.game.has_pending_combat():
-            audio.play_clash()
 
     def _refresh_fonts(self) -> None:
         """Refresh gameplay popup fonts after a resize."""
@@ -747,9 +714,6 @@ class GameScreen(Screen):
             if self._handle_tutorial_toggle_click(event.pos):
                 return True
 
-            if self._is_networked_spectator_click(event.pos):
-                return True
-
             if self._handle_center_popup_click(event.pos):
                 return True
 
@@ -801,24 +765,17 @@ class GameScreen(Screen):
                     return True
 
         elif event.type == pygame.MOUSEMOTION:
-            if self.is_networked_match() and not self._is_local_turn():
-                return False
             self._update_plane_shift_hover(event.pos)
             if self._handle_pending_placement_mouse_motion(event.pos):
                 return True
 
         elif event.type == pygame.MOUSEBUTTONUP:
-            if self.is_networked_match() and not self._is_local_turn():
-                return False
             if self._handle_pending_placement_mouse_up(event.pos):
                 return True
         
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE and self.damage_popup_player is not None:
                 self.damage_popup_player = None
-                return True
-
-            if self.is_networked_match() and not self._is_local_turn():
                 return True
 
             if (
@@ -856,8 +813,6 @@ class GameScreen(Screen):
                         print(f"Move failed: {e}")
         
         elif event.type == pygame_gui.UI_BUTTON_PRESSED:
-            if self.is_networked_match() and not self._is_local_turn():
-                return True
             # Card buttons
             for i, btn in enumerate(self.card_buttons):
                 if event.ui_element == btn:
@@ -874,14 +829,6 @@ class GameScreen(Screen):
 
     def _apply_action(self, action: Action) -> bool:
         """Apply a game action and trigger matching UI-side sounds."""
-        if self.is_networked_match():
-            if not self._is_local_turn() or action.player_id != self.local_player_id:
-                return False
-            sent = self.network_client.send_action(action)
-            if not sent:
-                self._show_notice("Could not send that move to the localhost room.", seconds=3.5)
-            return sent
-
         had_combat = self.game.has_pending_combat()
 
         applied = self.game.apply_action(action)
@@ -894,18 +841,6 @@ class GameScreen(Screen):
 
         if not had_combat and self.game.has_pending_combat():
             audio.play_clash()
-        return True
-
-    def _is_networked_spectator_click(self, pos: tuple[int, int]) -> bool:
-        """Consume gameplay clicks while waiting for the opponent in a room match."""
-        if not self.is_networked_match() or self._is_local_turn():
-            return False
-        if self._handle_damage_popup_click(pos):
-            return True
-        if self._handle_damage_summary_click(pos):
-            return True
-        if self._handle_tutorial_toggle_click(pos):
-            return True
         return True
 
     def _handle_tutorial_toggle_click(self, pos: tuple[int, int]) -> bool:
@@ -950,20 +885,18 @@ class GameScreen(Screen):
             self.window.audio.play_phase_music()
         self.plane_shift_preview_elapsed += time_delta * self.window.animation_speed
 
-        if not self.is_networked_match():
-            for _ in range(6):
-                if not self.game.advance_forced_traversing():
-                    break
+        for _ in range(6):
+            if not self.game.advance_forced_traversing():
+                break
 
         if self.notice_timer > 0:
             self.notice_timer = max(0.0, self.notice_timer - time_delta)
             if self.notice_timer == 0:
                 self.notice_text = None
 
-        if not self.is_networked_match():
-            return_notice = self.game.consume_appeasing_return_notice()
-            if return_notice:
-                self._show_notice(return_notice)
+        return_notice = self.game.consume_appeasing_return_notice()
+        if return_notice:
+            self._show_notice(return_notice)
 
         self._sync_phase_banner_state()
         self._advance_phase_banner_transition(time_delta)
@@ -1333,7 +1266,7 @@ class GameScreen(Screen):
 
     def _is_hand_inspect_popup_active(self) -> bool:
         """Return True when compact hand-card inspection is open."""
-        cards = self.game.get_player_hand(self._get_view_player_id())
+        cards = self.game.get_player_hand(self.game.current_player)
         return (
             self.inspected_hand_card_index is not None
             and self.is_compact_layout()
@@ -1819,8 +1752,6 @@ class GameScreen(Screen):
 
     def _can_play_appeasing_hand_cards(self) -> bool:
         """Return True when the active player's hand cards can be played for Appeasing Pan."""
-        if self.is_networked_match() and not self._is_local_turn():
-            return False
         return (
             self.game.phase == GamePhase.APPEASING
             and self.game.current_request_winner is None
@@ -1830,8 +1761,6 @@ class GameScreen(Screen):
 
     def _can_choose_hand_weapon(self) -> bool:
         """Return True when combat is waiting on a weapon card from the normal hand."""
-        if self.is_networked_match() and not self._is_local_turn():
-            return False
         return self.game.has_pending_combat()
 
     def _can_use_hand_card_now(self, card) -> bool:
@@ -1839,12 +1768,12 @@ class GameScreen(Screen):
         if self._can_play_appeasing_hand_cards():
             return True
         if self._can_choose_hand_weapon():
-            return self.game.can_use_weapon(self._get_view_player_id(), card)
+            return self.game.can_use_weapon(self.game.current_player, card)
         return False
 
     def _get_hand_card_rects(self) -> list[tuple[int, pygame.Rect]]:
         """Return active-hand card rects at the same size as board tiles."""
-        cards = self.game.get_player_hand(self._get_view_player_id())
+        cards = self.game.get_player_hand(self.game.current_player)
         if not cards:
             return []
 
@@ -1881,13 +1810,13 @@ class GameScreen(Screen):
 
     def _handle_hand_card_click(self, pos: tuple[int, int]) -> bool:
         """Inspect or play a manually rendered hand card."""
-        player_id = self._get_view_player_id()
-        player_hand = self.game.get_player_hand(player_id)
+        player_hand = self.game.get_player_hand(self.game.current_player)
         for index, rect in self._get_hand_card_rects():
             if rect.collidepoint(pos) and index < len(player_hand):
                 card = player_hand[index]
                 if self._can_choose_hand_weapon():
-                    if self.game.can_use_weapon(player_id, card):
+                    if self.game.can_use_weapon(self.game.current_player, card):
+                        player_id = self.game.current_player
                         if self._apply_action(ChooseCombatCardAction(player_id, card)):
                             print(f"Player {player_id + 1} used weapon card: {card}")
                     return True
@@ -1896,6 +1825,7 @@ class GameScreen(Screen):
                     return True
                 if not self._can_play_appeasing_hand_cards():
                     return True
+                player_id = self.game.current_player
                 if self._apply_action(PlayCardAction(player_id, card)):
                     print(f"Player {player_id + 1} played {card}")
                 return True
@@ -1912,13 +1842,13 @@ class GameScreen(Screen):
             return True
 
         if self._is_wood_button_hit(play_rect, pos):
-            player_id = self._get_view_player_id()
-            player_hand = self.game.get_player_hand(player_id)
+            player_hand = self.game.get_player_hand(self.game.current_player)
             index = self.inspected_hand_card_index
             if index is not None and index < len(player_hand):
                 card = player_hand[index]
                 if not self._can_use_hand_card_now(card):
                     return True
+                player_id = self.game.current_player
                 self.inspected_hand_card_index = None
                 if self._can_choose_hand_weapon():
                     if self._apply_action(ChooseCombatCardAction(player_id, card)):
@@ -2198,28 +2128,21 @@ class GameScreen(Screen):
         if not rects:
             return
 
-        view_player_id = self._get_view_player_id()
-        cards = self.game.get_player_hand(view_player_id)
+        cards = self.game.get_player_hand(self.game.current_player)
         can_play_appeasing = self._can_play_appeasing_hand_cards()
         choosing_weapon = self._can_choose_hand_weapon()
         title_rect = self._get_active_hand_title_rect(rects)
         self._render_stone_panel(surface, title_rect, dim_alpha=26, shadow_alpha=56)
-        if self.is_networked_match() and not self._is_local_turn():
-            prompt = "Opponent Turn"
-            title_text = "Your Hand"
-        elif choosing_weapon:
+        if choosing_weapon:
             prompt = "Pick a weapon from hand"
-            title_text = f"P{view_player_id + 1}"
         elif can_play_appeasing:
             prompt = "Tap card to Inspect" if self.is_compact_layout() else "Click a card to play"
-            title_text = f"P{view_player_id + 1}"
         else:
             prompt = "Active Hand"
-            title_text = f"P{view_player_id + 1}" if not self.is_networked_match() else "Your Hand"
         self._render_carved_text(
             surface,
             self.popup_small_font,
-            f"{title_text} {prompt}",
+            f"P{self.game.current_player + 1} {prompt}",
             (70, 62, 50),
             title_rect.center,
             anchor="center",
@@ -2239,7 +2162,7 @@ class GameScreen(Screen):
                 suit_role_render.get(card.suit),
                 rect,
                 self.game.phase,
-                dimmed=choosing_weapon and not self.game.can_use_weapon(view_player_id, card),
+                dimmed=choosing_weapon and not self.game.can_use_weapon(self.game.current_player, card),
             )
             usable = self._can_use_hand_card_now(card)
             border = (252, 222, 104) if usable else (110, 116, 130)
@@ -2721,8 +2644,7 @@ class GameScreen(Screen):
         if not self._is_hand_inspect_popup_active():
             return
 
-        view_player_id = self._get_view_player_id()
-        player_hand = self.game.get_player_hand(view_player_id)
+        player_hand = self.game.get_player_hand(self.game.current_player)
         card = player_hand[self.inspected_hand_card_index]
         panel_rect, card_rect, play_rect, close_rect = self._get_hand_inspect_popup_layout()
 
@@ -2732,7 +2654,7 @@ class GameScreen(Screen):
         surface.blit(title, (panel_rect.x + self.scale(26, 16), panel_rect.y + self.scale(18, 12)))
 
         subtitle = self.popup_small_font.render(
-            f"P{view_player_id + 1}: {self._format_card_label(card)} - {self._get_card_role_name(card)}",
+            f"P{self.game.current_player + 1}: {self._format_card_label(card)} - {self._get_card_role_name(card)}",
             True,
             (210, 210, 210),
         )
