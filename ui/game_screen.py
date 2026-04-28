@@ -109,6 +109,7 @@ class GameScreen(Screen):
         self.dragging_placement_card_index = None
         self.dragging_placement_card_pos = None
         self.hovered_placement_target = None
+        self.request_popup_labyrinth_view = False
         self.pending_plane_shift_line = None
         self.hovered_plane_shift_line = None
         self.pending_plane_shift_confirmation = None
@@ -714,6 +715,9 @@ class GameScreen(Screen):
             if self._handle_tutorial_toggle_click(event.pos):
                 return True
 
+            if self._handle_request_labyrinth_view_click(event.pos):
+                return True
+
             if self._handle_center_popup_click(event.pos):
                 return True
 
@@ -853,6 +857,21 @@ class GameScreen(Screen):
         self.tutorial_toggle_rect = None
         return True
 
+    def _handle_request_labyrinth_view_click(self, pos: tuple[int, int]) -> bool:
+        """Handle the temporary request chooser hide/show controls."""
+        if self._is_request_labyrinth_view_active():
+            if self._is_wood_button_hit(self._get_request_labyrinth_return_rect(), pos):
+                self.request_popup_labyrinth_view = False
+            return True
+
+        if self._is_board_side_request_back_active():
+            if self._is_wood_button_hit(self._get_pending_request_back_button_rect(), pos):
+                self._cancel_pending_request_resolution()
+                return True
+            return False
+
+        return False
+
     def reset_tutorial_cycle(self) -> None:
         """Let Settings restart the first Appeasing-cycle tutorial."""
         self._tutorial_seen_appeasing_cycle = False
@@ -908,12 +927,9 @@ class GameScreen(Screen):
             self.pending_plane_shift_line = None
             self.hovered_plane_shift_line = None
             self.pending_plane_shift_confirmation = None
-        showing_request_selection = (
-            self.game.phase == GamePhase.APPEASING
-            and self.game.current_request_winner is not None
-            and not self.game.has_pending_request_resolution()
-            and not self.game.has_pending_card_placement()
-        )
+        showing_request_selection = self._is_request_selection_active()
+        if not showing_request_selection:
+            self.request_popup_labyrinth_view = False
         
         if self.game.phase == GamePhase.SETUP:
             status_text = "SETUP: Drafting complete. Omens drawn and color roles assigned. Press SPACE to start game."
@@ -959,7 +975,10 @@ class GameScreen(Screen):
                 else:
                     status_text = "APPEASING PAN: Resolving duel..."
             else:
-                status_text = f"APPEASING PAN: {player} chooses a request from the popup"
+                if self.request_popup_labyrinth_view:
+                    status_text = f"APPEASING PAN: {player} is viewing the labyrinth before choosing a request"
+                else:
+                    status_text = f"APPEASING PAN: {player} chooses a request from the popup"
         else:
             status_text = f"TRAVERSING: {player} Turn (Move {self.game.movement_turn // 2 + 1})"
         
@@ -967,7 +986,7 @@ class GameScreen(Screen):
         self.info_label.hide()
 
         if (
-            pending_request_type in {"steal_life", "restructure"}
+            pending_request_type in {"steal_life", "restructure", "plane_shift"}
             or showing_request_selection
             or self.game.has_pending_card_placement()
         ):
@@ -1115,6 +1134,7 @@ class GameScreen(Screen):
         for buttons in self.damage_buttons.values():
             for btn in buttons:
                 btn.hide()
+        self.request_popup_labyrinth_view = False
     
     def on_exit(self) -> None:
         """Deactivate game screen."""
@@ -1142,6 +1162,7 @@ class GameScreen(Screen):
             for btn in buttons:
                 btn.hide()
         self.damage_popup_player = None
+        self.request_popup_labyrinth_view = False
 
     def _format_card_label(self, card) -> str:
         """Render a compact label for a hand or damage card."""
@@ -1230,14 +1251,22 @@ class GameScreen(Screen):
         self.notice_text = text
         self.notice_timer = seconds
 
-    def _is_request_popup_active(self) -> bool:
-        """Return True when the centered request chooser should be visible."""
+    def _is_request_selection_active(self) -> bool:
+        """Return True while Appeasing Pan is waiting for a player to choose a request."""
         return (
             self.game.phase == GamePhase.APPEASING
             and self.game.current_request_winner is not None
             and not self.game.has_pending_request_resolution()
             and not self.game.has_pending_card_placement()
         )
+
+    def _is_request_popup_active(self) -> bool:
+        """Return True when the centered request chooser should be visible."""
+        return self._is_request_selection_active() and not self.request_popup_labyrinth_view
+
+    def _is_request_labyrinth_view_active(self) -> bool:
+        """Return True when the chooser temporarily hid the popup to inspect the maze."""
+        return self._is_request_selection_active() and self.request_popup_labyrinth_view
 
     def _is_steal_life_popup_active(self) -> bool:
         """Return True when Steal Life card selection is in progress."""
@@ -1319,8 +1348,10 @@ class GameScreen(Screen):
             1: pygame.Rect(x, top + gap, width, height),
         }
 
-    def _get_request_popup_layout(self) -> tuple[pygame.Rect, pygame.Rect, list[tuple[str, pygame.Rect]]]:
-        """Return the request popup panel, fixed content rect, and button rects."""
+    def _get_request_popup_layout(
+        self,
+    ) -> tuple[pygame.Rect, pygame.Rect, list[tuple[str, pygame.Rect]], pygame.Rect]:
+        """Return the request popup panel, content rect, request buttons, and maze-view button."""
         request_options = self._get_request_popup_options()
         cols = 1 if self.is_compact_layout() else (2 if len(request_options) > 1 else 1)
         rows = max(1, (len(request_options) + cols - 1) // cols)
@@ -1333,8 +1364,16 @@ class GameScreen(Screen):
         )
         spacing_x = self.scale(20, 12)
         spacing_y = self.scale(18, 10)
+        view_button_height = self.scale_y(52, 40)
+        view_button_gap = self.scale_y(20, 14)
         content_width = cols * button_width + (cols - 1) * spacing_x
-        content_height = title_block_height + rows * button_height + (rows - 1) * spacing_y
+        content_height = (
+            title_block_height
+            + rows * button_height
+            + (rows - 1) * spacing_y
+            + view_button_gap
+            + view_button_height
+        )
         stone_side_padding = self.scale_x(52, 34)
         base_top_padding = self.scale_y(18, 12)
         base_bottom_padding = self.scale_y(42, 28)
@@ -1369,7 +1408,20 @@ class GameScreen(Screen):
                 button_height,
             )
             rects.append((request_type, rect))
-        return panel_rect, content_rect, rects
+        view_button_width = min(content_rect.width, self.scale_x(312, 210))
+        view_button_rect = pygame.Rect(
+            content_rect.centerx - view_button_width // 2,
+            content_rect.bottom - view_button_height,
+            view_button_width,
+            view_button_height,
+        )
+        return panel_rect, content_rect, rects, view_button_rect
+
+    def _get_request_popup_disabled_reason(self, request_type: str) -> str:
+        """Return the most helpful disabled copy for one request option."""
+        if request_type in self.game.get_chosen_request_types():
+            return "Already chosen this Appeasing round."
+        return REQUEST_POPUP_COPY[request_type].get("disabled", "")
 
     def _get_request_popup_options(self) -> list[tuple[str, bool, str]]:
         """Return request popup entries with enabled state and optional disabled reason."""
@@ -1384,10 +1436,84 @@ class GameScreen(Screen):
             enabled = self.game.can_select_request_type(player_id, request_type)
             disabled_reason = ""
             if not enabled:
-                disabled_reason = REQUEST_POPUP_COPY[request_type].get("disabled", "")
+                disabled_reason = self._get_request_popup_disabled_reason(request_type)
             options.append((request_type, enabled, disabled_reason))
 
         return options
+
+    def _get_request_side_button_rect(self, *, compact_width: int, wide_width: int) -> pygame.Rect:
+        """Return a side-mounted wood button near the labyrinth without covering the board."""
+        board_rect = self.renderer.get_board_rect()
+        margin = self.scale(18, 12)
+        gap = self.scale(12, 8)
+        width = self.scale_x(compact_width, 170) if self.is_compact_layout() else self.scale_x(wide_width, 190)
+        height = self.scale_y(58, 44)
+
+        if self.is_compact_layout():
+            y = min(self.window.WINDOW_HEIGHT - margin - height, board_rect.bottom + gap)
+            if y < board_rect.bottom + gap and board_rect.top - gap - height >= margin:
+                y = board_rect.top - gap - height
+            return pygame.Rect(
+                (self.window.WINDOW_WIDTH - width) // 2,
+                max(margin, y),
+                width,
+                height,
+            )
+
+        legend_rect = self._get_suit_role_legend_panel_rect()
+        if board_rect.right + gap + width <= self.window.WINDOW_WIDTH - margin:
+            x = board_rect.right + gap
+            y = max(
+                board_rect.top + self.scale_y(138, 98),
+                legend_rect.bottom + gap if legend_rect is not None else board_rect.top + self.scale_y(22, 16),
+            )
+        elif board_rect.left - gap - width >= margin:
+            x = board_rect.left - gap - width
+            y = max(margin, board_rect.top + self.scale_y(138, 98))
+        else:
+            x = (self.window.WINDOW_WIDTH - width) // 2
+            y = min(self.window.WINDOW_HEIGHT - margin - height, board_rect.bottom + gap)
+            if y < board_rect.bottom + gap and board_rect.top - gap - height >= margin:
+                y = board_rect.top - gap - height
+        y = min(y, self.window.WINDOW_HEIGHT - margin - height)
+        return pygame.Rect(x, y, width, height)
+
+    def _get_request_labyrinth_return_rect(self) -> pygame.Rect:
+        """Return the button used to leave temporary maze-view mode."""
+        return self._get_request_side_button_rect(compact_width=220, wide_width=250)
+
+    def _get_pending_request_back_button_rect(self, panel_rect: pygame.Rect | None = None) -> pygame.Rect:
+        """Return the Back button rect for request-resolution screens."""
+        width = self.scale_x(158, 118)
+        height = self.scale_y(48, 36)
+        if panel_rect is None:
+            rect = self._get_request_side_button_rect(compact_width=170, wide_width=190)
+            rect.width = width
+            rect.height = height
+            return rect
+        return pygame.Rect(
+            panel_rect.right - self.scale_x(26, 16) - width,
+            panel_rect.y + self.scale_y(18, 12),
+            width,
+            height,
+        )
+
+    def _is_board_side_request_back_active(self) -> bool:
+        """Return True when Plane Shift needs a side-mounted Back button."""
+        return (
+            self.game.get_pending_request_type() == "plane_shift"
+            and not self._is_plane_shift_direction_popup_active()
+            and not self._is_plane_shift_confirmation_popup_active()
+        )
+
+    def _cancel_pending_request_resolution(self) -> bool:
+        """Cancel the current unresolved request and return to the chooser."""
+        if not self.game.cancel_pending_request_selection(self.game.current_player):
+            return False
+        self.pending_plane_shift_line = None
+        self.hovered_plane_shift_line = None
+        self.pending_plane_shift_confirmation = None
+        return True
 
     def _get_steal_life_popup_layout(self) -> tuple[pygame.Rect, list[tuple[int, object, pygame.Rect]]]:
         """Return Steal Life popup panel and clickable damage-card rects."""
@@ -1866,12 +1992,15 @@ class GameScreen(Screen):
             return True
 
         if self._is_request_popup_active():
-            panel_rect, _, option_rects = self._get_request_popup_layout()
+            panel_rect, _, option_rects, view_button_rect = self._get_request_popup_layout()
             option_states = {
                 request_type: enabled
                 for request_type, enabled, _ in self._get_request_popup_options()
             }
             if not panel_rect.collidepoint(pos):
+                return True
+            if self._is_wood_button_hit(view_button_rect, pos):
+                self.request_popup_labyrinth_view = True
                 return True
             for request_type, rect in option_rects:
                 if self._is_wood_button_hit(self._get_request_popup_button_rect(rect), pos):
@@ -1885,6 +2014,9 @@ class GameScreen(Screen):
             panel_rect, card_rects = self._get_steal_life_popup_layout()
             if not panel_rect.collidepoint(pos):
                 return True
+            if self._is_wood_button_hit(self._get_pending_request_back_button_rect(panel_rect), pos):
+                self._cancel_pending_request_resolution()
+                return True
             for player_id, card, rect in card_rects:
                 if rect.collidepoint(pos):
                     action = SelectDamageCardAction(self.game.current_player, player_id, card)
@@ -1895,6 +2027,9 @@ class GameScreen(Screen):
         if self._is_restructure_popup_active():
             panel_rect, suit_rects = self._get_restructure_popup_layout()
             if not panel_rect.collidepoint(pos):
+                return True
+            if self._is_wood_button_hit(self._get_pending_request_back_button_rect(panel_rect), pos):
+                self._cancel_pending_request_resolution()
                 return True
             for suit, rect in suit_rects:
                 if self._is_wood_button_hit(self._get_restructure_popup_button_rect(rect), pos):
@@ -1908,6 +2043,9 @@ class GameScreen(Screen):
             if not panel_rect.collidepoint(pos):
                 self.pending_plane_shift_line = None
                 return True
+            if self._is_wood_button_hit(self._get_pending_request_back_button_rect(panel_rect), pos):
+                self._cancel_pending_request_resolution()
+                return True
             for direction, rect in direction_rects:
                 if self._is_wood_button_hit(rect, pos):
                     self._commit_plane_shift_direction(direction)
@@ -1917,6 +2055,9 @@ class GameScreen(Screen):
         if self._is_plane_shift_confirmation_popup_active():
             panel_rect, buttons = self._get_plane_shift_confirmation_layout()
             if not panel_rect.collidepoint(pos):
+                return True
+            if self._is_wood_button_hit(self._get_pending_request_back_button_rect(panel_rect), pos):
+                self._cancel_pending_request_resolution()
                 return True
             if self._is_wood_button_hit(buttons["confirm"], pos):
                 self._confirm_plane_shift()
@@ -2521,7 +2662,7 @@ class GameScreen(Screen):
             return panel_rect, "Tutorial: inspect the enlarged card, then play it or close this view."
 
         if self._is_request_popup_active():
-            panel_rect, _, _ = self._get_request_popup_layout()
+            panel_rect, _, _, _ = self._get_request_popup_layout()
             return (
                 panel_rect,
                 "Tutorial: choose a request. The winner chooses first; the loser chooses second unless Ignore Us is picked.",
@@ -2556,6 +2697,10 @@ class GameScreen(Screen):
             self._render_hand_inspect_popup(surface)
             return
 
+        if self._is_request_labyrinth_view_active():
+            self._render_request_labyrinth_return_button(surface)
+            return
+
         if self._is_request_popup_active():
             self._render_popup_backdrop(surface)
             self._render_request_popup(surface)
@@ -2581,13 +2726,17 @@ class GameScreen(Screen):
             self._render_plane_shift_confirmation_popup(surface)
             return
 
+        if self._is_board_side_request_back_active():
+            self._render_pending_request_side_back_button(surface)
+            return
+
         if self.damage_popup_player is not None:
             self._render_popup_backdrop(surface, alpha=110)
             self._render_damage_popup(surface, self.damage_popup_player)
 
     def _render_request_popup(self, surface: pygame.Surface) -> None:
         """Render the centered request-selection popup."""
-        panel_rect, content_rect, option_rects = self._get_request_popup_layout()
+        panel_rect, content_rect, option_rects, view_button_rect = self._get_request_popup_layout()
         option_states = {
             request_type: (enabled, disabled_reason)
             for request_type, enabled, disabled_reason in self._get_request_popup_options()
@@ -2638,6 +2787,31 @@ class GameScreen(Screen):
                 line_height=detail_line_height,
                 max_lines=2,
             )
+
+        self._render_game_wood_button(
+            surface,
+            view_button_rect,
+            "View Labyrinth",
+            preferred_font_size=self.font_size(22, 16),
+        )
+
+    def _render_request_labyrinth_return_button(self, surface: pygame.Surface) -> None:
+        """Render the side button that restores the hidden request chooser."""
+        self._render_game_wood_button(
+            surface,
+            self._get_request_labyrinth_return_rect(),
+            "Return to Requests",
+            preferred_font_size=self.font_size(20, 14),
+        )
+
+    def _render_pending_request_side_back_button(self, surface: pygame.Surface) -> None:
+        """Render a side-mounted Back button for board-driven request resolution."""
+        self._render_game_wood_button(
+            surface,
+            self._get_pending_request_back_button_rect(),
+            "Back",
+            preferred_font_size=self.font_size(24, 16),
+        )
 
     def _render_hand_inspect_popup(self, surface: pygame.Surface) -> None:
         """Render a compact-layout enlarged hand-card inspection popup."""
@@ -2690,6 +2864,12 @@ class GameScreen(Screen):
 
         title = self.popup_title_font.render("Steal Life", True, (240, 236, 214))
         surface.blit(title, (panel_rect.x + self.scale(30, 18), panel_rect.y + self.scale(18, 12)))
+        self._render_game_wood_button(
+            surface,
+            self._get_pending_request_back_button_rect(panel_rect),
+            "Back",
+            preferred_font_size=self.font_size(20, 14),
+        )
 
         instruction = "Select your damage card first. You can change it before choosing the enemy card."
         self._draw_wrapped_carved_text(
@@ -2750,6 +2930,12 @@ class GameScreen(Screen):
         title = self.popup_title_font.render("Restructure", True, (240, 236, 214))
         content_x = panel_rect.x + self.scale_x(28, 18)
         surface.blit(title, (content_x, panel_rect.y + self.scale_y(18, 12) + text_shift + header_drop))
+        self._render_game_wood_button(
+            surface,
+            self._get_pending_request_back_button_rect(panel_rect),
+            "Back",
+            preferred_font_size=self.font_size(20, 14),
+        )
 
         subtitle_line_height = max(self.scale_y(18, 14), self.popup_small_font.get_linesize())
 
@@ -2814,6 +3000,12 @@ class GameScreen(Screen):
 
         title = self.popup_title_font.render("Plane Shift", True, (240, 236, 214))
         surface.blit(title, (panel_rect.x + self.scale(28, 18), panel_rect.y + self.scale(18, 12)))
+        self._render_game_wood_button(
+            surface,
+            self._get_pending_request_back_button_rect(panel_rect),
+            "Back",
+            preferred_font_size=self.font_size(20, 14),
+        )
 
         subtitle = self.popup_small_font.render(
             f"Choose the direction for {selected_text}.",
@@ -2848,6 +3040,12 @@ class GameScreen(Screen):
 
         title = self.popup_title_font.render("Confirm Plane Shift", True, (240, 236, 214))
         surface.blit(title, (panel_rect.x + self.scale(28, 18), panel_rect.y + self.scale(18, 12)))
+        self._render_game_wood_button(
+            surface,
+            self._get_pending_request_back_button_rect(panel_rect),
+            "Back",
+            preferred_font_size=self.font_size(20, 14),
+        )
 
         line_name = f"{axis.title()} {index + 1}"
         detail = f"{line_name} will shift {direction}. This moves the row/column immediately."

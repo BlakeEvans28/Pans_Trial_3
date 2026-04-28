@@ -561,14 +561,32 @@ def test_both_players_choose_requests_unless_ignore_us(game_setup):
     assert game.current_player == 1
     assert game.pending_request_players == [1]
 
-    assert game.apply_action(ChooseRequestAction(
-        1,
-        RequestType.RESTRUCTURE,
-        {"suits": [game.jack_order[2], game.jack_order[3]]},
-    ))
+    assert game.apply_action(ChooseRequestAction(1, RequestType.PLANE_SHIFT))
+    assert game.apply_action(SelectPlaneShiftDirectionAction(1, "left"))
+    assert game.apply_action(ResolvePlaneShiftAction(1, 0))
     assert game.phase == GamePhase.TRAVERSING
     assert game.pending_request_players == []
     assert game.current_player == 1
+
+
+def test_second_requester_cannot_choose_same_request_type(game_setup):
+    """Once the first request resolves, the second chooser must pick a different request."""
+    game = game_setup
+    game.phase = GamePhase.APPEASING
+    game.current_request_winner = 0
+    game.pending_request_players = [0, 1]
+    game.current_player = 0
+
+    assert game.apply_action(ChooseRequestAction(
+        0,
+        RequestType.RESTRUCTURE,
+        {"suits": [game.jack_order[0], game.jack_order[1]]},
+    ))
+    assert game.pending_request_players == [1]
+    assert "restructure" in game.get_chosen_request_types()
+    assert not game.can_select_request_type(1, "restructure")
+    assert "restructure" not in game.get_available_request_types(1)
+    assert not game.choose_request(1, "restructure")
 
 
 def test_second_requester_cannot_choose_ignore_us(game_setup):
@@ -596,6 +614,29 @@ def test_ignore_us_skips_second_request_only(game_setup):
     assert game.phase == GamePhase.TRAVERSING
     assert game.pending_request_players == []
     assert game.forced_pass_turns[1] == 0
+
+
+def test_pending_request_selection_can_be_cancelled(game_setup):
+    """A chooser should be able to back out of an unfinished request and pick again."""
+    game = game_setup
+    own_card = Card(CardRank.TEN, CardSuit.HEARTS)
+    opponent_card = Card(CardRank.QUEEN, CardSuit.SPADES)
+    game.damage[0].add_card(own_card)
+    game.damage[1].add_card(opponent_card)
+    game.phase = GamePhase.APPEASING
+    game.current_request_winner = 0
+    game.pending_request_players = [0, 1]
+    game.current_player = 0
+
+    assert game.choose_request(0, "steal_life")
+    assert game.can_cancel_pending_request_selection(0)
+    assert game.apply_action(SelectDamageCardAction(0, 0, own_card))
+    assert game.cancel_pending_request_selection(0)
+    assert not game.has_pending_request_resolution()
+    assert game.pending_request_players == [0, 1]
+    assert game.current_player == 0
+    assert game.request_history == []
+    assert game.choose_request(0, "plane_shift")
 
 
 def test_appeasing_stronger_color_beats_higher_rank(game_setup):

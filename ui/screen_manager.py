@@ -1067,14 +1067,15 @@ class HowToPlayScreen(Screen):
                 1,
                 self.font_size(20, 15),
             )
-            self._render_carved_text(
-                surface,
-                heading_font,
-                heading,
-                (62, 54, 44),
-                (heading_rect.centerx, heading_rect.y + self.scale_y(2, 1)),
-                anchor="midtop",
-            )
+            if viewport_rect.contains(heading_rect):
+                self._render_carved_text(
+                    surface,
+                    heading_font,
+                    heading,
+                    (62, 54, 44),
+                    (heading_rect.centerx, heading_rect.y + self.scale_y(2, 1)),
+                    anchor="midtop",
+                )
 
             body_rect = pygame.Rect(
                 content_rect.x,
@@ -1089,15 +1090,16 @@ class HowToPlayScreen(Screen):
                 4,
                 self.font_size(16, 12),
             )
-            self._draw_wrapped_carved_text(
-                surface,
-                body,
-                body_font,
-                (74, 66, 54),
-                body_rect,
-                max(self.scale(17, 13), body_font.get_linesize()),
-                4,
-            )
+            if viewport_rect.contains(body_rect):
+                self._draw_wrapped_carved_text(
+                    surface,
+                    body,
+                    body_font,
+                    (74, 66, 54),
+                    body_rect,
+                    max(self.scale(17, 13), body_font.get_linesize()),
+                    4,
+                )
         surface.set_clip(old_clip)
         self._render_wood_button(
             surface,
@@ -2460,6 +2462,12 @@ class JackRevealScreen(Screen):
     """Animated pregame reveal for the randomized Jack suit order."""
 
     ROLE_NAMES = ["Walls", "Traps", "Ballista", "Weapons"]
+    ROLE_TAROT_PATHS = [
+        Screen.ASSET_ROOT / "tarot_wall.png",
+        Screen.ASSET_ROOT / "tarot_trap.png",
+        Screen.ASSET_ROOT / "tarot_ballista.png",
+        Screen.ASSET_ROOT / "tarot_weapons.png",
+    ]
 
     def __init__(self, window: "GameWindow"):
         super().__init__(window)
@@ -2474,6 +2482,8 @@ class JackRevealScreen(Screen):
         self.revealed_count = 0
         self.finished = False
         self._consumed = False
+        self._tarot_bases = [self._load_image(path) for path in self.ROLE_TAROT_PATHS]
+        self._tarot_cache: dict[tuple[int, int, int], pygame.Surface] = {}
         self._refresh_fonts()
 
     def _refresh_fonts(self) -> None:
@@ -2514,6 +2524,63 @@ class JackRevealScreen(Screen):
         if self.elapsed >= reveal_interval * 4 + finish_delay:
             self.finished = True
 
+    def _get_scaled_tarot_card(self, role_index: int, size: tuple[int, int]) -> pygame.Surface | None:
+        """Return the role tarot art scaled to the reveal slot size."""
+        if role_index < 0 or role_index >= len(self._tarot_bases):
+            return None
+        base = self._tarot_bases[role_index]
+        if base is None or size[0] <= 0 or size[1] <= 0:
+            return None
+
+        key = (role_index, size[0], size[1])
+        if key not in self._tarot_cache:
+            self._tarot_cache[key] = pygame.transform.smoothscale(base, size)
+        return self._tarot_cache[key]
+
+    def _render_reveal_tarot_card(self, surface: pygame.Surface, rect: pygame.Rect, role_index: int) -> None:
+        """Render one tarot background, falling back to a simple frame if the asset is missing."""
+        image = self._get_scaled_tarot_card(role_index, rect.size)
+        if image is not None:
+            surface.blit(image, rect.topleft)
+        else:
+            pygame.draw.rect(surface, (62, 68, 88), rect, border_radius=self.scale(12, 8))
+        pygame.draw.rect(surface, (68, 46, 22), rect, 2, border_radius=self.scale(12, 8))
+
+    def _render_reveal_family_marker(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        suit: CardSuit,
+        *,
+        shuffling: bool = False,
+    ) -> None:
+        """Render the suit icon and family name over the tarot art."""
+        family_color = get_family_color(suit)
+        icon_y = rect.y + int(rect.height * 0.18)
+        label_y = rect.y + int(rect.height * 0.28)
+        draw_suit_icon(surface, suit, (rect.centerx, icon_y), size=self.scale(18, 10), color=family_color)
+        self._render_outlined_text(
+            surface,
+            self.small_font,
+            get_family_name(suit),
+            family_color,
+            (30, 20, 12),
+            (rect.centerx, label_y),
+            anchor="center",
+            outline_width=self.scale(2, 1),
+        )
+
+        if shuffling:
+            self._render_outlined_text(
+                surface,
+                self.small_font,
+                "Shuffling...",
+                (234, 228, 214),
+                (28, 20, 12),
+                (rect.centerx, rect.y + int(rect.height * 0.41)),
+                anchor="center",
+            )
+
     def render(self, surface: pygame.Surface) -> None:
         """Render the animated Jack order reveal."""
         self._render_screen_background(surface, (12, 16, 26))
@@ -2544,7 +2611,6 @@ class JackRevealScreen(Screen):
         total_width = columns * card_width + (columns - 1) * spacing
         start_x = (self.window.WINDOW_WIDTH - total_width) // 2
         y = self.scale_y(170, 122) if compact else self.scale_y(260, 190)
-        border_radius = self.scale(12, 8)
 
         for index in range(4):
             row = index // columns
@@ -2555,44 +2621,21 @@ class JackRevealScreen(Screen):
                 card_width,
                 card_height,
             )
-            pygame.draw.rect(surface, (62, 68, 88), rect, border_radius=border_radius)
-            pygame.draw.rect(surface, (130, 136, 156), rect, 2, border_radius=border_radius)
+            self._render_reveal_tarot_card(surface, rect, index)
 
             if index < self.revealed_count:
                 suit = self.jack_order[index]
-                card_text = self.card_font.render("Omen", True, (235, 235, 235))
-                card_rect = card_text.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.28)))
-                surface.blit(card_text, card_rect)
-                draw_suit_icon(surface, suit, (rect.centerx, rect.y + int(rect.height * 0.52)), size=self.scale(18, 10))
-
-                color_name = self.small_font.render(get_family_name(suit), True, (220, 220, 220))
-                color_rect = color_name.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.68)))
-                surface.blit(color_name, color_rect)
-
-                role_text = self.body_font.render(self.ROLE_NAMES[index], True, (235, 196, 100))
-                role_rect = role_text.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.86)))
-                surface.blit(role_text, role_rect)
+                self._render_reveal_family_marker(surface, rect, suit)
             elif index == self.revealed_count and not self.finished:
-                shuffle_text = self.card_font.render("Omen", True, (190, 190, 220))
-                shuffle_rect = shuffle_text.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.28)))
-                surface.blit(shuffle_text, shuffle_rect)
                 cycling_suit = self._cycling_suit()
-                draw_suit_icon(
-                    surface,
-                    cycling_suit,
-                    (rect.centerx, rect.y + int(rect.height * 0.52)),
-                    size=self.scale(18, 10),
-                    color=(190, 190, 220),
-                )
-
-                color_name = self.small_font.render(get_family_name(cycling_suit), True, (185, 185, 205))
-                color_rect = color_name.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.68)))
-                surface.blit(color_name, color_rect)
-
-                pending = self.small_font.render("shuffling...", True, (165, 165, 180))
-                pending_rect = pending.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.86)))
-                surface.blit(pending, pending_rect)
+                veil = pygame.Surface(rect.size, pygame.SRCALPHA)
+                veil.fill((12, 16, 28, 48))
+                surface.blit(veil, rect.topleft)
+                self._render_reveal_family_marker(surface, rect, cycling_suit, shuffling=True)
             else:
+                veil = pygame.Surface(rect.size, pygame.SRCALPHA)
+                veil.fill((10, 12, 18, 112))
+                surface.blit(veil, rect.topleft)
                 hidden = self.card_font.render("?", True, (155, 155, 170))
                 hidden_rect = hidden.get_rect(center=(rect.centerx, rect.y + int(rect.height * 0.44)))
                 surface.blit(hidden, hidden_rect)

@@ -47,6 +47,7 @@ class GameState:
         self.current_request_winner: Optional[int] = None  # Who won the current request
         self.current_request_loser: Optional[int] = None
         self.pending_request_players: list[int] = []
+        self.chosen_request_types: list[str] = []
         self.pending_request_resolution: Optional[dict] = None
         self.pending_placement_player: Optional[int] = None
         self.pending_placement_cards: list[Card] = []
@@ -163,6 +164,9 @@ class GameState:
         if not self.can_choose_request(player_id):
             return False
 
+        if request_type in self.chosen_request_types:
+            return False
+
         if request_type == "ignore_us":
             return player_id == self.current_request_winner
 
@@ -183,6 +187,26 @@ class GameState:
             for request_type in order
             if self.can_select_request_type(player_id, request_type)
         ]
+
+    def get_chosen_request_types(self) -> list[str]:
+        """Return the request types already finalized this Appeasing phase."""
+        return list(self.chosen_request_types)
+
+    def can_cancel_pending_request_selection(self, player_id: int) -> bool:
+        """Return True when this player may back out of their in-progress request."""
+        return (
+            self.phase == GamePhase.APPEASING
+            and self.pending_request_resolution is not None
+            and self.pending_request_resolution.get("player") == player_id
+        )
+
+    def cancel_pending_request_selection(self, player_id: int) -> bool:
+        """Cancel the chooser's unresolved request and return to the request picker."""
+        if not self.can_cancel_pending_request_selection(player_id):
+            return False
+
+        self.pending_request_resolution = None
+        return True
 
     def has_pending_combat(self) -> bool:
         """Return True while players are choosing combat damage cards."""
@@ -693,16 +717,13 @@ class GameState:
             return False
 
         opponent_id = 1 - chooser_id
-        request_label = request_type.replace("_", " ").title()
-        self.request_history.append(f"P{chooser_id + 1} chose {request_label}.")
-        self._record_event(f"P{chooser_id + 1} chose {request_label}.")
         
         if request_type == "restructure":
             selected_suits = params.get("suits") or []
             if len(selected_suits) == 2:
                 if not self._swap_suit_roles(selected_suits[0], selected_suits[1]):
                     return False
-                self._finish_request_choice(request_type, check_for_traps=True)
+                self._finish_request_choice(chooser_id, request_type, check_for_traps=True)
                 return True
 
             self.pending_request_resolution = {
@@ -724,7 +745,7 @@ class GameState:
             return True
             
         elif request_type == "ignore_us":
-            self._finish_request_choice(request_type)
+            self._finish_request_choice(chooser_id, request_type)
             return True
             
         elif request_type == "plane_shift":
@@ -737,8 +758,15 @@ class GameState:
         
         return False
 
-    def _finish_request_choice(self, request_type: str, check_for_traps: bool = False) -> None:
+    def _finish_request_choice(self, chooser_id: int, request_type: str, check_for_traps: bool = False) -> None:
         """Advance request order after one request fully resolves."""
+        if request_type not in self.chosen_request_types:
+            self.chosen_request_types.append(request_type)
+
+        request_label = request_type.replace("_", " ").title()
+        self.request_history.append(f"P{chooser_id + 1} chose {request_label}.")
+        self._record_event(f"P{chooser_id + 1} chose {request_label}.")
+
         if self.pending_request_players:
             self.pending_request_players.pop(0)
 
@@ -827,7 +855,7 @@ class GameState:
         self.damage[chooser_id].add_card(opponent_card)
         self.damage[opponent_id].add_card(own_card)
         self.pending_request_resolution = None
-        self._finish_request_choice("steal_life")
+        self._finish_request_choice(chooser_id, "steal_life")
         return True
 
     def _handle_select_restructure_suit(self, action: SelectRestructureSuitAction) -> bool:
@@ -857,7 +885,7 @@ class GameState:
             return False
 
         self.pending_request_resolution = None
-        self._finish_request_choice("restructure", check_for_traps=True)
+        self._finish_request_choice(action.player_id, "restructure", check_for_traps=True)
         return True
 
     def _handle_select_plane_shift_direction(self, action: SelectPlaneShiftDirectionAction) -> bool:
@@ -906,7 +934,7 @@ class GameState:
             return False
 
         self.pending_request_resolution = None
-        self._finish_request_choice("plane_shift", check_for_traps=True)
+        self._finish_request_choice(action.player_id, "plane_shift", check_for_traps=True)
         return True
 
     def _handle_place_cards(self, action: PlaceCardsAction) -> bool:
@@ -1030,6 +1058,7 @@ class GameState:
         self.current_request_winner = None
         self.current_request_loser = None
         self.pending_request_players = []
+        self.chosen_request_types = []
         self.pending_request_resolution = None
         self.pending_placement_player = None
         self.pending_placement_cards = []
