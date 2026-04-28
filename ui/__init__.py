@@ -17,6 +17,7 @@ from .screen_manager import (
     ScreenManager,
     ScreenType,
     StartScreen,
+    RoomSelectionScreen,
     HowToPlayScreen,
     SettingsScreen,
     CoinFlipScreen,
@@ -29,7 +30,7 @@ from .input_handler import InputHandler
 
 __all__ = [
     "GameWindow", "AudioManager", "BoardRenderer",
-    "Screen", "ScreenManager", "ScreenType", "StartScreen", "HowToPlayScreen", "SettingsScreen",
+    "Screen", "ScreenManager", "ScreenType", "StartScreen", "RoomSelectionScreen", "HowToPlayScreen", "SettingsScreen",
     "CoinFlipScreen", "DraftScreen", "JackRevealScreen",
     "GameOverScreen", "GameScreen",
     "InputHandler"

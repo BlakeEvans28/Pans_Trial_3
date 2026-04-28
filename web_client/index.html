@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pan's Trial Browser</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app">
+        <header class="topbar">
+            <div>
+                <p class="eyebrow">Local Browser Version</p>
+                <h1>Pan's Trial</h1>
+            </div>
+            <div id="connection-pill" class="pill">Not Connected</div>
+        </header>
+
+        <main>
+            <section id="start-screen" class="screen active hero-screen">
+                <div class="hero-card">
+                    <p class="eyebrow">Two Browser Players</p>
+                    <h2>Enter the labyrinth from your browser.</h2>
+                    <p>Press Start Game, create or join a room, and the match begins when both players are present.</p>
+                    <button id="start-game-button" class="primary-button">Start Game</button>
+                </div>
+            </section>
+
+            <section id="room-screen" class="screen">
+                <div class="panel room-panel">
+                    <h2>Room Selection</h2>
+                    <p class="panel-copy">Create a room or enter an existing room code. Two players must join the same room before the match starts.</p>
+                    <label>
+                        <span>Player Name</span>
+                        <input id="player-name-input" type="text" maxlength="24" value="Player">
+                    </label>
+                    <label>
+                        <span>Room Code</span>
+                        <input id="room-code-input" type="text" maxlength="8" placeholder="ABCD">
+                    </label>
+                    <div class="button-row">
+                        <button id="create-room-button" class="primary-button">Create Room</button>
+                        <button id="join-room-button" class="secondary-button">Join Room</button>
+                    </div>
+                    <button id="room-back-button" class="tertiary-button">Back</button>
+                </div>
+            </section>
+
+            <section id="waiting-screen" class="screen">
+                <div class="panel waiting-panel">
+                    <h2>Waiting Room</h2>
+                    <p id="waiting-room-code" class="room-code"></p>
+                    <p id="waiting-message" class="panel-copy"></p>
+                    <div>
+                        <h3>Players</h3>
+                        <ul id="waiting-player-list" class="plain-list"></ul>
+                    </div>
+                    <button id="leave-room-button" class="tertiary-button">Leave Room</button>
+                </div>
+            </section>
+
+            <section id="game-screen" class="screen">
+                <div class="game-layout">
+                    <aside class="panel sidebar">
+                        <div class="section-block">
+                            <p class="eyebrow">Room</p>
+                            <h2 id="room-heading">----</h2>
+                            <p id="player-heading"></p>
+                        </div>
+
+                        <div class="section-block">
+                            <h3>Status</h3>
+                            <p id="status-text" class="status-text"></p>
+                            <p id="phase-text"></p>
+                            <p id="turn-text"></p>
+                        </div>
+
+                        <div class="section-block">
+                            <h3>Players</h3>
+                            <div id="player-panels"></div>
+                        </div>
+
+                        <div class="section-block">
+                            <h3>Suit Roles</h3>
+                            <div id="suit-role-list" class="tag-list"></div>
+                        </div>
+
+                        <div class="section-block">
+                            <button id="leave-game-button" class="tertiary-button">Leave Room</button>
+                        </div>
+                    </aside>
+
+                    <section class="board-column">
+                        <div class="panel board-panel">
+                            <div class="board-header">
+                                <div>
+                                    <p class="eyebrow">Labyrinth</p>
+                                    <h2>Board</h2>
+                                </div>
+                                <div id="notice-banner" class="notice-banner hidden"></div>
+                            </div>
+                            <div id="board-grid" class="board-grid"></div>
+                        </div>
+
+                        <div class="panel controls-panel">
+                            <div class="controls-header">
+                                <div>
+                                    <p class="eyebrow">Actions</p>
+                                    <h2>Controls</h2>
+                                </div>
+                            </div>
+                            <div id="controls-content" class="controls-content"></div>
+                        </div>
+                    </section>
+
+                    <aside class="panel log-panel">
+                        <div class="section-block">
+                            <h3>Match Log</h3>
+                            <div id="log-sections"></div>
+                        </div>
+                    </aside>
+                </div>
+            </section>
+        </main>
+
+        <div id="message-bar" class="message-bar hidden"></div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
