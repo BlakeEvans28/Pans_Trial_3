@@ -13,6 +13,14 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-04-28 - Codex
+Commit: `pending` - Retuned Restructure and scrollable UI layouts
+Summary:
+- Lowered the `Restructure` title so it starts closer to the old `Choose` baseline, and shifted the subtitle plus color-choice rows down to match.
+- Extended the mouse-wheel `How To Play` guide layout so its stone sections run about `1.4x` longer before reaching the bottom controls.
+- Increased the victory parchment/banner height to about `1.1x` its contained size on the end-game screen.
+- Capped the victory match-summary viewport at `6` visible text lines while keeping wheel scrolling for overflow.
+
 ## 2026-04-27 - Brandt Homan
 Commit: `pending` - Matched the omen-resolution subtitle to the outlined forest text
 Summary:

@@ -1447,7 +1447,8 @@ class GameScreen(Screen):
         side_padding = self.scale_x(22, 14)
         top_padding = self.scale_y(18, 12)
         bottom_padding = self.scale_y(20, 14)
-        header_height = self.scale_y(96, 72)
+        header_drop = self.scale_y(36, 26)
+        header_height = self.scale_y(96, 72) + header_drop
         row_gap = self.scale_y(10, 7)
         col_gap = self.scale_x(12, 8)
         cols = 2 if compact and panel_width >= self.scale_x(324, 272) else 1
@@ -2744,10 +2745,11 @@ class GameScreen(Screen):
         selected_suits = set(self.game.get_pending_restructure_suits())
         self._render_stone_panel(surface, panel_rect, dim_alpha=22, shadow_alpha=60)
         text_shift = self.scale_y(10, 6)
+        header_drop = self.scale_y(36, 26)
 
         title = self.popup_title_font.render("Restructure", True, (240, 236, 214))
         content_x = panel_rect.x + self.scale_x(28, 18)
-        surface.blit(title, (content_x, panel_rect.y + self.scale_y(18, 12) + text_shift))
+        surface.blit(title, (content_x, panel_rect.y + self.scale_y(18, 12) + text_shift + header_drop))
 
         subtitle_line_height = max(self.scale_y(18, 14), self.popup_small_font.get_linesize())
 
@@ -2758,7 +2760,7 @@ class GameScreen(Screen):
             (214, 214, 214),
             pygame.Rect(
                 content_x,
-                panel_rect.y + self.scale_y(54, 38) + text_shift,
+                panel_rect.y + self.scale_y(54, 38) + text_shift + header_drop,
                 panel_rect.width - self.scale_x(56, 36),
                 subtitle_line_height * 2,
             ),

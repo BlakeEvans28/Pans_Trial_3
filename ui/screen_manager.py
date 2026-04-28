@@ -1000,6 +1000,7 @@ class HowToPlayScreen(Screen):
             self.scale_y(112, 86) if columns == 1 else self.scale_y(76, 58),
             (viewport_rect.height - gap * (rows - 1)) // rows if columns > 1 else 0,
         )
+        card_height = max(1, int(round(card_height * 1.4)))
         content_height = rows * card_height + (rows - 1) * gap
         self.max_scroll = max(0, content_height - viewport_rect.height)
         self.scroll_offset = min(self.scroll_offset, self.max_scroll)
@@ -2929,7 +2930,13 @@ class GameOverScreen(Screen):
             return
 
         panel_top = start_y + max(0, (available_height - panel_size[1]) // 2)
-        panel_height = max(1, int(panel_size[1] * 0.8))
+        panel_height = max(
+            1,
+            min(
+                max_bottom - panel_top,
+                int(panel_size[1] * 1.1),
+            ),
+        )
         panel_rect = pygame.Rect(
             (self.window.WINDOW_WIDTH - panel_size[0]) // 2,
             panel_top,
@@ -3009,15 +3016,22 @@ class GameOverScreen(Screen):
         summary_title_surface_rect = summary_title.get_rect(center=summary_title_rect.center)
         surface.blit(summary_title, summary_title_surface_rect)
 
+        summary_body_font = self._get_game_font(self.font_size(21, 15))
+        summary_line_height = max(self.scale_y(20, 14), summary_body_font.get_linesize())
+        summary_visible_lines = 6
+        max_text_frame_height = summary_line_height * summary_visible_lines
         text_frame_rect = pygame.Rect(
             content_rect.x + self.scale_x(6, 4),
             summary_title_rect.bottom + self.scale_y(10, 6),
             max(1, content_rect.width - 2 * self.scale_x(6, 4)),
             max(
                 1,
-                content_rect.bottom
-                - self.scale_y(28, 20)
-                - (summary_title_rect.bottom + self.scale_y(10, 6)),
+                min(
+                    content_rect.bottom
+                    - self.scale_y(28, 20)
+                    - (summary_title_rect.bottom + self.scale_y(10, 6)),
+                    max_text_frame_height,
+                ),
             ),
         )
         frame_fill = pygame.Surface(text_frame_rect.size, pygame.SRCALPHA)

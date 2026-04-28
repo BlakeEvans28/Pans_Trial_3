@@ -5,4 +5,4 @@
 - we could get rid of colors (if the above proposal is agreed upon)
 
 # For AI
-- one the victory screen, have the scroll with the game status have the ability to have a scrollable match summary (using the mousepad). If the text This will solve the problem of the text overlapping
+
