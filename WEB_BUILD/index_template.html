@@ -161,20 +161,79 @@ asyncio.run(custom_site())
     --><script>
       window.panTrialAudio = {
           currentMusic: null,
+          currentMusicSrc: "",
+          pendingMusicSources: null,
+          pendingMusicVolume: 0.5,
           musicVolume: 0.275,
           oneShotVolume: 0.5,
-          _getMusic: function(src) {
-              if (!this._musicCache) {
-                  this._musicCache = {};
+          _normalizeSources: function(src) {
+              if (!src) { return []; }
+              if (Array.isArray(src)) {
+                  return src.filter(Boolean);
               }
-              if (!this._musicCache[src]) {
-                  var audio = new Audio(src);
-                  audio.preload = "auto";
-                  audio.loop = true;
-                  audio.volume = this.musicVolume;
-                  this._musicCache[src] = audio;
+              return String(src).split(/\r?\n/).map(function(item) {
+                  return item.trim();
+              }).filter(Boolean);
+          },
+          _getMusicElement: function() {
+              if (!this.currentMusic) {
+                  this.currentMusic = new Audio();
+                  this.currentMusic.preload = "auto";
+                  this.currentMusic.loop = true;
+                  this.currentMusic.volume = this.musicVolume;
               }
-              return this._musicCache[src];
+              return this.currentMusic;
+          },
+          _bindRetryEvents: function() {
+              if (this._retryEventsBound) { return; }
+              var self = this;
+              var retry = function() {
+                  if (self.pendingMusicSources) {
+                      self._tryMusicSources(self.pendingMusicSources, self.pendingMusicVolume, 0);
+                  }
+              };
+              window.addEventListener("pointerdown", retry, true);
+              window.addEventListener("keydown", retry, true);
+              window.addEventListener("touchend", retry, true);
+              this._retryEventsBound = true;
+          },
+          _tryMusicSources: function(sources, volume, index) {
+              if (!sources || index >= sources.length) { return false; }
+              this.setVolume(volume);
+              var self = this;
+              var src = sources[index];
+              var next = this._getMusicElement();
+              next.onerror = function() {
+                  if (self.currentMusicSrc === src) {
+                      self._tryMusicSources(sources, volume, index + 1);
+                  }
+              };
+              if (this.currentMusicSrc !== src) {
+                  next.pause();
+                  next.src = src;
+                  next.currentTime = 0;
+                  this.currentMusicSrc = src;
+              }
+              next.loop = true;
+              next.volume = this.musicVolume;
+              var promise = next.play();
+              if (promise && promise.then) {
+                  promise.then(function() {
+                      self.pendingMusicSources = null;
+                  }).catch(function(error) {
+                      console.warn("Pan's Trial music playback failed", error);
+                      if (error && error.name === "NotAllowedError") {
+                          self.pendingMusicSources = sources;
+                          self.pendingMusicVolume = volume;
+                          self._bindRetryEvents();
+                      } else {
+                          self._tryMusicSources(sources, volume, index + 1);
+                      }
+                  });
+              } else {
+                  self.pendingMusicSources = null;
+              }
+              return true;
           },
           setVolume: function(volume) {
               var clamped = Math.max(0, Math.min(1, Number(volume) || 0));
@@ -185,28 +244,17 @@ asyncio.run(custom_site())
               }
           },
           playMusic: function(src, volume) {
-              if (!src) { return false; }
-              this.setVolume(volume);
-              var next = this._getMusic(src);
-              if (this.currentMusic && this.currentMusic !== next) {
-                  this.currentMusic.pause();
-                  this.currentMusic.currentTime = 0;
-              }
-              this.currentMusic = next;
-              next.volume = this.musicVolume;
-              var promise = next.play();
-              if (promise && promise.catch) {
-                  promise.catch(function(error) {
-                      console.warn("Pan's Trial music playback failed", error);
-                  });
-              }
-              return true;
+              var sources = this._normalizeSources(src);
+              if (!sources.length) { return false; }
+              this._bindRetryEvents();
+              return this._tryMusicSources(sources, volume, 0);
           },
           stopMusic: function() {
               if (!this.currentMusic) { return; }
               this.currentMusic.pause();
               this.currentMusic.currentTime = 0;
-              this.currentMusic = null;
+              this.currentMusicSrc = "";
+              this.pendingMusicSources = null;
           },
           playOneShot: function(src, volume) {
               if (!src) { return false; }

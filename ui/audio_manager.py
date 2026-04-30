@@ -50,12 +50,13 @@ class AudioManager:
         self.volume = 0.5
         self.sounds: dict[str, pygame.mixer.Sound] = {}
         self.current_music: str | None = None
-        self.track_paths: dict[str, Path | None] = {}
-        self.track_urls: dict[str, str | None] = {}
+        self.track_paths: dict[str, tuple[Path, ...]] = {}
+        self.track_urls: dict[str, tuple[str, ...]] = {}
+        self.last_error: str | None = None
 
         if self.is_web:
             self.track_urls = {
-                name: next((candidate for candidate in candidates), None)
+                name: tuple(candidates)
                 for name, candidates in self.WEB_MUSIC_TRACKS.items()
             }
             self._ensure_web_ready()
@@ -66,7 +67,7 @@ class AudioManager:
     def _refresh_track_paths(self) -> None:
         """Re-scan disk so desktop audio can find the checked-in music files."""
         self.track_paths = {
-            name: next((candidate for candidate in candidates if candidate.exists()), None)
+            name: tuple(candidate for candidate in candidates if candidate.exists())
             for name, candidates in self.MUSIC_TRACKS.items()
         }
 
@@ -90,8 +91,9 @@ class AudioManager:
             bridge.setVolume(self.volume)
             self.enabled = True
             return True
-        except Exception:
+        except Exception as exc:
             self.enabled = False
+            self.last_error = f"Browser audio unavailable: {exc}"
             return False
 
     def _apply_desktop_volume(self) -> None:
@@ -118,8 +120,9 @@ class AudioManager:
             self.enabled = True
             self._apply_desktop_volume()
             return True
-        except pygame.error:
+        except pygame.error as exc:
             self.enabled = False
+            self.last_error = f"Desktop audio unavailable: {exc}"
             return False
 
     def _build_sounds(self) -> None:
@@ -139,8 +142,9 @@ class AudioManager:
                 return
             try:
                 bridge.setVolume(self.volume)
-            except Exception:
+            except Exception as exc:
                 self.enabled = False
+                self.last_error = f"Browser audio volume update failed: {exc}"
             return
 
         if not self._ensure_desktop_ready():
@@ -169,20 +173,28 @@ class AudioManager:
         if self.current_music == track_name and pygame.mixer.music.get_busy():
             return
 
-        path = self.track_paths.get(track_name)
-        if path is None:
+        paths = self.track_paths.get(track_name, ())
+        if not paths:
             self._refresh_track_paths()
-            path = self.track_paths.get(track_name)
-        if path is None:
+            paths = self.track_paths.get(track_name, ())
+        if not paths:
+            self.last_error = f"No audio files found for music track: {track_name}"
             return
 
-        try:
-            pygame.mixer.music.load(str(path))
-            self._apply_desktop_volume()
-            pygame.mixer.music.play(loops=-1, fade_ms=650)
-            self.current_music = track_name
-        except pygame.error:
-            self.current_music = None
+        errors = []
+        for path in paths:
+            try:
+                pygame.mixer.music.load(str(path))
+                self._apply_desktop_volume()
+                pygame.mixer.music.play(loops=-1, fade_ms=650)
+                self.current_music = track_name
+                self.last_error = None
+                return
+            except pygame.error as exc:
+                errors.append(f"{path.name}: {exc}")
+
+        self.current_music = None
+        self.last_error = f"Unable to play {track_name} music. Tried " + "; ".join(errors)
 
     def _play_web_music(self, track_name: str) -> None:
         """Ask the browser helper to play one of the streamed music tracks."""
@@ -191,17 +203,19 @@ class AudioManager:
         if self.current_music == track_name:
             return
 
-        url = self.track_urls.get(track_name)
+        urls = self.track_urls.get(track_name, ())
         bridge = self._get_web_audio_bridge()
-        if url is None or bridge is None:
+        if not urls or bridge is None:
             return
 
         try:
-            bridge.playMusic(url, self.volume)
+            bridge.playMusic("\n".join(urls), self.volume)
             self.current_music = track_name
-        except Exception:
+            self.last_error = None
+        except Exception as exc:
             self.current_music = None
             self.enabled = False
+            self.last_error = f"Browser music playback failed: {exc}"
 
     def stop_music(self) -> None:
         """Fade out any active music."""
@@ -210,8 +224,9 @@ class AudioManager:
             if bridge is not None:
                 try:
                     bridge.stopMusic()
-                except Exception:
+                except Exception as exc:
                     self.enabled = False
+                    self.last_error = f"Browser music stop failed: {exc}"
             self.current_music = None
             return
 
@@ -236,8 +251,9 @@ class AudioManager:
                 return
             try:
                 bridge.playOneShot(url, self.volume)
-            except Exception:
+            except Exception as exc:
                 self.enabled = False
+                self.last_error = f"Browser sound playback failed: {exc}"
             return
 
         if not self._ensure_desktop_ready():

@@ -3,6 +3,7 @@ Tests for Pan's Trial game rules.
 """
 
 import os
+from pathlib import Path
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
@@ -17,6 +18,7 @@ from engine import (
     PlaceCardsAction
 )
 from deck_utils import setup_game_deck, create_6x6_labyrinth, draft_hands, get_jack_suit_order
+from ui.audio_manager import AudioManager
 from ui.input_handler import InputHandler
 from ui.board_renderer import BoardRenderer
 from ui.game_screen import GameScreen
@@ -121,6 +123,75 @@ def game_setup():
     game.phase = GamePhase.TRAVERSING
     
     return game
+
+
+def test_audio_manager_tries_next_desktop_music_candidate(monkeypatch):
+    """A bad preferred MP3 should not silence the whole maze soundtrack."""
+    first_track = Path("PanPhase1_Updated.mp3")
+    fallback_track = Path("PanPhase1.mp3")
+
+    audio = AudioManager.__new__(AudioManager)
+    audio.allow_music_files = True
+    audio.is_web = False
+    audio.current_music = None
+    audio.track_paths = {"phase": (first_track, fallback_track)}
+    audio.last_error = None
+    audio._ensure_desktop_ready = lambda: True
+    audio._refresh_track_paths = lambda: None
+    audio._apply_desktop_volume = lambda: None
+
+    attempts = []
+    plays = []
+
+    class FakeMusic:
+        def get_busy(self) -> bool:
+            return False
+
+        def load(self, path: str) -> None:
+            attempts.append(Path(path).name)
+            if Path(path) == first_track:
+                raise pygame.error("bad codec")
+
+        def play(self, loops: int, fade_ms: int) -> None:
+            plays.append((loops, fade_ms))
+
+    monkeypatch.setattr(pygame.mixer, "music", FakeMusic())
+
+    audio.play_phase_music()
+
+    assert attempts == ["PanPhase1_Updated.mp3", "PanPhase1.mp3"]
+    assert plays == [(-1, 650)]
+    assert audio.current_music == "phase"
+    assert audio.last_error is None
+
+
+def test_audio_manager_sends_web_music_candidates_as_newline_list():
+    """The browser bridge receives every candidate so it can retry blocked tracks."""
+    audio = AudioManager.__new__(AudioManager)
+    audio.allow_music_files = True
+    audio.is_web = True
+    audio.current_music = None
+    audio.track_urls = {"phase": ("audio/PanPhase1_Updated.mp3", "audio/PanPhase1.mp3")}
+    audio.enabled = True
+    audio.volume = 0.5
+    audio.last_error = None
+
+    class Bridge:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def playMusic(self, src: str, volume: float) -> None:
+            self.calls.append((src, volume))
+
+    bridge = Bridge()
+    audio._ensure_web_ready = lambda: True
+    audio._get_web_audio_bridge = lambda: bridge
+
+    audio.play_phase_music()
+
+    assert bridge.calls == [("audio/PanPhase1_Updated.mp3\naudio/PanPhase1.mp3", 0.5)]
+    assert audio.current_music == "phase"
+    assert audio.last_error is None
 
 
 def test_card_combat_value():
