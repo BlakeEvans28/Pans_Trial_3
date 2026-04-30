@@ -65,6 +65,26 @@ If you download the full project release, the included rule tests can be run wit
 .\.venv\Scripts\python.exe -m pytest tests\test_rules.py -q
 ```
 
+## Build the Web Version
+
+The browser build script uses the pygame-web Python 3.12 runtime. From the full project folder, create a fresh Python 3.12 environment and install the web build requirements:
+
+```powershell
+py -3.12 -m venv .venv-web
+.\.venv-web\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements-web.txt
+python build_web.py --build-only
+```
+
+The build output is written to `WEB_BUILD\pans_trial_web.zip`. To build and serve it locally in one command, omit `--build-only`:
+
+```powershell
+python build_web.py --port 8000
+```
+
+Then open `http://localhost:8000` in a browser while the command is still running.
+
 ## Build the Executable
 
 If you download the full project release, the submitted executable can be rebuilt with PyInstaller and the included slim spec file. The spec removes unused large pygame_gui CJK font bundles so the single executable stays below the 25 MB upload limit.

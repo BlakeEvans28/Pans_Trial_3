@@ -31,6 +31,7 @@ PROJECT_DIRS = (
 FRAMEBUFFER_WIDTH = 1200
 FRAMEBUFFER_HEIGHT = 900
 ZIP_NAME = "pans_trial_web.zip"
+DEPENDENCY_INSTALL_HINT = "Install web build dependencies with: python -m pip install -r requirements-web.txt"
 WEB_ASSET_FILES = (
     "appeasing_pan.png",
     "Ballista.png",
@@ -117,11 +118,14 @@ def parse_args() -> argparse.Namespace:
 def resolve_package_root(package_name: str) -> Path:
     spec = importlib.util.find_spec(package_name)
     if spec is None:
-        raise SystemExit(f"Required package '{package_name}' is not installed for this Python interpreter.")
+        raise SystemExit(
+            f"Required package '{package_name}' is not installed for this Python interpreter.\n"
+            f"{DEPENDENCY_INSTALL_HINT}"
+        )
     if spec.submodule_search_locations:
         return Path(next(iter(spec.submodule_search_locations))).resolve()
     if spec.origin is None:
-        raise SystemExit(f"Unable to locate files for package '{package_name}'.")
+        raise SystemExit(f"Unable to locate files for package '{package_name}'.\n{DEPENDENCY_INSTALL_HINT}")
     return Path(spec.origin).resolve().parent
 
 
@@ -367,6 +371,7 @@ def main() -> None:
     print("Runtime note : Bundling pygame_gui + i18n into the archive for pygbag.")
     if Image is None:
         print("Asset note   : Pillow not found, so web art will be copied without image optimization.")
+        print(f"              {DEPENDENCY_INSTALL_HINT}")
 
     original_asset_bytes, staged_asset_bytes = stage_project(project_root, staging_root)
     create_bundle_archives(staging_root, build_web_dir, staging_root.name)

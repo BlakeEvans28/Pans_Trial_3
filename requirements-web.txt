@@ -1,0 +1,8 @@
+# Dependencies needed to run build_web.py and stage Pan's Trial for the browser.
+# The web loader is pinned to Python 3.12 and the pygame-web pygame-ce 2.5.7 wheel.
+pygame-ce==2.5.7
+pygame_gui==0.6.14
+python-i18n==0.3.9
+
+# Used by build_web.py to shrink image assets and create the web favicon.
+Pillow>=10.0.0
