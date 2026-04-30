@@ -9,8 +9,14 @@ import importlib.util
 import os
 import shutil
 import tarfile
+import urllib.request
 import zipfile
 from pathlib import Path
+
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 
 
 PROJECT_FILES = (
@@ -21,11 +27,61 @@ PROJECT_FILES = (
 PROJECT_DIRS = (
     "engine",
     "ui",
-    "assets",
 )
 FRAMEBUFFER_WIDTH = 1200
 FRAMEBUFFER_HEIGHT = 900
 ZIP_NAME = "pans_trial_web.zip"
+WEB_ASSET_FILES = (
+    "appeasing_pan.png",
+    "Ballista.png",
+    "banner.png",
+    "labrynth.png",
+    "MedievalSharp.ttf",
+    "p1.png",
+    "p2.png",
+    "PanTitle.png",
+    "Pan_Background.png",
+    "Pan_Icon.png",
+    "player_portrait_micah.png",
+    "stone.png",
+    "Stone_Wall.jpg",
+    "tarot_ballista.png",
+    "tarot_trap.png",
+    "tarot_wall.png",
+    "tarot_weapons.png",
+    "Trap.png",
+    "traversing.png",
+    "victory.png",
+    *tuple(f"cards/Weapon{value:02}.png" for value in range(1, 13)),
+)
+WEB_JPEG_ASSET_FILES = {
+    "PanTitle.png",
+    "Pan_Background.png",
+    "tarot_ballista.png",
+    "tarot_trap.png",
+    "tarot_wall.png",
+    "tarot_weapons.png",
+}
+WEB_IMAGE_LONGEST_EDGE_CAPS = {
+    "appeasing_pan.png": 1024,
+    "Ballista.png": 512,
+    "banner.png": 768,
+    "labrynth.png": 900,
+    "p1.png": 640,
+    "p2.png": 640,
+    "Pan_Icon.png": 1024,
+    "player_portrait_micah.png": 256,
+    "stone.png": 1024,
+    "Stone_Wall.jpg": 512,
+    "tarot_ballista.png": 768,
+    "tarot_trap.png": 768,
+    "tarot_wall.png": 768,
+    "tarot_weapons.png": 768,
+    "Trap.png": 512,
+    "traversing.png": 1024,
+    "victory.png": 768,
+    **{f"cards/Weapon{value:02}.png": 384 for value in range(1, 13)},
+}
 PYGAME_GUI_MINIMAL_DATA_FILES = (
     "data/__init__.py",
     "data/default_theme.json",
@@ -37,6 +93,14 @@ PYGAME_GUI_MINIMAL_DATA_FILES = (
     "data/translations/__init__.py",
     "data/translations/pygame-gui.en.json",
 )
+FAVICON_MAX_SIZE = 128
+PYGBAG_CDN_CACHE_DIRNAME = ".pygbag_cdn_cache"
+PYGBAG_LOCAL_CDN_FILES = {
+    "cdn/cp312/pygame_ce-2.5.7-cp312-cp312-wasm32_bi_emscripten.whl": (
+        "https://pygame-web.github.io/cdn/cp312/"
+        "pygame_ce-2.5.7-cp312-cp312-wasm32_bi_emscripten.whl"
+    ),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,7 +151,70 @@ def copy_runtime_dependencies(staging_root: Path) -> None:
     copy_package_tree(i18n_root, staging_root / "i18n", "tests")
 
 
-def stage_project(project_root: Path, staging_root: Path) -> None:
+def _get_resample_filter():
+    if Image is None:
+        return None
+    if hasattr(Image, "Resampling"):
+        return Image.Resampling.LANCZOS
+    return Image.LANCZOS
+
+
+def get_web_output_relative_path(relative_path: str) -> str:
+    if relative_path in WEB_JPEG_ASSET_FILES:
+        return str(Path(relative_path).with_suffix(".jpg")).replace("\\", "/")
+    return relative_path
+
+
+def copy_web_asset(source_root: Path, destination_root: Path, relative_path: str) -> tuple[int, int]:
+    source_path = source_root / relative_path
+    if not source_path.exists():
+        raise SystemExit(f"Required web asset is missing: {source_path}")
+
+    destination_relative_path = get_web_output_relative_path(relative_path)
+    destination_path = destination_root / destination_relative_path
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+
+    original_size = source_path.stat().st_size
+    suffix = source_path.suffix.lower()
+    if Image is None or suffix not in {".png", ".jpg", ".jpeg"}:
+        shutil.copy2(source_path, destination_path)
+        return original_size, destination_path.stat().st_size
+
+    resample_filter = _get_resample_filter()
+    with Image.open(source_path) as image:
+        max_edge = WEB_IMAGE_LONGEST_EDGE_CAPS.get(relative_path)
+        if max_edge is not None and max(image.size) > max_edge:
+            scale = max_edge / max(image.size)
+            resized_size = (
+                max(1, int(round(image.width * scale))),
+                max(1, int(round(image.height * scale))),
+            )
+            image = image.resize(resized_size, resample_filter)
+
+        if destination_path.suffix.lower() == ".png":
+            image.save(destination_path, format="PNG", optimize=True, compress_level=9)
+        else:
+            image = image.convert("RGB")
+            image.save(destination_path, format="JPEG", optimize=True, progressive=True, quality=90)
+
+    return original_size, destination_path.stat().st_size
+
+
+def copy_web_assets(project_root: Path, staging_root: Path) -> tuple[int, int]:
+    source_root = project_root / "assets"
+    destination_root = staging_root / "assets"
+    original_total = 0
+    staged_total = 0
+
+    for relative_path in WEB_ASSET_FILES:
+        original_size, staged_size = copy_web_asset(source_root, destination_root, relative_path)
+        original_total += original_size
+        staged_total += staged_size
+
+    return original_total, staged_total
+
+
+def stage_project(project_root: Path, staging_root: Path) -> tuple[int, int]:
     if staging_root.exists():
         shutil.rmtree(staging_root)
     staging_root.mkdir(parents=True)
@@ -102,8 +229,10 @@ def stage_project(project_root: Path, staging_root: Path) -> None:
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
         )
 
+    original_asset_bytes, staged_asset_bytes = copy_web_assets(project_root, staging_root)
     copy_runtime_dependencies(staging_root)
     (staging_root / "BUILD_MODE.txt").write_text("web\n", encoding="utf-8")
+    return original_asset_bytes, staged_asset_bytes
 
 
 def iter_staging_files(staging_root: Path):
@@ -137,6 +266,36 @@ def create_bundle_archives(staging_root: Path, build_web_dir: Path, bundle_name:
             tar_archive.add(file_path, arcname=arcname, recursive=False)
 
 
+def _download_cached_file(url: str, cache_path: Path) -> Path:
+    """Cache remote pygbag runtime files so local web testing works without pygbag's dev server."""
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    if cache_path.exists():
+        return cache_path
+
+    try:
+        with urllib.request.urlopen(url) as response, cache_path.open("wb") as destination:
+            shutil.copyfileobj(response, destination)
+    except Exception as exc:
+        raise SystemExit(f"Failed to download required pygbag runtime file: {url}\n{exc}") from exc
+
+    return cache_path
+
+
+def install_local_pygbag_cdn(project_root: Path, build_web_dir: Path) -> int:
+    """Mirror the minimal localhost /cdn files pygbag expects during local development."""
+    cache_root = project_root / "WEB_BUILD" / PYGBAG_CDN_CACHE_DIRNAME
+    total_bytes = 0
+
+    for relative_path, url in PYGBAG_LOCAL_CDN_FILES.items():
+        cached_file = _download_cached_file(url, cache_root / relative_path)
+        destination_path = build_web_dir / relative_path
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(cached_file, destination_path)
+        total_bytes += destination_path.stat().st_size
+
+    return total_bytes
+
+
 def install_index_html(project_root: Path, build_web_dir: Path, bundle_name: str) -> None:
     template_path = project_root / "WEB_BUILD" / "index_template.html"
     html = template_path.read_text(encoding="utf-8")
@@ -155,8 +314,17 @@ def install_index_html(project_root: Path, build_web_dir: Path, bundle_name: str
 
 def install_favicon(project_root: Path, build_web_dir: Path) -> None:
     favicon_src = project_root / "assets" / "Pan_Icon.png"
-    if favicon_src.exists():
-        shutil.copy2(favicon_src, build_web_dir / "favicon.png")
+    favicon_dst = build_web_dir / "favicon.png"
+    if not favicon_src.exists():
+        return
+    if Image is None:
+        shutil.copy2(favicon_src, favicon_dst)
+        return
+
+    resample_filter = _get_resample_filter()
+    with Image.open(favicon_src) as image:
+        image.thumbnail((FAVICON_MAX_SIZE, FAVICON_MAX_SIZE), resample_filter)
+        image.save(favicon_dst, format="PNG", optimize=True, compress_level=9)
 
 
 def create_zip(build_web_dir: Path, output_zip: Path) -> None:
@@ -197,14 +365,22 @@ def main() -> None:
     print(f"Staging root : {staging_root}")
     print("Audio note   : MP3 music is excluded from the web build.")
     print("Runtime note : Bundling pygame_gui + i18n into the archive for pygbag.")
+    if Image is None:
+        print("Asset note   : Pillow not found, so web art will be copied without image optimization.")
 
-    stage_project(project_root, staging_root)
+    original_asset_bytes, staged_asset_bytes = stage_project(project_root, staging_root)
     create_bundle_archives(staging_root, build_web_dir, staging_root.name)
     install_index_html(project_root, build_web_dir, staging_root.name)
     install_favicon(project_root, build_web_dir)
+    local_cdn_bytes = install_local_pygbag_cdn(project_root, build_web_dir)
     create_zip(build_web_dir, output_zip)
 
+    original_asset_mb = original_asset_bytes / 1024 / 1024
+    staged_asset_mb = staged_asset_bytes / 1024 / 1024
+    saved_asset_mb = original_asset_mb - staged_asset_mb
     build_size_mb = output_zip.stat().st_size / 1024 / 1024
+    print(f"Web assets   : {staged_asset_mb:.1f} MB (saved {saved_asset_mb:.1f} MB from {original_asset_mb:.1f} MB)")
+    print(f"Local CDN    : {local_cdn_bytes / 1024 / 1024:.1f} MB (for localhost pygbag dependency loading)")
     print(f"Web zip      : {output_zip} ({build_size_mb:.1f} MB)")
 
     if not args.build_only:

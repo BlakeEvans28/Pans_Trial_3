@@ -48,11 +48,14 @@ class Screen:
     def __init__(self, window: "GameWindow"):
         self.window = window
         self.ui_manager = window.ui_manager
-        self._background_base = self._load_image(self.PAN_BACKGROUND_PATH)
+        self._background_base = None
+        self._background_loaded = False
         self._background_cache: dict[tuple[int, int], pygame.Surface] = {}
-        self._wood_icon_base = self._crop_wood_icon(self._load_image(self.PAN_ICON_PATH))
+        self._wood_icon_base = None
+        self._wood_icon_loaded = False
         self._wood_icon_cache: dict[tuple[tuple[int, int], bool], pygame.Surface] = {}
-        self._stone_panel_base = self._crop_stone_panel(self._load_image(self.STONE_PANEL_PATH))
+        self._stone_panel_base = None
+        self._stone_panel_loaded = False
         self._stone_panel_cache: dict[tuple[int, int], pygame.Surface] = {}
         self._title_style_font_cache: dict[int, pygame.font.Font] = {}
 
@@ -78,12 +81,45 @@ class Screen:
 
     def _load_image(self, path: Path) -> pygame.Surface | None:
         """Load a screen image if the asset is available."""
-        if not path.exists():
-            return None
-        try:
-            return pygame.image.load(str(path)).convert_alpha()
-        except pygame.error:
-            return None
+        candidate_paths = [path]
+        suffix = path.suffix.lower()
+        if suffix == ".png":
+            candidate_paths.extend([path.with_suffix(".jpg"), path.with_suffix(".jpeg")])
+        elif suffix in {".jpg", ".jpeg"}:
+            candidate_paths.append(path.with_suffix(".png"))
+
+        for candidate_path in candidate_paths:
+            if not candidate_path.exists():
+                continue
+            try:
+                loaded = pygame.image.load(str(candidate_path))
+                if candidate_path.suffix.lower() in {".jpg", ".jpeg"}:
+                    return loaded.convert()
+                return loaded.convert_alpha()
+            except pygame.error:
+                continue
+        return None
+
+    def _ensure_background_base(self) -> pygame.Surface | None:
+        """Load the shared background art only when a screen actually needs it."""
+        if not self._background_loaded:
+            self._background_base = self._load_image(self.PAN_BACKGROUND_PATH)
+            self._background_loaded = True
+        return self._background_base
+
+    def _ensure_wood_icon_base(self) -> pygame.Surface | None:
+        """Load and crop the shared wood button art on demand."""
+        if not self._wood_icon_loaded:
+            self._wood_icon_base = self._crop_wood_icon(self._load_image(self.PAN_ICON_PATH))
+            self._wood_icon_loaded = True
+        return self._wood_icon_base
+
+    def _ensure_stone_panel_base(self) -> pygame.Surface | None:
+        """Load and crop the shared stone panel art on demand."""
+        if not self._stone_panel_loaded:
+            self._stone_panel_base = self._crop_stone_panel(self._load_image(self.STONE_PANEL_PATH))
+            self._stone_panel_loaded = True
+        return self._stone_panel_base
 
     def _crop_wood_icon(self, image: pygame.Surface | None) -> pygame.Surface | None:
         """Crop Pan_Icon to the visible plank area for reusable UI buttons."""
@@ -138,13 +174,14 @@ class Screen:
 
     def _render_screen_background(self, surface: pygame.Surface, fallback: tuple[int, int, int] = (16, 20, 30)) -> None:
         """Render Pan_Background with the same cover-scaling rule as the title art."""
-        if self._background_base is None:
+        background_base = self._ensure_background_base()
+        if background_base is None:
             surface.fill(fallback)
             return
 
-        size = self._get_cover_scaled_size(self._background_base, surface.get_size())
+        size = self._get_cover_scaled_size(background_base, surface.get_size())
         if size not in self._background_cache:
-            self._background_cache[size] = pygame.transform.smoothscale(self._background_base, size)
+            self._background_cache[size] = pygame.transform.smoothscale(background_base, size)
         surface.blit(self._background_cache[size], (0, 0))
 
     def _get_cover_scaled_size(self, image: pygame.Surface, frame_size: tuple[int, int]) -> tuple[int, int]:
@@ -158,23 +195,26 @@ class Screen:
 
     def _get_wood_icon_height_for_width(self, width: int) -> int:
         """Return Pan_Icon height for a width while preserving aspect ratio."""
-        if self._wood_icon_base is None or self._wood_icon_base.get_width() <= 0:
+        wood_icon_base = self._ensure_wood_icon_base()
+        if wood_icon_base is None or wood_icon_base.get_width() <= 0:
             return max(self.scale_y(64, 44), width // 3)
-        return max(1, int(width * self._wood_icon_base.get_height() / self._wood_icon_base.get_width()))
+        return max(1, int(width * wood_icon_base.get_height() / wood_icon_base.get_width()))
 
     def _get_wood_icon_width_for_height(self, height: int) -> int:
         """Return Pan_Icon width for a height while preserving aspect ratio."""
-        if self._wood_icon_base is None or self._wood_icon_base.get_height() <= 0:
+        wood_icon_base = self._ensure_wood_icon_base()
+        if wood_icon_base is None or wood_icon_base.get_height() <= 0:
             return max(1, height * 3)
-        return max(1, int(height * self._wood_icon_base.get_width() / self._wood_icon_base.get_height()))
+        return max(1, int(height * wood_icon_base.get_width() / wood_icon_base.get_height()))
 
     def _get_scaled_wood_icon(self, size: tuple[int, int], bright: bool) -> pygame.Surface | None:
         """Return the wood icon scaled to a rect, brightened when hovered."""
-        if self._wood_icon_base is None:
+        wood_icon_base = self._ensure_wood_icon_base()
+        if wood_icon_base is None:
             return None
         key = (size, bright)
         if key not in self._wood_icon_cache:
-            icon = pygame.transform.smoothscale(self._wood_icon_base, size)
+            icon = pygame.transform.smoothscale(wood_icon_base, size)
             if bright:
                 icon = icon.copy()
                 icon.fill((58, 58, 58, 0), special_flags=pygame.BLEND_RGBA_ADD)
@@ -226,12 +266,13 @@ class Screen:
 
     def _get_scaled_stone_panel(self, size: tuple[int, int]) -> pygame.Surface | None:
         """Return stone art stretched with preserved borders so it fits any panel size."""
-        if self._stone_panel_base is None or size[0] <= 0 or size[1] <= 0:
+        stone_panel_base = self._ensure_stone_panel_base()
+        if stone_panel_base is None or size[0] <= 0 or size[1] <= 0:
             return None
         if size not in self._stone_panel_cache:
             panel = pygame.Surface(size, pygame.SRCALPHA)
-            src_w = self._stone_panel_base.get_width()
-            src_h = self._stone_panel_base.get_height()
+            src_w = stone_panel_base.get_width()
+            src_h = stone_panel_base.get_height()
             src_border_x = max(1, int(src_w * 0.125))
             src_border_y = max(1, int(src_h * 0.125))
             # Cap preserved border thickness by width too, so tall plaques keep a usable center.
@@ -257,7 +298,7 @@ class Screen:
                 for col in range(3):
                     self._blit_scaled_patch(
                         panel,
-                        self._stone_panel_base,
+                        stone_panel_base,
                         pygame.Rect(
                             src_x[col],
                             src_y[row],
@@ -619,8 +660,10 @@ class StartScreen(Screen):
         self.menu_font = None
         self.menu_buttons: list[tuple[str, str, pygame.Rect]] = []
         self.hovered_menu_action = None
-        self._title_base = self._load_image(self.ASSET_ROOT / "PanTitle.png")
-        self._icon_base = self._load_image(self.ASSET_ROOT / "Pan_Icon.png")
+        self._title_base = None
+        self._title_loaded = False
+        self._icon_base = None
+        self._icon_loaded = False
         self._title_cache: dict[tuple[int, int], pygame.Surface] = {}
         self._icon_cache: dict[tuple[tuple[int, int], bool], pygame.Surface] = {}
         self._refresh_fonts()
@@ -647,12 +690,21 @@ class StartScreen(Screen):
 
     def _load_image(self, path: Path) -> pygame.Surface | None:
         """Load a title-screen image if the asset is available."""
-        if not path.exists():
-            return None
-        try:
-            return pygame.image.load(str(path)).convert_alpha()
-        except pygame.error:
-            return None
+        return super()._load_image(path)
+
+    def _ensure_title_base(self) -> pygame.Surface | None:
+        """Load the full-screen title artwork only when it is first drawn."""
+        if not self._title_loaded:
+            self._title_base = self._load_image(self.ASSET_ROOT / "PanTitle.png")
+            self._title_loaded = True
+        return self._title_base
+
+    def _ensure_icon_base(self) -> pygame.Surface | None:
+        """Load the title-menu icon art only when layout or hitboxes need it."""
+        if not self._icon_loaded:
+            self._icon_base = self._load_image(self.ASSET_ROOT / "Pan_Icon.png")
+            self._icon_loaded = True
+        return self._icon_base
     
     def _create_ui(self):
         """Create manual title-menu hitboxes."""
@@ -721,7 +773,7 @@ class StartScreen(Screen):
 
     def _render_title_art(self, surface: pygame.Surface) -> None:
         """Render the checked-in title artwork as a full-screen background."""
-        if self._title_base is None:
+        if self._ensure_title_base() is None:
             fallback = self.title_font.render("Pan's Trial", True, (238, 214, 142))
             surface.blit(fallback, fallback.get_rect(center=(self.window.WINDOW_WIDTH // 2, self.scale_y(130, 90))))
             return
@@ -731,16 +783,19 @@ class StartScreen(Screen):
 
     def _get_scaled_title_art(self) -> pygame.Surface:
         """Return the title image proportionally scaled to cover the frame."""
+        title_base = self._ensure_title_base()
+        if title_base is None:
+            raise RuntimeError("Title artwork is unavailable")
         scale = max(
-            self.window.WINDOW_WIDTH / self._title_base.get_width(),
-            self.window.WINDOW_HEIGHT / self._title_base.get_height(),
+            self.window.WINDOW_WIDTH / title_base.get_width(),
+            self.window.WINDOW_HEIGHT / title_base.get_height(),
         )
         size = (
-            max(1, int(self._title_base.get_width() * scale)),
-            max(1, int(self._title_base.get_height() * scale)),
+            max(1, int(title_base.get_width() * scale)),
+            max(1, int(title_base.get_height() * scale)),
         )
         if size not in self._title_cache:
-            self._title_cache[size] = pygame.transform.smoothscale(self._title_base, size)
+            self._title_cache[size] = pygame.transform.smoothscale(title_base, size)
         return self._title_cache[size]
 
     def _render_menu_buttons(self, surface: pygame.Surface) -> None:
@@ -768,23 +823,26 @@ class StartScreen(Screen):
 
     def _get_icon_height_for_width(self, width: int) -> int:
         """Return the Pan icon height that preserves its source aspect ratio."""
-        if self._icon_base is None or self._icon_base.get_width() <= 0:
+        icon_base = self._ensure_icon_base()
+        if icon_base is None or icon_base.get_width() <= 0:
             return max(self.scale_y(64, 44), width // 3)
-        return max(1, int(width * self._icon_base.get_height() / self._icon_base.get_width()))
+        return max(1, int(width * icon_base.get_height() / icon_base.get_width()))
 
     def _get_icon_width_for_height(self, height: int) -> int:
         """Return the Pan icon width that preserves its source aspect ratio."""
-        if self._icon_base is None or self._icon_base.get_height() <= 0:
+        icon_base = self._ensure_icon_base()
+        if icon_base is None or icon_base.get_height() <= 0:
             return max(1, height * 3)
-        return max(1, int(height * self._icon_base.get_width() / self._icon_base.get_height()))
+        return max(1, int(height * icon_base.get_width() / icon_base.get_height()))
 
     def _get_scaled_icon(self, size: tuple[int, int], bright: bool) -> pygame.Surface | None:
         """Return the Pan icon, brightened when hovered."""
-        if self._icon_base is None:
+        icon_base = self._ensure_icon_base()
+        if icon_base is None:
             return None
         key = (size, bright)
         if key not in self._icon_cache:
-            icon = pygame.transform.smoothscale(self._icon_base, size)
+            icon = pygame.transform.smoothscale(icon_base, size)
             if bright:
                 icon = icon.copy()
                 icon.fill((58, 58, 58, 0), special_flags=pygame.BLEND_RGBA_ADD)

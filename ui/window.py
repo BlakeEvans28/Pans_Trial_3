@@ -7,9 +7,15 @@ import warnings
 import pygame
 import pygame_gui
 from typing import Optional
+from pygame_gui.core.gui_font_freetype import GUIFontFreetype
+from pygame_gui.core.gui_font_pygame import GUIFontPygame
+from pygame_gui.core.package_resource import PackageResource
 from pygame_gui.core.resource_loaders import IResourceLoader
+from pygame_gui.core.utility import FontResource, ImageResource
 
 from .audio_manager import AudioManager
+
+_WEB_PYGAME_GUI_RESOURCE_PATCHED = False
 
 
 class SequentialResourceLoader(IResourceLoader):
@@ -39,6 +45,64 @@ class SequentialResourceLoader(IResourceLoader):
         return self._started
 
 
+def _patch_pygame_gui_resources_for_web() -> None:
+    """Force pygame_gui package resources to load from real bundle paths on wasm."""
+    global _WEB_PYGAME_GUI_RESOURCE_PATCHED
+
+    if _WEB_PYGAME_GUI_RESOURCE_PATCHED or sys.platform != "emscripten":
+        return
+
+    def resolve_location(location):
+        if isinstance(location, PackageResource):
+            return location.to_path()
+        return location
+
+    def load_font_resource(self):
+        error = None
+        location = resolve_location(self.location)
+        try:
+            if isinstance(location, str):
+                if self.font_type_to_use == "freetype":
+                    self.loaded_font = GUIFontFreetype(
+                        location, self.size, self.force_style, self.style
+                    )
+                else:
+                    self.loaded_font = GUIFontPygame(
+                        location, self.size, self.force_style, self.style
+                    )
+            else:
+                return _original_font_load(self)
+        except (pygame.error, OSError, RuntimeError):
+            error = FileNotFoundError(f"Unable to load resource with path: {location}")
+        return error
+
+    def load_image_resource(self):
+        error = None
+        location = resolve_location(self.location)
+        try:
+            if isinstance(location, str):
+                self.loaded_surface = pygame.image.load(location).convert_alpha()
+            else:
+                return _original_image_load(self)
+        except (pygame.error, OSError, RuntimeError):
+            error = FileNotFoundError(f"Unable to load resource with path: {location}")
+
+        if (
+            error is None
+            and self.loaded_surface is not None
+            and not self.is_file_premultiplied
+        ):
+            self.loaded_surface = self.loaded_surface.premul_alpha()
+
+        return error
+
+    _original_font_load = FontResource.load
+    _original_image_load = ImageResource.load
+    FontResource.load = load_font_resource
+    ImageResource.load = load_image_resource
+    _WEB_PYGAME_GUI_RESOURCE_PATCHED = True
+
+
 class GameWindow:
     """Main pygame window for Pan's Trial."""
 
@@ -53,6 +117,8 @@ class GameWindow:
     def __init__(self):
         """Initialize pygame window."""
         self.is_web = sys.platform == "emscripten"
+        if self.is_web:
+            _patch_pygame_gui_resources_for_web()
         self.supports_fullscreen_toggle = not self.is_web
         pygame.mixer.pre_init(44100, -16, 1, 512)
         pygame.init()

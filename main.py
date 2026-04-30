@@ -319,20 +319,14 @@ async def main():
         print("Game closed.")
 
 
-_WEB_MAIN_TASK = None
+def _run_desktop_main() -> None:
+    """Start the async main loop on regular desktop Python."""
+    run_async = getattr(asyncio, "run")
+    run_async(main())
+
 
 if IS_WEB:
     _set_web_status("Pan's Trial Python loaded...")
 
-
-def launch() -> None:
-    """Start the game in either desktop Python or the browser event loop."""
-    global _WEB_MAIN_TASK
-    if IS_WEB:
-        _WEB_MAIN_TASK = asyncio.create_task(main())
-    else:
-        asyncio.run(main())
-
-
 if IS_WEB or __name__ == "__main__":
-    launch()
+    asyncio.run(main())

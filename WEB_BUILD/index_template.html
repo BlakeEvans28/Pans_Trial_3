@@ -51,10 +51,10 @@ async def custom_site():
         while embed.counter() < 0:
             await asyncio.sleep(0.1)
 
-        main = appdir / "assets" / "main.py"
+        main_path = appdir / "assets" / "main.py"
 
         if not platform.window.MM.UME:
-            __import__(__name__).__file__ = main
+            __import__(__name__).__file__ = main_path
             msg = "Ready to start. Please click or tap the page."
             platform.window.infobox.innerText = msg
             print("\n" * 4, f"    * Waiting for media user engagement. {msg} *", "\n" * 4)
@@ -63,7 +63,7 @@ async def custom_site():
                 await asyncio.sleep(0.1)
 
         await TopLevel_async_handler.start_toplevel(platform.shell, console=window.python.config.debug)
-        __import__(__name__).__file__ = main
+        __import__(__name__).__file__ = main_path
         platform.window.panTrialReady = False
         platform.window.panTrialError = ""
         platform.window.panTrialStatus = "Starting Pan's Trial..."
@@ -72,7 +72,7 @@ async def custom_site():
             platform.window.infobox.innerText = f"installing {pkg}"
 
         try:
-            await shell.source(main, callback=ui_callback)
+            await shell.source(main_path, callback=ui_callback)
         except Exception as exc:
             error_text = f"Launch failed: {exc.__class__.__name__}: {exc}"
             platform.window.infobox.style.display = "block"
@@ -245,15 +245,19 @@ function show_infobox() {
         canvas.emscripten {
             border: 0px none;
             background-color: transparent;
-            width: 100vw !important;
-            height: 100dvh !important;
-            object-fit: contain;
             z-index: 5;
             padding: 0;
-            margin: 0;
-            position: absolute;
-            top: 0;
-            left: 0;
+            margin: auto;
+            display: block;
+            position: fixed;
+            inset: 0;
+            touch-action: none;
+        }
+
+        #canvas3d {
+            display: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
         }
 
         body {
@@ -401,6 +405,38 @@ function show_infobox() {
 
     function logViewport(tag) {}
 
+    function get_canvas_layout() {
+        var viewportWidth = window.innerWidth || document.documentElement.clientWidth || __WIDTH__;
+        var viewportHeight = window.innerHeight || document.documentElement.clientHeight || __HEIGHT__;
+        var scale = Math.min(viewportWidth / __WIDTH__, viewportHeight / __HEIGHT__);
+        var width = Math.max(1, Math.round(__WIDTH__ * scale));
+        var height = Math.max(1, Math.round(__HEIGHT__ * scale));
+        return {
+            width: width,
+            height: height
+        };
+    }
+
+    function apply_canvas_layout(canvas, realSet) {
+        if (!canvas) { return; }
+        var setStyle = realSet || canvas.style.setProperty.bind(canvas.style);
+        var layout = get_canvas_layout();
+        canvas.__ourWrite = true;
+        setStyle("width", layout.width + "px", "important");
+        canvas.__ourWrite = true;
+        setStyle("height", layout.height + "px", "important");
+        canvas.__ourWrite = true;
+        setStyle("left", "0px", "important");
+        canvas.__ourWrite = true;
+        setStyle("top", "0px", "important");
+        canvas.__ourWrite = true;
+        setStyle("right", "0px", "important");
+        canvas.__ourWrite = true;
+        setStyle("bottom", "0px", "important");
+        canvas.__ourWrite = true;
+        setStyle("margin", "auto", "important");
+    }
+
     (function installEnforcer() {
         var canvas = document.getElementById("canvas");
         if (!canvas) { setTimeout(installEnforcer, 50); return; }
@@ -413,24 +449,7 @@ function show_infobox() {
         };
 
         function enforce() {
-            var viewport = window.visualViewport;
-            var width = viewport ? viewport.width : window.innerWidth;
-            var height = viewport ? viewport.height : window.innerHeight;
-            if (width <= height * 1.2) return;
-            var fbRatio = __HEIGHT__ / __WIDTH__;
-            var scaledHeight = width * fbRatio;
-            if (scaledHeight > height) {
-                scaledHeight = height;
-                width = scaledHeight / fbRatio;
-            }
-            var wantW = width + "px";
-            var wantH = scaledHeight + "px";
-            if (canvas.style.width !== wantW || canvas.style.height !== wantH) {
-                canvas.__ourWrite = true;
-                realSet("width", wantW, "important");
-                canvas.__ourWrite = true;
-                realSet("height", wantH, "important");
-            }
+            apply_canvas_layout(canvas, realSet);
         }
 
         var observer = new MutationObserver(function() {
@@ -438,6 +457,7 @@ function show_infobox() {
             enforce();
         });
         observer.observe(canvas, { attributes: true, attributeFilter: ["style"] });
+        enforce();
     })();
 
     function force_canvas_size() {
@@ -456,15 +476,7 @@ function show_infobox() {
             try { window_resize(); } catch (error) {}
         }
         var canvas = document.getElementById("canvas");
-        if (canvas) {
-            var viewport = window.visualViewport;
-            var width = viewport ? viewport.width : window.innerWidth;
-            var height = viewport ? viewport.height : window.innerHeight;
-            if (width > height * 1.2) {
-                canvas.style.setProperty("width", width + "px", "important");
-                canvas.style.setProperty("height", height + "px", "important");
-            }
-        }
+        apply_canvas_layout(canvas);
     }
 
     function settle_and_resize() {

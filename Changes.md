@@ -13,6 +13,13 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-04-30 - Blake Evans
+Commit: `pending` - Optimized the web build and fixed browser startup plus input alignment
+Summary:
+- Slimmed the `pygbag` web package by staging only the assets the game actually uses, adding web-only image resizing/format optimization, and lazy-loading shared UI art so the first browser frame appears faster.
+- Fixed the web launch path by surfacing browser startup status/errors, staging the missing local `pygame_ce` dependency for `localhost` testing, and patching `pygame_gui` resource loading so bundled fonts and images work correctly under wasm.
+- Corrected browser canvas behavior by centering the game viewport cleanly and preventing the hidden `canvas3d` layer from intercepting clicks, restoring working menu and screen interactions in the web build.
+
 ## 2026-04-30 - Brandt Homan
 Commit: `pending` - Added pygbag web-build support, browser startup diagnostics, and desktop audio bundling
 Summary:

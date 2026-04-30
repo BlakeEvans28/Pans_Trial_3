@@ -11,5 +11,7 @@ WEB_BUILD/*.zip
 
 # Local editor files
 *.code-workspace
+.edge-headless*/
+WEB_BUILD/.pygbag_cdn_cache/
 
 # Keep assignment deliverables such as Pans_Trial.exe and Balancing_Testing_01.xlsx tracked if needed.
