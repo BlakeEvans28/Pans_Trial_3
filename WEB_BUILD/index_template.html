@@ -158,6 +158,72 @@ asyncio.run(custom_site())
           }
       });
     </script><!--
+    --><script>
+      window.panTrialAudio = {
+          currentMusic: null,
+          musicVolume: 0.275,
+          oneShotVolume: 0.5,
+          _getMusic: function(src) {
+              if (!this._musicCache) {
+                  this._musicCache = {};
+              }
+              if (!this._musicCache[src]) {
+                  var audio = new Audio(src);
+                  audio.preload = "auto";
+                  audio.loop = true;
+                  audio.volume = this.musicVolume;
+                  this._musicCache[src] = audio;
+              }
+              return this._musicCache[src];
+          },
+          setVolume: function(volume) {
+              var clamped = Math.max(0, Math.min(1, Number(volume) || 0));
+              this.oneShotVolume = clamped;
+              this.musicVolume = clamped * 0.55;
+              if (this.currentMusic) {
+                  this.currentMusic.volume = this.musicVolume;
+              }
+          },
+          playMusic: function(src, volume) {
+              if (!src) { return false; }
+              this.setVolume(volume);
+              var next = this._getMusic(src);
+              if (this.currentMusic && this.currentMusic !== next) {
+                  this.currentMusic.pause();
+                  this.currentMusic.currentTime = 0;
+              }
+              this.currentMusic = next;
+              next.volume = this.musicVolume;
+              var promise = next.play();
+              if (promise && promise.catch) {
+                  promise.catch(function(error) {
+                      console.warn("Pan's Trial music playback failed", error);
+                  });
+              }
+              return true;
+          },
+          stopMusic: function() {
+              if (!this.currentMusic) { return; }
+              this.currentMusic.pause();
+              this.currentMusic.currentTime = 0;
+              this.currentMusic = null;
+          },
+          playOneShot: function(src, volume) {
+              if (!src) { return false; }
+              this.setVolume(volume);
+              var audio = new Audio(src);
+              audio.preload = "auto";
+              audio.volume = this.oneShotVolume;
+              var promise = audio.play();
+              if (promise && promise.catch) {
+                  promise.catch(function(error) {
+                      console.warn("Pan's Trial sound playback failed", error);
+                  });
+              }
+              return true;
+          }
+      };
+    </script><!--
 //=============================================================================
 //
 //

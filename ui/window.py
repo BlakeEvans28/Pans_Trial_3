@@ -132,12 +132,13 @@ class GameWindow:
         self.animation_speed = 1.0
         self.sound_volume = 0.5
         self.tutorial_enabled = False
-        self.audio = AudioManager(allow_music_files=not self.is_web)
+        self.audio = AudioManager()
         self.audio.set_volume(self.sound_volume)
+        display_flags = 0 if self.is_web else pygame.RESIZABLE
 
         self.screen = pygame.display.set_mode(
             (self.WINDOW_WIDTH, self.WINDOW_HEIGHT),
-            pygame.RESIZABLE,
+            display_flags,
         )
         pygame.display.set_caption("Pan's Trial")
 
@@ -160,6 +161,9 @@ class GameWindow:
 
     def _get_initial_window_size(self) -> tuple[int, int]:
         """Pick a starting size that fits on the current display."""
+        if self.is_web:
+            return self.BASE_WINDOW_WIDTH, self.BASE_WINDOW_HEIGHT
+
         display_info = pygame.display.Info()
         current_w = display_info.current_w or self.BASE_WINDOW_WIDTH
         current_h = display_info.current_h or self.BASE_WINDOW_HEIGHT
@@ -180,7 +184,7 @@ class GameWindow:
 
     def resize(self, width: int, height: int) -> bool:
         """Resize the window and UI manager. Returns True when size changed."""
-        if self.fullscreen:
+        if self.fullscreen or self.is_web:
             return False
 
         width = max(self.minimum_resize_width, int(width))

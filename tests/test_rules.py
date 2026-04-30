@@ -21,6 +21,7 @@ from ui.input_handler import InputHandler
 from ui.board_renderer import BoardRenderer
 from ui.game_screen import GameScreen
 from ui.screen_manager import CoinFlipScreen, DraftScreen, GameOverScreen, SettingsScreen
+from ui.window import GameWindow
 
 
 class SmokeAudio:
@@ -892,6 +893,26 @@ def test_board_renderer_uses_square_grid_without_labyrinth_overlay():
     assert top_left.height == renderer.CELL_SIZE - 4
     assert right_neighbor.x - top_left.x == renderer.CELL_SIZE
     assert below_neighbor.y - top_left.y == renderer.CELL_SIZE
+
+
+def test_game_window_uses_fixed_web_framebuffer_size():
+    """Web builds should keep the internal game surface locked to the browser framebuffer size."""
+    window = GameWindow.__new__(GameWindow)
+    window.is_web = True
+
+    assert window._get_initial_window_size() == (
+        GameWindow.BASE_WINDOW_WIDTH,
+        GameWindow.BASE_WINDOW_HEIGHT,
+    )
+
+
+def test_game_window_ignores_web_resize_requests():
+    """Browser resize events should not change the game's internal layout size."""
+    window = GameWindow.__new__(GameWindow)
+    window.is_web = True
+    window.fullscreen = False
+
+    assert window.resize(1600, 1100) is False
 
 
 def test_coin_flip_faces_share_one_centered_footprint():

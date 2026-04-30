@@ -1,13 +1,14 @@
 """
 Audio for Pan's Trial.
 
-Only the combat clash is generated at runtime; music comes from checked-in
-track files and fails quietly on machines without audio.
+Desktop builds use pygame's mixer. Web builds use browser-native HTML5 audio
+so music playback does not depend on pygame's wasm codec support.
 """
 
 from array import array
 import math
 import random
+import sys
 from pathlib import Path
 
 import pygame
@@ -28,26 +29,98 @@ class AudioManager:
             AUDIO_ROOT / "PanPhase1.mp3",
         ),
     }
+    WEB_MUSIC_TRACKS = {
+        "intro": (
+            "audio/Pan_Intro_Updated.mp3",
+            "audio/Pan_Intro.mp3",
+        ),
+        "phase": (
+            "audio/PanPhase1_Updated.mp3",
+            "audio/PanPhase1.mp3",
+        ),
+    }
+    WEB_SOUND_TRACKS = {
+        "clash": "audio/clash.wav",
+    }
 
     def __init__(self, allow_music_files: bool = True) -> None:
+        self.is_web = sys.platform == "emscripten"
         self.enabled = False
         self.allow_music_files = allow_music_files
         self.volume = 0.5
         self.sounds: dict[str, pygame.mixer.Sound] = {}
         self.current_music: str | None = None
+        self.track_paths: dict[str, Path | None] = {}
+        self.track_urls: dict[str, str | None] = {}
+
+        if self.is_web:
+            self.track_urls = {
+                name: next((candidate for candidate in candidates), None)
+                for name, candidates in self.WEB_MUSIC_TRACKS.items()
+            }
+            self._ensure_web_ready()
+        else:
+            self._refresh_track_paths()
+            self._ensure_desktop_ready()
+
+    def _refresh_track_paths(self) -> None:
+        """Re-scan disk so desktop audio can find the checked-in music files."""
         self.track_paths = {
             name: next((candidate for candidate in candidates if candidate.exists()), None)
             for name, candidates in self.MUSIC_TRACKS.items()
         }
 
+    def _get_web_audio_bridge(self):
+        """Return the browser audio helper injected by the web loader."""
         try:
-            if pygame.mixer.get_init() is None:
-                pygame.mixer.init(frequency=self.SAMPLE_RATE, size=-16, channels=1, buffer=512)
+            import platform
+
+            return getattr(platform.window, "panTrialAudio", None)
+        except Exception:
+            return None
+
+    def _ensure_web_ready(self) -> bool:
+        """Bind to the browser audio helper when running under wasm."""
+        bridge = self._get_web_audio_bridge()
+        if bridge is None:
+            self.enabled = False
+            return False
+
+        try:
+            bridge.setVolume(self.volume)
             self.enabled = True
-            self._build_sounds()
-            self.set_volume(self.volume)
+            return True
+        except Exception:
+            self.enabled = False
+            return False
+
+    def _apply_desktop_volume(self) -> None:
+        """Push the current volume level into loaded desktop sounds and music."""
+        if not self.enabled:
+            return
+
+        for sound in self.sounds.values():
+            sound.set_volume(self.volume)
+        pygame.mixer.music.set_volume(self.volume * 0.55)
+
+    def _ensure_desktop_ready(self) -> bool:
+        """Initialize mixer-backed desktop audio, retrying later if needed."""
+        if self.enabled and pygame.mixer.get_init() is not None:
+            return True
+
+        try:
+            mixer_was_uninitialized = pygame.mixer.get_init() is None
+            if mixer_was_uninitialized:
+                pygame.mixer.init(frequency=self.SAMPLE_RATE, size=-16, channels=1, buffer=512)
+            if mixer_was_uninitialized or not self.sounds:
+                self._build_sounds()
+            self._refresh_track_paths()
+            self.enabled = True
+            self._apply_desktop_volume()
+            return True
         except pygame.error:
             self.enabled = False
+            return False
 
     def _build_sounds(self) -> None:
         """Create the single retained in-memory battle clash sound."""
@@ -58,12 +131,21 @@ class AudioManager:
     def set_volume(self, volume: float) -> None:
         """Apply user sound-volume setting to all active and future sounds."""
         self.volume = max(0.0, min(1.0, volume))
-        if not self.enabled:
+        if self.is_web:
+            if not self._ensure_web_ready():
+                return
+            bridge = self._get_web_audio_bridge()
+            if bridge is None:
+                return
+            try:
+                bridge.setVolume(self.volume)
+            except Exception:
+                self.enabled = False
             return
 
-        for sound in self.sounds.values():
-            sound.set_volume(self.volume)
-        pygame.mixer.music.set_volume(self.volume * 0.55)
+        if not self._ensure_desktop_ready():
+            return
+        self._apply_desktop_volume()
 
     def play_intro_music(self) -> None:
         """Loop the intro/drafting/victory music."""
@@ -75,26 +157,65 @@ class AudioManager:
 
     def _play_music(self, track_name: str) -> None:
         """Switch to the requested looping music track if possible."""
-        if not self.enabled or not self.allow_music_files:
+        if not self.allow_music_files:
+            return
+
+        if self.is_web:
+            self._play_web_music(track_name)
+            return
+
+        if not self._ensure_desktop_ready():
             return
         if self.current_music == track_name and pygame.mixer.music.get_busy():
             return
 
         path = self.track_paths.get(track_name)
         if path is None:
+            self._refresh_track_paths()
+            path = self.track_paths.get(track_name)
+        if path is None:
             return
 
         try:
             pygame.mixer.music.load(str(path))
-            pygame.mixer.music.set_volume(self.volume * 0.55)
+            self._apply_desktop_volume()
             pygame.mixer.music.play(loops=-1, fade_ms=650)
             self.current_music = track_name
         except pygame.error:
             self.current_music = None
 
+    def _play_web_music(self, track_name: str) -> None:
+        """Ask the browser helper to play one of the streamed music tracks."""
+        if not self._ensure_web_ready():
+            return
+        if self.current_music == track_name:
+            return
+
+        url = self.track_urls.get(track_name)
+        bridge = self._get_web_audio_bridge()
+        if url is None or bridge is None:
+            return
+
+        try:
+            bridge.playMusic(url, self.volume)
+            self.current_music = track_name
+        except Exception:
+            self.current_music = None
+            self.enabled = False
+
     def stop_music(self) -> None:
         """Fade out any active music."""
-        if self.enabled:
+        if self.is_web:
+            bridge = self._get_web_audio_bridge()
+            if bridge is not None:
+                try:
+                    bridge.stopMusic()
+                except Exception:
+                    self.enabled = False
+            self.current_music = None
+            return
+
+        if self.enabled and pygame.mixer.get_init() is not None:
             pygame.mixer.music.fadeout(500)
         self.current_music = None
 
@@ -103,7 +224,23 @@ class AudioManager:
         self._play("clash")
 
     def _play(self, sound_name: str) -> None:
-        if not self.enabled or self.volume <= 0:
+        if self.volume <= 0:
+            return
+
+        if self.is_web:
+            if not self._ensure_web_ready():
+                return
+            url = self.WEB_SOUND_TRACKS.get(sound_name)
+            bridge = self._get_web_audio_bridge()
+            if url is None or bridge is None:
+                return
+            try:
+                bridge.playOneShot(url, self.volume)
+            except Exception:
+                self.enabled = False
+            return
+
+        if not self._ensure_desktop_ready():
             return
         sound = self.sounds.get(sound_name)
         if sound is not None:
