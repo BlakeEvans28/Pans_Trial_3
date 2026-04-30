@@ -6,10 +6,14 @@ import argparse
 import datetime as dt
 import http.server
 import importlib.util
+import math
+import io
 import os
+import random
 import shutil
 import tarfile
 import urllib.request
+import wave
 import zipfile
 from pathlib import Path
 
@@ -31,6 +35,13 @@ PROJECT_DIRS = (
 FRAMEBUFFER_WIDTH = 1200
 FRAMEBUFFER_HEIGHT = 900
 ZIP_NAME = "pans_trial_web.zip"
+WEB_AUDIO_FILES = (
+    "Pan_Intro_Updated.mp3",
+    "Pan_Intro.mp3",
+    "PanPhase1_Updated.mp3",
+    "PanPhase1.mp3",
+)
+WEB_CLASH_FILENAME = "clash.wav"
 WEB_ASSET_FILES = (
     "appeasing_pan.png",
     "Ballista.png",
@@ -85,7 +96,14 @@ WEB_IMAGE_LONGEST_EDGE_CAPS = {
 PYGAME_GUI_MINIMAL_DATA_FILES = (
     "data/__init__.py",
     "data/default_theme.json",
+    "data/FiraCode-Bold.ttf",
     "data/FiraCode-Regular.ttf",
+    "data/FiraMono-BoldItalic.ttf",
+    "data/FiraMono-RegularItalic.ttf",
+    "data/NotoSansJP-Bold.otf",
+    "data/NotoSansJP-Regular.otf",
+    "data/NotoSansSC-Bold.otf",
+    "data/NotoSansSC-Regular.otf",
     "data/NotoSans-Regular.ttf",
     "data/NotoSans-Bold.ttf",
     "data/NotoSans-Italic.ttf",
@@ -143,6 +161,8 @@ def copy_runtime_dependencies(staging_root: Path) -> None:
     copy_package_tree(pygame_gui_root, pygame_gui_dst, "data", "__pyinstaller")
     for relative_path in PYGAME_GUI_MINIMAL_DATA_FILES:
         src = pygame_gui_root / relative_path
+        if not src.exists():
+            continue
         dst = pygame_gui_dst / relative_path
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
@@ -212,6 +232,60 @@ def copy_web_assets(project_root: Path, staging_root: Path) -> tuple[int, int]:
         staged_total += staged_size
 
     return original_total, staged_total
+
+
+def _generate_clash_samples(sample_rate: int = 44100) -> list[int]:
+    """Return the generated clash sound as signed 16-bit PCM samples."""
+    rng = random.Random(27)
+    total = int(sample_rate * 0.45)
+    samples: list[int] = []
+    for i in range(total):
+        t = i / sample_rate
+        envelope = math.exp(-t * 7.5)
+        ring = (
+            math.sin(2 * math.pi * 1450 * t)
+            + 0.55 * math.sin(2 * math.pi * 2320 * t)
+            + 0.35 * math.sin(2 * math.pi * 3170 * t)
+        )
+        hit_noise = rng.uniform(-1.0, 1.0) * math.exp(-t * 22)
+        sample = int(max(-32767, min(32767, (0.25 * ring + 0.75 * hit_noise) * envelope * 0.7 * 32767)))
+        samples.append(sample)
+    return samples
+
+
+def _build_clash_wav_bytes() -> bytes:
+    """Generate the browser clash effect as a small WAV file."""
+    with io.BytesIO() as buffer:
+        with wave.open(buffer, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(44100)
+            pcm = bytearray()
+            for sample in _generate_clash_samples():
+                pcm.extend(int(sample).to_bytes(2, byteorder="little", signed=True))
+            wav_file.writeframes(bytes(pcm))
+        return buffer.getvalue()
+
+
+def install_browser_audio(project_root: Path, build_web_dir: Path) -> int:
+    """Copy browser-played audio beside the web bundle for direct HTML5 playback."""
+    source_root = project_root / "audio"
+    destination_root = build_web_dir / "audio"
+    destination_root.mkdir(parents=True, exist_ok=True)
+
+    total_bytes = 0
+    for filename in WEB_AUDIO_FILES:
+        source_path = source_root / filename
+        if not source_path.exists():
+            raise SystemExit(f"Required browser audio file is missing: {source_path}")
+        destination_path = destination_root / filename
+        shutil.copy2(source_path, destination_path)
+        total_bytes += destination_path.stat().st_size
+
+    clash_path = destination_root / WEB_CLASH_FILENAME
+    clash_path.write_bytes(_build_clash_wav_bytes())
+    total_bytes += clash_path.stat().st_size
+    return total_bytes
 
 
 def stage_project(project_root: Path, staging_root: Path) -> tuple[int, int]:
@@ -363,7 +437,7 @@ def main() -> None:
     print("=" * 52)
     print(f"Project root : {project_root}")
     print(f"Staging root : {staging_root}")
-    print("Audio note   : MP3 music is excluded from the web build.")
+    print("Audio note   : Serving browser audio beside the bundle for HTML5 playback.")
     print("Runtime note : Bundling pygame_gui + i18n into the archive for pygbag.")
     if Image is None:
         print("Asset note   : Pillow not found, so web art will be copied without image optimization.")
@@ -372,6 +446,7 @@ def main() -> None:
     create_bundle_archives(staging_root, build_web_dir, staging_root.name)
     install_index_html(project_root, build_web_dir, staging_root.name)
     install_favicon(project_root, build_web_dir)
+    browser_audio_bytes = install_browser_audio(project_root, build_web_dir)
     local_cdn_bytes = install_local_pygbag_cdn(project_root, build_web_dir)
     create_zip(build_web_dir, output_zip)
 
@@ -380,6 +455,7 @@ def main() -> None:
     saved_asset_mb = original_asset_mb - staged_asset_mb
     build_size_mb = output_zip.stat().st_size / 1024 / 1024
     print(f"Web assets   : {staged_asset_mb:.1f} MB (saved {saved_asset_mb:.1f} MB from {original_asset_mb:.1f} MB)")
+    print(f"Browser audio: {browser_audio_bytes / 1024 / 1024:.1f} MB")
     print(f"Local CDN    : {local_cdn_bytes / 1024 / 1024:.1f} MB (for localhost pygbag dependency loading)")
     print(f"Web zip      : {output_zip} ({build_size_mb:.1f} MB)")
 
