@@ -29,11 +29,16 @@ class AudioManager:
         ),
     }
 
-    def __init__(self) -> None:
+    def __init__(self, allow_music_files: bool = True) -> None:
         self.enabled = False
+        self.allow_music_files = allow_music_files
         self.volume = 0.5
         self.sounds: dict[str, pygame.mixer.Sound] = {}
         self.current_music: str | None = None
+        self.track_paths = {
+            name: next((candidate for candidate in candidates if candidate.exists()), None)
+            for name, candidates in self.MUSIC_TRACKS.items()
+        }
 
         try:
             if pygame.mixer.get_init() is None:
@@ -70,16 +75,12 @@ class AudioManager:
 
     def _play_music(self, track_name: str) -> None:
         """Switch to the requested looping music track if possible."""
-        if not self.enabled:
+        if not self.enabled or not self.allow_music_files:
             return
         if self.current_music == track_name and pygame.mixer.music.get_busy():
             return
 
-        candidates = self.MUSIC_TRACKS.get(track_name)
-        if not candidates:
-            return
-
-        path = next((candidate for candidate in candidates if candidate.exists()), None)
+        path = self.track_paths.get(track_name)
         if path is None:
             return
 

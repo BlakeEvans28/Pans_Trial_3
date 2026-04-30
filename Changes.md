@@ -13,6 +13,14 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-04-30 - Brandt Homan
+Commit: `pending` - Added pygbag web-build support, browser startup diagnostics, and desktop audio bundling
+Summary:
+- Added a repo-local `build_web.py` plus `WEB_BUILD/index_template.html` to stage Pan's Trial for `pygbag`, bundle `pygame_gui` and `i18n`, generate browser archives, and package a deployable local web zip.
+- Updated the main game entry point and window/audio/settings plumbing for browser execution by adding emscripten-aware startup, a thread-free `pygame_gui` loader, disabled web fullscreen/music behavior, and browser-visible startup/error status reporting.
+- Rebuilt `Pans_Trial.exe` after updating `Pans_Trial_slim.spec` so the desktop executable now bundles the `audio/` folder along with the existing assets.
+- Added `WEB_BUILD_HANDOFF.md` to capture the full web debugging history, current behavior, verification commands, and next steps for a teammate taking over the browser port.
+
 ## 2026-04-28 - Codex
 Commit: `pending` - Retuned Restructure and scrollable UI layouts
 Summary:

@@ -10,7 +10,10 @@ a = Analysis(
     ['main.py'],
     pathex=[str(project_root)],
     binaries=[],
-    datas=[(str(project_root / 'assets'), 'assets')],
+    datas=[
+        (str(project_root / 'assets'), 'assets'),
+        (str(project_root / 'audio'), 'audio'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

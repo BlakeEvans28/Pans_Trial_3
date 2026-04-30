@@ -2,11 +2,41 @@
 Pygame window and rendering setup for Pan's Trial UI.
 """
 
+import sys
+import warnings
 import pygame
 import pygame_gui
 from typing import Optional
+from pygame_gui.core.resource_loaders import IResourceLoader
 
 from .audio_manager import AudioManager
+
+
+class SequentialResourceLoader(IResourceLoader):
+    """Web-safe pygame_gui loader that avoids background Python threads."""
+
+    def __init__(self) -> None:
+        self._resources = []
+        self._started = False
+
+    def add_resource(self, resource) -> None:
+        if self._started:
+            raise ValueError("Too late to add this resource to the loader")
+        self._resources.append(resource)
+
+    def start(self) -> None:
+        self._started = True
+
+    def update(self) -> tuple[bool, float]:
+        while self._resources:
+            resource = self._resources.pop(0)
+            error = resource.load()
+            if error is not None:
+                warnings.warn(str(error))
+        return True, 1.0
+
+    def started(self) -> bool:
+        return self._started
 
 
 class GameWindow:
@@ -22,6 +52,8 @@ class GameWindow:
 
     def __init__(self):
         """Initialize pygame window."""
+        self.is_web = sys.platform == "emscripten"
+        self.supports_fullscreen_toggle = not self.is_web
         pygame.mixer.pre_init(44100, -16, 1, 512)
         pygame.init()
 
@@ -34,7 +66,7 @@ class GameWindow:
         self.animation_speed = 1.0
         self.sound_volume = 0.5
         self.tutorial_enabled = False
-        self.audio = AudioManager()
+        self.audio = AudioManager(allow_music_files=not self.is_web)
         self.audio.set_volume(self.sound_volume)
 
         self.screen = pygame.display.set_mode(
@@ -47,7 +79,13 @@ class GameWindow:
         self.running = True
 
         # UI Manager for pygame_gui
-        self.ui_manager = pygame_gui.UIManager((self.WINDOW_WIDTH, self.WINDOW_HEIGHT))
+        if self.is_web:
+            self.ui_manager = pygame_gui.UIManager(
+                (self.WINDOW_WIDTH, self.WINDOW_HEIGHT),
+                resource_loader=SequentialResourceLoader(),
+            )
+        else:
+            self.ui_manager = pygame_gui.UIManager((self.WINDOW_WIDTH, self.WINDOW_HEIGHT))
 
         # Game state
         self.time_delta = 0
@@ -57,8 +95,10 @@ class GameWindow:
     def _get_initial_window_size(self) -> tuple[int, int]:
         """Pick a starting size that fits on the current display."""
         display_info = pygame.display.Info()
-        available_width = max(self.MIN_WINDOW_WIDTH, display_info.current_w - self.SCREEN_MARGIN_X)
-        available_height = max(self.MIN_WINDOW_HEIGHT, display_info.current_h - self.SCREEN_MARGIN_Y)
+        current_w = display_info.current_w or self.BASE_WINDOW_WIDTH
+        current_h = display_info.current_h or self.BASE_WINDOW_HEIGHT
+        available_width = max(self.MIN_WINDOW_WIDTH, current_w - self.SCREEN_MARGIN_X)
+        available_height = max(self.MIN_WINDOW_HEIGHT, current_h - self.SCREEN_MARGIN_Y)
 
         width = min(self.BASE_WINDOW_WIDTH, available_width)
         height = min(self.BASE_WINDOW_HEIGHT, available_height)
@@ -92,6 +132,9 @@ class GameWindow:
 
     def toggle_fullscreen(self) -> bool:
         """Toggle fullscreen mode and return True when the window size changed."""
+        if not self.supports_fullscreen_toggle:
+            return False
+
         self.fullscreen = not self.fullscreen
         if self.fullscreen:
             self.windowed_size = (self.WINDOW_WIDTH, self.WINDOW_HEIGHT)

@@ -1293,14 +1293,17 @@ class SettingsScreen(Screen):
 
     def _setting_option_controls(self) -> list[tuple[str, object]]:
         """Return only the setting options, without the Back control."""
-        return [
-            ("fullscreen", self.fullscreen_button),
+        supports_fullscreen_toggle = getattr(self.window, "supports_fullscreen_toggle", True)
+        controls = [
             ("text", self.text_button),
             ("animation", self.animation_button),
             ("sound", self.sound_button),
             ("tutorial", self.tutorial_button),
             ("tutorial_reset", self.tutorial_reset_button),
         ]
+        if supports_fullscreen_toggle:
+            controls.insert(0, ("fullscreen", self.fullscreen_button))
+        return controls
 
     def _setting_controls(self) -> list[tuple[str, object]]:
         """Return setting-control keys with their hidden pygame_gui buttons."""
@@ -1308,14 +1311,7 @@ class SettingsScreen(Screen):
 
     def _setting_buttons(self) -> list:
         """Return only the hidden setting-control buttons."""
-        return [
-            self.fullscreen_button,
-            self.text_button,
-            self.animation_button,
-            self.sound_button,
-            self.tutorial_button,
-            self.tutorial_reset_button,
-        ]
+        return [button for _, button in self._setting_option_controls()]
 
     def _hide_all_elements(self) -> None:
         """Hide settings controls."""
@@ -1338,6 +1334,7 @@ class SettingsScreen(Screen):
 
     def _refresh_button_text(self) -> None:
         """Refresh settings button labels."""
+        supports_fullscreen_toggle = getattr(self.window, "supports_fullscreen_toggle", True)
         self.button_labels = {
             "fullscreen": f"Display: {'Fullscreen' if self.window.fullscreen else 'Windowed'}",
             "text": f"Text Size: {self._label_for_value(self.TEXT_SCALES, self.window.text_scale)}",
@@ -1347,7 +1344,8 @@ class SettingsScreen(Screen):
             "tutorial_reset": "Reset Tip Cycle",
             "back": "Back",
         }
-        self.fullscreen_button.set_text(self.button_labels["fullscreen"])
+        if supports_fullscreen_toggle:
+            self.fullscreen_button.set_text(self.button_labels["fullscreen"])
         self.text_button.set_text(self.button_labels["text"])
         self.animation_button.set_text(self.button_labels["animation"])
         self.sound_button.set_text(self.button_labels["sound"])
