@@ -1,5 +1,7 @@
 .venv/
 .venv-run/
+.venv-web/
+.tmp/
 __pycache__/
 *.pyc
 .pytest_cache/
