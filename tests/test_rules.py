@@ -3,6 +3,7 @@ Tests for Pan's Trial game rules.
 """
 
 import os
+import json
 from pathlib import Path
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -18,11 +19,15 @@ from engine import (
     PlaceCardsAction
 )
 from deck_utils import setup_game_deck, create_6x6_labyrinth, draft_hands, get_jack_suit_order
+from multiplayer import LocalRoomClient, LocalRoomServer
+from multiplayer.browser_room import BrowserRoomClient
+from multiplayer.local_room import RoomStore
+from multiplayer.serialization import encode_game_state
 from ui.audio_manager import AudioManager
 from ui.input_handler import InputHandler
 from ui.board_renderer import BoardRenderer
 from ui.game_screen import GameScreen
-from ui.screen_manager import CoinFlipScreen, DraftScreen, GameOverScreen, SettingsScreen
+from ui.screen_manager import CoinFlipScreen, DraftScreen, GameOverScreen, MultiplayerLobbyScreen, SettingsScreen
 from ui.window import GameWindow
 
 
@@ -192,6 +197,212 @@ def test_audio_manager_sends_web_music_candidates_as_newline_list():
     assert bridge.calls == [("audio/PanPhase1_Updated.mp3\naudio/PanPhase1.mp3", 0.5)]
     assert audio.current_music == "phase"
     assert audio.last_error is None
+
+
+def test_local_room_server_create_join_and_submit_move():
+    """Two localhost clients can join a room and share the authoritative game state."""
+    server = LocalRoomServer(port=8876)
+    server.start()
+    try:
+        host = LocalRoomClient.create("Host", server.base_url)
+        guest = LocalRoomClient.join("Guest", server.base_url, host.room_code)
+        host.refresh()
+
+        assert host.ready
+        assert guest.ready
+        assert host.players == {0: "Host", 1: "Guest"}
+        assert guest.players == {0: "Host", 1: "Guest"}
+
+        active_player = host.game.current_player
+        acting_client = host if active_player == host.player_id else guest
+        direction = acting_client.game.get_legal_moves(active_player)[0]
+        starting_position = acting_client.game.board.get_player_position(active_player)
+
+        assert acting_client.submit_action(MoveAction(active_player, direction))
+        host.refresh()
+        guest.refresh()
+        synced_position = host.game.board.get_player_position(active_player)
+
+        assert host.revision == guest.revision
+        assert synced_position != starting_position
+        assert guest.game.board.get_player_position(active_player) == synced_position
+        assert host.game.current_player == guest.game.current_player
+    finally:
+        server.stop()
+
+
+def test_local_room_rejects_wrong_player_and_frees_seat_on_leave():
+    """The room server should enforce seats and allow a departed guest to be replaced."""
+    server = LocalRoomServer(port=8896)
+    server.start()
+    try:
+        host = LocalRoomClient.create("Host", server.base_url)
+        guest = LocalRoomClient.join("Guest", server.base_url, host.room_code)
+        host.refresh()
+
+        active_player = host.game.current_player
+        wrong_client = guest if active_player == host.player_id else host
+        direction = host.game.get_legal_moves(active_player)[0]
+
+        assert not wrong_client.submit_action(MoveAction(active_player, direction))
+        assert "does not belong" in wrong_client.last_error
+
+        with pytest.raises(OSError, match="already has two players"):
+            LocalRoomClient.join("Third", server.base_url, host.room_code)
+
+        guest.leave()
+        replacement = LocalRoomClient.join("Replacement", server.base_url, host.room_code)
+        replacement.refresh()
+        assert replacement.players[1] == "Replacement"
+
+        host.leave()
+        new_host = LocalRoomClient.join("NewHost", server.base_url, host.room_code)
+        assert new_host.player_id == 0
+        new_host.refresh()
+        assert new_host.players[0] == "NewHost"
+    finally:
+        server.stop()
+
+
+def test_room_store_game_over_poll_is_one_shot():
+    """Polling a finished room should not keep mutating its summary."""
+    store = RoomStore()
+    room, _ = store.create_room("Host")
+    room.players[1] = "Guest"
+    room.game.damage[0].cards = [
+        Card(CardRank.KING, CardSuit.HEARTS),
+        Card(CardRank.KING, CardSuit.DIAMONDS),
+        Card(CardRank.ACE, CardSuit.CLUBS),
+    ]
+
+    store.get_room(room.code)
+    first_revision = room.revision
+    first_events = list(room.game.major_events)
+
+    store.get_room(room.code)
+
+    assert room.revision == first_revision
+    assert room.game.major_events == first_events
+
+
+def test_room_store_rejects_stale_action_revision():
+    """The room server should reject actions from clients with old snapshots."""
+    store = RoomStore()
+    room, _ = store.create_room("Host")
+    room.players[1] = "Guest"
+    active_player = room.game.current_player
+    direction = room.game.get_legal_moves(active_player)[0]
+    starting_position = room.game.board.get_player_position(active_player)
+    stale_revision = room.revision
+    room.revision += 1
+
+    with pytest.raises(ValueError, match="Room state changed"):
+        store.submit_action(
+            room.code,
+            active_player,
+            MoveAction(active_player, direction),
+            expected_revision=stale_revision,
+        )
+
+    assert room.game.board.get_player_position(active_player) == starting_position
+
+
+def test_browser_room_client_uses_javascript_bridge(monkeypatch, game_setup):
+    """Web clients should create rooms through the browser HTTP bridge."""
+    import platform
+
+    class Bridge:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def request(self, method: str, url: str, body: str) -> str:
+            self.calls.append((method, url, body))
+            return json.dumps(
+                {
+                    "room_code": "1000",
+                    "player_id": 0,
+                    "players": {"0": "WebHost"},
+                    "ready": False,
+                    "revision": 0,
+                    "message": "Waiting",
+                    "state": encode_game_state(game_setup),
+                }
+            )
+
+    bridge = Bridge()
+    monkeypatch.setattr(platform, "window", type("Window", (), {"panTrialRoomBridge": bridge})(), raising=False)
+
+    client = BrowserRoomClient.create("WebHost", "http://192.168.1.10:8765")
+
+    assert client.room_code == "1000"
+    assert client.player_id == 0
+    assert client.players == {0: "WebHost"}
+    assert bridge.calls[0][0] == "POST"
+    assert bridge.calls[0][1] == "http://192.168.1.10:8765/rooms"
+
+
+def test_multiplayer_lobby_screen_lays_out_room_controls():
+    """The local room screen exposes the expected create/join controls."""
+    window = SmokeWindow(width=1200, height=900)
+    screen = MultiplayerLobbyScreen(window)
+
+    assert set(screen.button_rects) == {"create", "join", "back"}
+    assert screen.get_player_name() == "Player"
+    assert screen.get_server_url() == MultiplayerLobbyScreen.DEFAULT_SERVER_URL
+    screen.server_entry.set_text("127.0.0.1:8765")
+    assert screen.get_server_url() == MultiplayerLobbyScreen.DEFAULT_SERVER_URL
+
+    surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
+    screen.render(surface)
+
+
+def test_multiplayer_game_screen_blocks_remote_turn_input(game_setup):
+    """A client should not submit actions for the other player's turn."""
+    game = game_setup
+    game.phase = GamePhase.TRAVERSING
+    game.current_player = 1
+    window = SmokeWindow(width=1200, height=900)
+
+    class Session:
+        player_id = 0
+        room_code = "1000"
+        players = {0: "Host", 1: "Guest"}
+        ready = True
+        last_error = None
+        submitted = []
+
+        def update(self, time_delta: float) -> bool:
+            return False
+
+        def submit_action(self, action):
+            self.submitted.append(action)
+            return True
+
+    session = Session()
+    session.game = game
+    window.multiplayer_session = session
+    screen = GameScreen(window, game)
+
+    direction = game.get_legal_moves(1)[0]
+
+    assert screen._apply_action(MoveAction(1, direction)) is False
+    assert session.submitted == []
+
+    screen.damage_popup_player = 1
+    damage_event = pygame.event.Event(
+        pygame.MOUSEBUTTONDOWN,
+        {"pos": screen._get_damage_summary_rects()[0].center},
+    )
+    key_event = pygame.event.Event(pygame.KEYDOWN, {"key": pygame.K_UP})
+
+    assert screen.handle_events(damage_event) is True
+    assert screen.handle_events(key_event) is True
+    assert screen.damage_popup_player is None
+    assert session.submitted == []
+
+    surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
+    screen.render(surface)
+    assert screen.hand_card_rects == []
 
 
 def test_card_combat_value():

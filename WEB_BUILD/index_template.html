@@ -271,6 +271,48 @@ asyncio.run(custom_site())
               return true;
           }
       };
+      window.panTrialCloseTab = function() {
+          window.open("", "_self");
+          window.close();
+          window.setTimeout(function() {
+              if (!document.body) { return; }
+              document.body.innerHTML = "";
+              var closed = document.createElement("div");
+              closed.style.position = "fixed";
+              closed.style.inset = "0";
+              closed.style.display = "flex";
+              closed.style.alignItems = "center";
+              closed.style.justifyContent = "center";
+              closed.style.background = "#10141e";
+              closed.style.color = "#f1e0b0";
+              closed.style.font = "24px Georgia, serif";
+              closed.textContent = "Pan's Trial closed. You can close this tab.";
+              document.body.appendChild(closed);
+          }, 120);
+      };
+      window.panTrialRoomBridge = {
+          request: function(method, url, body) {
+              var xhr = new XMLHttpRequest();
+              xhr.open(method, url, false);
+              xhr.setRequestHeader("Content-Type", "application/json");
+              try {
+                  xhr.send(method === "GET" ? null : (body || "{}"));
+              } catch (error) {
+                  throw new Error("Room server request failed: " + error.message);
+              }
+              if (xhr.status < 200 || xhr.status >= 300) {
+                  var message = xhr.responseText || ("HTTP " + xhr.status);
+                  try {
+                      var parsed = JSON.parse(message);
+                      if (parsed && parsed.error) {
+                          message = parsed.error;
+                      }
+                  } catch (_) {}
+                  throw new Error(message);
+              }
+              return xhr.responseText || "{}";
+          }
+      };
     </script><!--
 //=============================================================================
 //

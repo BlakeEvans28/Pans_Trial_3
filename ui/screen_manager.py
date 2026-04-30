@@ -27,6 +27,7 @@ class ScreenType(Enum):
     """Different screens in the game."""
     START = "start"
     HOW_TO_PLAY = "how_to_play"
+    MULTIPLAYER = "multiplayer"
     SETTINGS = "settings"
     COIN_FLIP = "coin_flip"
     DRAFT = "draft"
@@ -647,6 +648,7 @@ class StartScreen(Screen):
     ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
     MENU_ACTIONS = [
         ("PLAY", "Start Game"),
+        ("MULTIPLAYER", "Two Player"),
         ("HOW_TO_PLAY", "How To Play"),
         ("SETTINGS", "Settings"),
         ("QUIT", "Quit"),
@@ -1207,6 +1209,256 @@ class HowToPlayScreen(Screen):
 
     def on_resize(self) -> None:
         """Refresh fonts and layout after resize."""
+        self._refresh_fonts()
+        self._layout_ui()
+
+
+class MultiplayerLobbyScreen(Screen):
+    """Create or join a localhost two-player room."""
+
+    DEFAULT_SERVER_URL = "http://127.0.0.1:8765"
+
+    def __init__(self, window: "GameWindow"):
+        super().__init__(window)
+        self.title_font = None
+        self.body_font = None
+        self.small_font = None
+        self.name_entry = None
+        self.room_entry = None
+        self.server_entry = None
+        self.hovered_button = None
+        self.button_rects: dict[str, pygame.Rect] = {}
+        self.panel_rect = pygame.Rect(0, 0, 1, 1)
+        self.status_text = "Desktop quick match: create a room, share the code, then start in the labyrinth."
+        self.room_code_text = ""
+        self.server_url_text = self.DEFAULT_SERVER_URL
+        self._refresh_fonts()
+        self._create_ui()
+        self.on_resize()
+        self._hide_all_elements()
+
+    def _refresh_fonts(self) -> None:
+        self.title_font = self._get_game_font(self.font_size(58, 34))
+        self.body_font = self._get_game_font(self.font_size(28, 20))
+        self.small_font = self._get_game_font(self.font_size(22, 16))
+
+    def _create_ui(self) -> None:
+        self.name_entry = pygame_gui.elements.UITextEntryLine(
+            relative_rect=pygame.Rect((0, 0), (1, 1)),
+            manager=self.ui_manager,
+            object_id="multiplayer_name",
+        )
+        self.name_entry.set_text("Player")
+        self.room_entry = pygame_gui.elements.UITextEntryLine(
+            relative_rect=pygame.Rect((0, 0), (1, 1)),
+            manager=self.ui_manager,
+            object_id="multiplayer_room",
+        )
+        self.room_entry.set_allowed_characters("numbers")
+        self.server_entry = pygame_gui.elements.UITextEntryLine(
+            relative_rect=pygame.Rect((0, 0), (1, 1)),
+            manager=self.ui_manager,
+            object_id="multiplayer_server",
+        )
+        self.server_entry.set_text(self.DEFAULT_SERVER_URL)
+
+    def _layout_ui(self) -> None:
+        margin = self.scale_x(42, 18)
+        panel_width = min(self.scale_x(760, 330), self.window.WINDOW_WIDTH - 2 * margin)
+        panel_height = min(self.scale_y(620, 500), self.window.WINDOW_HEIGHT - 2 * self.scale_y(34, 20))
+        self.panel_rect = pygame.Rect(
+            (self.window.WINDOW_WIDTH - panel_width) // 2,
+            (self.window.WINDOW_HEIGHT - panel_height) // 2,
+            panel_width,
+            panel_height,
+        )
+        content = self._get_stone_content_rect(
+            self.panel_rect,
+            extra_x=self.scale_x(10, 4),
+            extra_top=self.scale_y(10, 6),
+            extra_bottom=self.scale_y(10, 6),
+        )
+        field_height = self.scale_y(42, 34)
+        field_width = min(content.width, self.scale_x(520, 280))
+        field_x = content.centerx - field_width // 2
+        first_field_y = content.y + self.scale_y(112, 78)
+
+        self._set_entry_rect(self.name_entry, pygame.Rect(field_x, first_field_y, field_width, field_height))
+        self._set_entry_rect(
+            self.room_entry,
+            pygame.Rect(field_x, first_field_y + self.scale_y(92, 72), field_width, field_height),
+        )
+        self._set_entry_rect(
+            self.server_entry,
+            pygame.Rect(field_x, first_field_y + self.scale_y(184, 142), field_width, field_height),
+        )
+
+        button_gap = self.scale_x(18, 10)
+        button_width = min(self.scale_x(250, 150), max(1, (content.width - button_gap) // 2))
+        button_height = self._get_wood_icon_height_for_width(button_width)
+        button_y = self.panel_rect.bottom - self.scale_y(142, 104)
+        self.button_rects = {
+            "create": pygame.Rect(content.centerx - button_width - button_gap // 2, button_y, button_width, button_height),
+            "join": pygame.Rect(content.centerx + button_gap // 2, button_y, button_width, button_height),
+        }
+        back_width = min(self.scale_x(260, 160), content.width)
+        self.button_rects["back"] = pygame.Rect(
+            content.centerx - back_width // 2,
+            self.panel_rect.bottom - self.scale_y(72, 56),
+            back_width,
+            self._get_wood_icon_height_for_width(back_width),
+        )
+
+    def _set_entry_rect(self, entry, rect: pygame.Rect) -> None:
+        entry.set_relative_position((rect.x, rect.y))
+        entry.set_dimensions((rect.width, rect.height))
+
+    def _hide_all_elements(self) -> None:
+        self.name_entry.hide()
+        self.room_entry.hide()
+        self.server_entry.hide()
+
+    def _show_all_elements(self) -> None:
+        self.name_entry.show()
+        self.room_entry.show()
+        self.server_entry.show()
+
+    def get_player_name(self) -> str:
+        return (self.name_entry.get_text() or "Player").strip() or "Player"
+
+    def get_room_code(self) -> str:
+        return (self.room_entry.get_text() or "").strip()
+
+    def get_server_url(self) -> str:
+        value = (self.server_entry.get_text() or self.DEFAULT_SERVER_URL).strip().rstrip("/")
+        if value and "://" not in value:
+            value = f"http://{value}"
+        return value or self.DEFAULT_SERVER_URL
+
+    def set_status(
+        self,
+        text: str,
+        *,
+        room_code: str | None = None,
+        server_url: str | None = None,
+        clear_room_details: bool = False,
+    ) -> None:
+        self.status_text = text
+        if clear_room_details:
+            self.room_code_text = ""
+        if room_code is not None:
+            self.room_code_text = room_code
+            self.room_entry.set_text(room_code)
+        if server_url is not None:
+            self.server_url_text = server_url
+            self.server_entry.set_text(server_url)
+
+    def handle_events(self, event: pygame.event.Event) -> bool:
+        if event.type == pygame.MOUSEMOTION:
+            self.hovered_button = self._button_at(event.pos)
+            return False
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            button = self._button_at(event.pos)
+            if button == "create":
+                return "CREATE_ROOM"
+            if button == "join":
+                return "JOIN_ROOM"
+            if button == "back":
+                return "MENU"
+        return False
+
+    def _button_at(self, pos: tuple[int, int]) -> str | None:
+        for key, rect in self.button_rects.items():
+            if self._point_hits_wood_icon(rect, pos):
+                return key
+        return None
+
+    def update(self, time_delta: float) -> None:
+        pass
+
+    def render(self, surface: pygame.Surface) -> None:
+        self._render_screen_background(surface, (14, 18, 28))
+        self._render_stone_panel(surface, self.panel_rect, dim_alpha=28, shadow_alpha=64)
+        content = self._get_stone_content_rect(
+            self.panel_rect,
+            extra_x=self.scale_x(10, 4),
+            extra_top=self.scale_y(10, 6),
+            extra_bottom=self.scale_y(10, 6),
+        )
+
+        self._render_carved_text(
+            surface,
+            self.title_font,
+            "Local Room",
+            (74, 66, 54),
+            (content.centerx, content.y + self.scale_y(10, 6)),
+            anchor="midtop",
+        )
+        self._draw_wrapped_carved_text(
+            surface,
+            self.status_text,
+            self.small_font,
+            (74, 66, 54),
+            pygame.Rect(content.x, content.y + self.scale_y(72, 50), content.width, self.scale_y(50, 38)),
+            self.scale_y(20, 15),
+            2,
+            align="center",
+        )
+
+        labels = [
+            ("Your Name", self.name_entry.relative_rect),
+            ("Room Code", self.room_entry.relative_rect),
+            ("Server URL", self.server_entry.relative_rect),
+        ]
+        for label, rect in labels:
+            self._render_carved_text(
+                surface,
+                self.small_font,
+                label,
+                (74, 66, 54),
+                (rect.x, rect.y - self.scale_y(24, 18)),
+            )
+
+        for key, label in [
+            ("create", "Create Room"),
+            ("join", "Join Room"),
+            ("back", "Back"),
+        ]:
+            self._render_wood_button(
+                surface,
+                self.button_rects[key],
+                label,
+                self.hovered_button == key,
+                self.font_size(24, 16),
+            )
+
+        if self.room_code_text:
+            text = f"Room {self.room_code_text} on {self.server_url_text}"
+            self._draw_wrapped_carved_text(
+                surface,
+                text,
+                self.small_font,
+                (74, 66, 54),
+                pygame.Rect(content.x, self.button_rects["create"].y - self.scale_y(46, 34), content.width, self.scale_y(38, 28)),
+                self.scale_y(20, 15),
+                2,
+                align="center",
+            )
+
+    def on_enter(self) -> None:
+        self._show_all_elements()
+        self.hovered_button = None
+        if getattr(self.window, "is_web", False):
+            self.set_status(
+                "Run room_server.py on one machine. Both players use that same server URL.",
+                clear_room_details=True,
+            )
+
+    def on_exit(self) -> None:
+        self._hide_all_elements()
+        self.hovered_button = None
+
+    def on_resize(self) -> None:
         self._refresh_fonts()
         self._layout_ui()
 
@@ -3206,6 +3458,7 @@ class ScreenManager:
 
     INTRO_MUSIC_SCREENS = {
         ScreenType.START,
+        ScreenType.MULTIPLAYER,
         ScreenType.COIN_FLIP,
         ScreenType.DRAFT,
         ScreenType.JACK_REVEAL,

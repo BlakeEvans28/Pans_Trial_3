@@ -706,6 +706,19 @@ class GameScreen(Screen):
     
     def handle_events(self, event: pygame.event.Event) -> bool:
         """Handle events."""
+        if self._is_multiplayer_input_locked():
+            self._cancel_locked_multiplayer_input()
+            locked_events = (
+                pygame.MOUSEBUTTONDOWN,
+                pygame.MOUSEBUTTONUP,
+                pygame.MOUSEMOTION,
+                pygame.KEYDOWN,
+                pygame.KEYUP,
+                pygame_gui.UI_BUTTON_PRESSED,
+            )
+            if event.type in locked_events:
+                return True
+
         if event.type == pygame.KEYDOWN and self.game.phase == GamePhase.SETUP:
             if event.key == pygame.K_SPACE:
                 self.game.phase = GamePhase.TRAVERSING
@@ -835,7 +848,19 @@ class GameScreen(Screen):
         """Apply a game action and trigger matching UI-side sounds."""
         had_combat = self.game.has_pending_combat()
 
-        applied = self.game.apply_action(action)
+        session = self._get_multiplayer_session()
+        if session is not None:
+            if action.player_id != session.player_id:
+                self._show_notice(f"Waiting for P{action.player_id + 1}. You are P{session.player_id + 1}.")
+                return False
+            applied = session.submit_action(action)
+            if session.game is not None:
+                self.game = session.game
+            if not applied:
+                self._show_notice(session.last_error or "That room action was rejected.")
+                return False
+        else:
+            applied = self.game.apply_action(action)
         if not applied:
             return False
 
@@ -846,6 +871,75 @@ class GameScreen(Screen):
         if not had_combat and self.game.has_pending_combat():
             audio.play_clash()
         return True
+
+    def _get_multiplayer_session(self):
+        """Return the active local room session, if this game is networked."""
+        return getattr(self.window, "multiplayer_session", None)
+
+    def _is_multiplayer_input_locked(self) -> bool:
+        """Return True when this client should only watch the room state."""
+        session = self._get_multiplayer_session()
+        if session is None:
+            return False
+        if session.last_error or not session.ready:
+            return True
+        if self.game.winner is not None:
+            return True
+        return self.game.current_player != session.player_id
+
+    def _cancel_locked_multiplayer_input(self) -> None:
+        """Clear in-progress local gestures while another client owns the turn."""
+        self.damage_popup_player = None
+        self.inspected_hand_card_index = None
+        self.request_popup_labyrinth_view = False
+        self.pending_plane_shift_line = None
+        self.hovered_plane_shift_line = None
+        self.pending_plane_shift_confirmation = None
+        self.selected_placement_card_index = None
+        self.dragging_placement_card_index = None
+        self.dragging_placement_card_pos = None
+        self.hovered_placement_target = None
+
+    def _render_multiplayer_overlay(self, surface: pygame.Surface) -> None:
+        """Show local room status and block remote-turn input visually."""
+        session = self._get_multiplayer_session()
+        if session is None:
+            return
+
+        if session.last_error:
+            message = f"Room connection issue: {session.last_error}"
+        elif not session.ready:
+            message = f"Room {session.room_code}: waiting for another player."
+        elif self.game.winner is not None:
+            message = ""
+        elif self.game.current_player != session.player_id:
+            name = session.players.get(self.game.current_player, f"P{self.game.current_player + 1}")
+            message = f"Room {session.room_code}: waiting for {name}."
+        else:
+            return
+
+        self._render_popup_backdrop(surface, 96)
+        panel_width = min(self.scale_x(540, 300), self.window.WINDOW_WIDTH - 2 * self.scale_x(28, 16))
+        panel_height = self.scale_y(84, 64)
+        panel_rect = pygame.Rect(
+            (self.window.WINDOW_WIDTH - panel_width) // 2,
+            self.scale_y(96, 70),
+            panel_width,
+            panel_height,
+        )
+
+        self._render_stone_panel(surface, panel_rect, dim_alpha=28, shadow_alpha=62)
+        text_rect = self._get_stone_content_rect(panel_rect)
+        self._draw_wrapped_carved_text(
+            surface,
+            message,
+            self.popup_small_font,
+            (74, 66, 54),
+            text_rect,
+            self.scale_y(20, 15),
+            2,
+            align="center",
+        )
 
     def _handle_tutorial_toggle_click(self, pos: tuple[int, int]) -> bool:
         """Turn off tutorial tips from the currently visible tutorial panel."""
@@ -899,14 +993,21 @@ class GameScreen(Screen):
     
     def update(self, time_delta: float) -> None:
         """Update game state display."""
+        session = self._get_multiplayer_session()
+        if session is not None:
+            session.update(time_delta)
+            if session.game is not None and session.game is not self.game:
+                self.game = session.game
+
         self._update_tutorial_cycle_state()
         if getattr(self.window, "audio", None) is not None:
             self.window.audio.play_phase_music()
         self.plane_shift_preview_elapsed += time_delta * self.window.animation_speed
 
-        for _ in range(6):
-            if not self.game.advance_forced_traversing():
-                break
+        if session is None:
+            for _ in range(6):
+                if not self.game.advance_forced_traversing():
+                    break
 
         if self.notice_timer > 0:
             self.notice_timer = max(0.0, self.notice_timer - time_delta)
@@ -1106,6 +1207,7 @@ class GameScreen(Screen):
         self._render_appeasing_result_banner(surface)
         self._render_notice_banner(surface)
         self._render_tutorial_overlay(surface)
+        self._render_multiplayer_overlay(surface)
     
     def on_enter(self) -> None:
         """Activate game screen."""
@@ -2264,6 +2366,11 @@ class GameScreen(Screen):
 
     def _render_hand_cards(self, surface: pygame.Surface) -> None:
         """Render the active player's hand as same-size labyrinth tiles."""
+        session = self._get_multiplayer_session()
+        if session is not None and self.game.current_player != session.player_id:
+            self.hand_card_rects = []
+            return
+
         rects = self._get_hand_card_rects()
         self.hand_card_rects = rects
         if not rects:

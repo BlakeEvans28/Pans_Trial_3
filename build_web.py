@@ -30,6 +30,7 @@ PROJECT_FILES = (
 )
 PROJECT_DIRS = (
     "engine",
+    "multiplayer",
     "ui",
 )
 FRAMEBUFFER_WIDTH = 1200

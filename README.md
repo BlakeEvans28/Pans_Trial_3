@@ -57,6 +57,26 @@ python -m pip install pygame-ce pygame_gui pandas pytest
 python main.py
 ```
 
+## Local Two-Player Quick Match
+
+The source and web builds include a room mode for two clients that can reach the same room server. This works on one machine, across a LAN, or across networks if the host exposes the room-server port.
+
+Start the room server on the host machine:
+
+```powershell
+python room_server.py
+```
+
+Then use one of the printed URLs, such as `http://192.168.1.25:8765`, in the `Two Player` screen:
+
+1. Open the game in the first client, choose `Two Player`, enter a name and the server URL, then choose `Create Room`.
+2. Share the server URL and room code with the other player.
+3. Open the game in the second client, choose `Two Player`, enter a name, server URL, and room code, then choose `Join Room`.
+
+For web clients, serve the web build over HTTP when connecting to an HTTP room server. Many browsers block an HTTPS page from contacting a plain HTTP room server. This mode starts directly in the labyrinth with auto-dealt hands. The full draft remains the standard local/hotseat flow.
+
+For same-machine desktop testing, you can skip `room_server.py`: leave the default server URL in the first desktop client and choose `Create Room`. That client will start a private localhost server automatically.
+
 ## Run Tests
 
 If you download the full project release, the included rule tests can be run with:

@@ -132,6 +132,7 @@ class GameWindow:
         self.animation_speed = 1.0
         self.sound_volume = 0.5
         self.tutorial_enabled = False
+        self.multiplayer_session = None
         self.audio = AudioManager()
         self.audio.set_volume(self.sound_volume)
         display_flags = 0 if self.is_web else pygame.RESIZABLE

@@ -14,7 +14,10 @@ a = Analysis(
         (str(project_root / 'assets'), 'assets'),
         (str(project_root / 'audio'), 'audio'),
     ],
-    hiddenimports=[],
+    hiddenimports=[
+        'multiplayer',
+        'multiplayer.local_room',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
