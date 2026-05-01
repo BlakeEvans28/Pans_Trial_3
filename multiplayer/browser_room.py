@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from engine import Action, GameState
-from .serialization import decode_game_state, encode_action
+from engine import Action, Card, GameState
+from .serialization import decode_game_state, decode_room_payload, encode_action
 
 
 class BrowserRoomClient:
@@ -19,9 +19,20 @@ class BrowserRoomClient:
         self.player_name = player_name
         self.players: dict[int, str] = {}
         self.ready = False
+        self.ready_players: set[int] = set()
+        self.stage = "lobby"
         self.revision = -1
         self.message = ""
         self.game: GameState | None = None
+        self.draft_cards: list[Card] = []
+        self.available_cards: list[Card | None] = []
+        self.jack_cards: list[Card] = []
+        self.jack_order: list = []
+        self.draft_starting_player = 0
+        self.current_drafter = 0
+        self.draft_hands: dict[int, list[Card]] = {0: [], 1: []}
+        self.kings_drafted = 0
+        self.player_cards: list[Card] = []
         self.last_error: str | None = None
         self._poll_elapsed = 0.0
 
@@ -70,6 +81,34 @@ class BrowserRoomClient:
             self.last_error = str(exc)
             return False
 
+    def mark_ready(self) -> bool:
+        try:
+            snapshot = _bridge_request(
+                "POST",
+                f"{self.base_url}/rooms/{self.room_code}/ready",
+                {"player_id": self.player_id},
+            )
+            return self._apply_snapshot(snapshot)
+        except OSError as exc:
+            self.last_error = str(exc)
+            return False
+
+    def submit_draft_pick(self, card_index: int) -> bool:
+        try:
+            snapshot = _bridge_request(
+                "POST",
+                f"{self.base_url}/rooms/{self.room_code}/draft",
+                {
+                    "player_id": self.player_id,
+                    "revision": self.revision,
+                    "card_index": card_index,
+                },
+            )
+            return self._apply_snapshot(snapshot)
+        except OSError as exc:
+            self.last_error = str(exc)
+            return False
+
     def leave(self) -> None:
         try:
             _bridge_request(
@@ -84,12 +123,39 @@ class BrowserRoomClient:
         previous_revision = self.revision
         self.players = {int(key): value for key, value in snapshot.get("players", {}).items()}
         self.ready = bool(snapshot.get("ready"))
+        self.ready_players = {int(player_id) for player_id in snapshot.get("ready_players", [])}
+        self.stage = str(snapshot.get("stage") or self.stage)
         self.revision = int(snapshot.get("revision", self.revision))
         self.message = str(snapshot.get("message") or "")
+        self._apply_pregame_snapshot(snapshot.get("pregame") or {})
         if snapshot.get("state"):
             self.game = decode_game_state(snapshot["state"])
+        else:
+            self.game = None
         self.last_error = None
         return self.revision != previous_revision
+
+    def _apply_pregame_snapshot(self, pregame: dict[str, Any]) -> None:
+        if not pregame:
+            return
+        if pregame.get("draft_cards"):
+            self.draft_cards = list(decode_room_payload(pregame["draft_cards"]))
+        if pregame.get("available_cards"):
+            self.available_cards = list(decode_room_payload(pregame["available_cards"]))
+        if pregame.get("jack_cards"):
+            self.jack_cards = list(decode_room_payload(pregame["jack_cards"]))
+        if pregame.get("jack_order"):
+            self.jack_order = list(decode_room_payload(pregame["jack_order"]))
+        self.draft_starting_player = int(pregame.get("draft_starting_player", self.draft_starting_player))
+        self.current_drafter = int(pregame.get("current_drafter", self.current_drafter))
+        if pregame.get("draft_hands"):
+            self.draft_hands = {
+                int(key): list(value)
+                for key, value in dict(decode_room_payload(pregame["draft_hands"])).items()
+            }
+        self.kings_drafted = int(pregame.get("kings_drafted", self.kings_drafted))
+        if pregame.get("player_cards"):
+            self.player_cards = list(decode_room_payload(pregame["player_cards"]))
 
 
 def _bridge_request(method: str, url: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:

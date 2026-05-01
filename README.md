@@ -72,8 +72,15 @@ Then use one of the printed URLs, such as `http://192.168.1.25:8765`, in the `Tw
 1. Open the game in the first client, choose `Two Player`, enter a name and the server URL, then choose `Create Room`.
 2. Share the server URL and room code with the other player.
 3. Open the game in the second client, choose `Two Player`, enter a name, server URL, and room code, then choose `Join Room`.
+4. Both players choose `Ready`; the shared coin flip, draft, omen reveal, and labyrinth game begin from the same room state.
 
-For web clients, serve the web build over HTTP when connecting to an HTTP room server. Many browsers block an HTTPS page from contacting a plain HTTP room server. This mode starts directly in the labyrinth with auto-dealt hands. The full draft remains the standard local/hotseat flow.
+For web clients, serve the web build over HTTP when connecting to an HTTP room server. Many browsers block an HTTPS page from contacting a plain HTTP room server. To host the room server over HTTPS, provide a TLS certificate and key:
+
+```powershell
+python room_server.py --certfile path\to\cert.pem --keyfile path\to\key.pem
+```
+
+When HTTPS is enabled, use the printed `https://` room URL in the `Two Player` screen. Self-signed certificates may need to be accepted in the browser before the game can contact the room server.
 
 For same-machine desktop testing, you can skip `room_server.py`: leave the default server URL in the first desktop client and choose `Create Room`. That client will start a private localhost server automatically.
 

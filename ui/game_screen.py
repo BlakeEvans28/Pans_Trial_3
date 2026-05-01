@@ -876,6 +876,17 @@ class GameScreen(Screen):
         """Return the active local room session, if this game is networked."""
         return getattr(self.window, "multiplayer_session", None)
 
+    def _get_player_names(self) -> dict[int, str]:
+        """Return display names for player markers."""
+        session = self._get_multiplayer_session()
+        if session is None:
+            return {0: "Player 1", 1: "Player 2"}
+        return {
+            player_id: name
+            for player_id, name in getattr(session, "players", {}).items()
+            if str(name).strip()
+        }
+
     def _is_multiplayer_input_locked(self) -> bool:
         """Return True when this client should only watch the room state."""
         session = self._get_multiplayer_session()
@@ -1192,7 +1203,14 @@ class GameScreen(Screen):
             highlight_positions = set()
         
         # Render board
-        self.renderer.render(surface, self.game.board, suit_role_render, self.game.phase, highlight_positions)
+        self.renderer.render(
+            surface,
+            self.game.board,
+            suit_role_render,
+            self.game.phase,
+            highlight_positions,
+            self._get_player_names(),
+        )
         self._render_turn_move_highlights(surface)
         self._render_plane_shift_line_controls(surface)
         if self.game.has_pending_ballista():

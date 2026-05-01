@@ -203,6 +203,23 @@ async def main():
                 screen_manager.add_screen(screen_type, screen)
             return screens[screen_type]
 
+        def show_multiplayer_game() -> None:
+            """Switch to the authoritative room game when the shared reveal finishes."""
+            nonlocal game, game_screen
+
+            if multiplayer_client is None or multiplayer_client.game is None:
+                return
+            game = multiplayer_client.game
+            if game_screen is None:
+                game_screen = GameScreen(window, game)
+                window.game_screen_ref = game_screen
+                screens[ScreenType.GAME] = game_screen
+                screen_manager.add_screen(ScreenType.GAME, game_screen)
+            else:
+                game_screen.game = game
+            window.multiplayer_session = multiplayer_client
+            screen_manager.set_screen(ScreenType.GAME)
+
         # Start with only the start screen so the browser can render immediately.
         ensure_screen(ScreenType.START)
         screen_manager.set_screen(ScreenType.START)
@@ -281,7 +298,7 @@ async def main():
                         )
                         window.multiplayer_session = multiplayer_client
                         lobby_screen.set_status(
-                            "Room created. Share this server URL and room code.",
+                            "Room created. Share this server URL and room code, then both players press Ready.",
                             room_code=multiplayer_client.room_code,
                             server_url=server_url,
                         )
@@ -301,12 +318,31 @@ async def main():
                         )
                         window.multiplayer_session = multiplayer_client
                         lobby_screen.set_status(
-                            "Joined room. Starting when the host is ready.",
+                            "Joined room. Press Ready when both players are here.",
                             room_code=multiplayer_client.room_code,
                             server_url=multiplayer_client.base_url,
                         )
                     except OSError as exc:
                         lobby_screen.set_status(f"Could not join room: {exc}", clear_room_details=True)
+
+                elif result == "READY_ROOM":
+                    lobby_screen = ensure_screen(ScreenType.MULTIPLAYER)
+                    if multiplayer_client is None:
+                        lobby_screen.set_status("Create or join a room first.", clear_room_details=True)
+                    elif not multiplayer_client.ready:
+                        lobby_screen.set_status(
+                            "Waiting for another player to join before readying up.",
+                            room_code=multiplayer_client.room_code,
+                            server_url=multiplayer_client.base_url,
+                        )
+                    elif multiplayer_client.mark_ready():
+                        lobby_screen.set_status(
+                            "You are ready. Waiting for the other player.",
+                            room_code=multiplayer_client.room_code,
+                            server_url=multiplayer_client.base_url,
+                        )
+                    else:
+                        lobby_screen.set_status(f"Could not ready up: {multiplayer_client.last_error}")
 
                 elif result == "RESIZED":
                     screen_manager.handle_resize()
@@ -335,10 +371,15 @@ async def main():
             screen_manager.update(dt)
             window.ui_manager.update(dt)
 
+            if multiplayer_client is not None and screen_manager.current_screen != ScreenType.GAME:
+                multiplayer_client.update(dt)
+
             if screen_manager.current_screen == ScreenType.JACK_REVEAL:
                 jack_reveal_screen = screens.get(ScreenType.JACK_REVEAL)
                 jack_order = jack_reveal_screen.consume_result()
-                if jack_order is not None and pregame_setup is not None:
+                if jack_order is not None and multiplayer_client is not None:
+                    show_multiplayer_game()
+                elif jack_order is not None and pregame_setup is not None:
                     p0_hand, p1_hand = pregame_setup["hands"]
                     game = initialize_game(
                         pregame_setup["labyrinth_cards"],
@@ -359,7 +400,15 @@ async def main():
             elif screen_manager.current_screen == ScreenType.COIN_FLIP:
                 coin_flip_screen = screens.get(ScreenType.COIN_FLIP)
                 draft_starting_player = coin_flip_screen.consume_result()
-                if draft_starting_player is not None and pregame_setup is not None:
+                if draft_starting_player is not None and multiplayer_client is not None:
+                    draft_screen = ensure_screen(ScreenType.DRAFT)
+                    draft_screen.start_draft(
+                        multiplayer_client.draft_cards,
+                        starting_player=multiplayer_client.draft_starting_player,
+                    )
+                    draft_screen.apply_multiplayer_snapshot(multiplayer_client)
+                    screen_manager.set_screen(ScreenType.DRAFT)
+                elif draft_starting_player is not None and pregame_setup is not None:
                     draft_screen = ensure_screen(ScreenType.DRAFT)
                     draft_screen.start_draft(
                         pregame_setup["draft_cards"],
@@ -367,9 +416,20 @@ async def main():
                     )
                     screen_manager.set_screen(ScreenType.DRAFT)
 
+            elif screen_manager.current_screen == ScreenType.DRAFT and multiplayer_client is not None:
+                draft_screen = screens.get(ScreenType.DRAFT)
+                draft_screen.apply_multiplayer_snapshot(multiplayer_client)
+                if multiplayer_client.stage == "game" and multiplayer_client.game is not None:
+                    jack_reveal_screen = ensure_screen(ScreenType.JACK_REVEAL)
+                    jack_reveal_screen.start_reveal(
+                        multiplayer_client.jack_cards,
+                        multiplayer_client.player_cards,
+                        jack_order=multiplayer_client.jack_order,
+                    )
+                    screen_manager.set_screen(ScreenType.JACK_REVEAL)
+
             elif screen_manager.current_screen == ScreenType.MULTIPLAYER and multiplayer_client is not None:
                 lobby_screen = screens.get(ScreenType.MULTIPLAYER)
-                multiplayer_client.update(dt)
                 if multiplayer_client.last_error:
                     lobby_screen.set_status(f"Room connection issue: {multiplayer_client.last_error}")
                 elif not multiplayer_client.ready:
@@ -378,17 +438,39 @@ async def main():
                         room_code=multiplayer_client.room_code,
                         server_url=multiplayer_client.base_url,
                     )
-                elif multiplayer_client.game is not None:
-                    game = multiplayer_client.game
-                    if game_screen is None:
-                        game_screen = GameScreen(window, game)
-                        window.game_screen_ref = game_screen
-                        screens[ScreenType.GAME] = game_screen
-                        screen_manager.add_screen(ScreenType.GAME, game_screen)
+                elif multiplayer_client.stage == "lobby":
+                    if multiplayer_client.player_id in multiplayer_client.ready_players:
+                        lobby_screen.set_status(
+                            "You are ready. Waiting for the other player.",
+                            room_code=multiplayer_client.room_code,
+                            server_url=multiplayer_client.base_url,
+                        )
                     else:
-                        game_screen.game = game
-                    window.multiplayer_session = multiplayer_client
-                    screen_manager.set_screen(ScreenType.GAME)
+                        lobby_screen.set_status(
+                            "Both players connected. Press Ready when you are both here.",
+                            room_code=multiplayer_client.room_code,
+                            server_url=multiplayer_client.base_url,
+                        )
+                elif multiplayer_client.stage == "coin_flip":
+                    coin_flip_screen = ensure_screen(ScreenType.COIN_FLIP)
+                    coin_flip_screen.start_flip(multiplayer_client.draft_starting_player)
+                    screen_manager.set_screen(ScreenType.COIN_FLIP)
+                elif multiplayer_client.stage == "draft":
+                    draft_screen = ensure_screen(ScreenType.DRAFT)
+                    draft_screen.start_draft(
+                        multiplayer_client.draft_cards,
+                        starting_player=multiplayer_client.draft_starting_player,
+                    )
+                    draft_screen.apply_multiplayer_snapshot(multiplayer_client)
+                    screen_manager.set_screen(ScreenType.DRAFT)
+                elif multiplayer_client.stage == "game" and multiplayer_client.game is not None:
+                    jack_reveal_screen = ensure_screen(ScreenType.JACK_REVEAL)
+                    jack_reveal_screen.start_reveal(
+                        multiplayer_client.jack_cards,
+                        multiplayer_client.player_cards,
+                        jack_order=multiplayer_client.jack_order,
+                    )
+                    screen_manager.set_screen(ScreenType.JACK_REVEAL)
             
             # Render
             if screen_manager.current_screen == ScreenType.GAME and game_screen is not None:

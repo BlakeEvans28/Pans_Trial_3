@@ -21,7 +21,7 @@ from engine import (
 from deck_utils import setup_game_deck, create_6x6_labyrinth, draft_hands, get_jack_suit_order
 from multiplayer import LocalRoomClient, LocalRoomServer
 from multiplayer.browser_room import BrowserRoomClient
-from multiplayer.local_room import RoomStore
+from multiplayer.local_room import RoomStore, create_quick_match_game
 from multiplayer.serialization import encode_game_state
 from ui.audio_manager import AudioManager
 from ui.input_handler import InputHandler
@@ -199,6 +199,37 @@ def test_audio_manager_sends_web_music_candidates_as_newline_list():
     assert audio.last_error is None
 
 
+def _first_legal_draft_index(client: LocalRoomClient) -> int:
+    for index, card in enumerate(client.available_cards):
+        if card is None:
+            continue
+        if card.rank == CardRank.KING and client.kings_drafted >= 2:
+            continue
+        return index
+    raise AssertionError("No legal draft card found")
+
+
+def _ready_and_complete_room_draft(host: LocalRoomClient, guest: LocalRoomClient) -> None:
+    assert host.mark_ready()
+    assert guest.mark_ready()
+    host.refresh()
+    guest.refresh()
+
+    assert host.stage in {"coin_flip", "draft"}
+    assert guest.stage in {"coin_flip", "draft"}
+
+    for _ in range(10):
+        active = host if host.current_drafter == host.player_id else guest
+        assert active.submit_draft_pick(_first_legal_draft_index(active))
+        host.refresh()
+        guest.refresh()
+
+    assert host.stage == "game"
+    assert guest.stage == "game"
+    assert host.game is not None
+    assert guest.game is not None
+
+
 def test_local_room_server_create_join_and_submit_move():
     """Two localhost clients can join a room and share the authoritative game state."""
     server = LocalRoomServer(port=8876)
@@ -212,6 +243,13 @@ def test_local_room_server_create_join_and_submit_move():
         assert guest.ready
         assert host.players == {0: "Host", 1: "Guest"}
         assert guest.players == {0: "Host", 1: "Guest"}
+        assert host.stage == "lobby"
+        assert host.game is None
+
+        assert not host.submit_action(MoveAction(0, "up"))
+        assert "Game has not started" in host.last_error
+
+        _ready_and_complete_room_draft(host, guest)
 
         active_player = host.game.current_player
         acting_client = host if active_player == host.player_id else guest
@@ -240,13 +278,6 @@ def test_local_room_rejects_wrong_player_and_frees_seat_on_leave():
         guest = LocalRoomClient.join("Guest", server.base_url, host.room_code)
         host.refresh()
 
-        active_player = host.game.current_player
-        wrong_client = guest if active_player == host.player_id else host
-        direction = host.game.get_legal_moves(active_player)[0]
-
-        assert not wrong_client.submit_action(MoveAction(active_player, direction))
-        assert "does not belong" in wrong_client.last_error
-
         with pytest.raises(OSError, match="already has two players"):
             LocalRoomClient.join("Third", server.base_url, host.room_code)
 
@@ -260,6 +291,33 @@ def test_local_room_rejects_wrong_player_and_frees_seat_on_leave():
         assert new_host.player_id == 0
         new_host.refresh()
         assert new_host.players[0] == "NewHost"
+
+        _ready_and_complete_room_draft(new_host, replacement)
+        active_player = new_host.game.current_player
+        wrong_client = replacement if active_player == new_host.player_id else new_host
+        direction = new_host.game.get_legal_moves(active_player)[0]
+
+        assert not wrong_client.submit_action(MoveAction(active_player, direction))
+        assert "does not belong" in wrong_client.last_error
+    finally:
+        server.stop()
+
+
+def test_local_room_server_root_shows_status_page():
+    """Opening the printed room-server URL in a browser should explain how to connect."""
+    from urllib import request
+
+    server = LocalRoomServer(port=8916)
+    server.start()
+    try:
+        with request.urlopen(f"{server.base_url}/", timeout=0.75) as response:
+            body = response.read().decode("utf-8")
+            content_type = response.headers.get("Content-Type", "")
+
+        assert "text/html" in content_type
+        assert "Pan's Trial room server is running" in body
+        assert "Two Player" in body
+        assert "Unknown endpoint" not in body
     finally:
         server.stop()
 
@@ -269,6 +327,9 @@ def test_room_store_game_over_poll_is_one_shot():
     store = RoomStore()
     room, _ = store.create_room("Host")
     room.players[1] = "Guest"
+    room.ready_players = {0, 1}
+    room.stage = "game"
+    room.game = create_quick_match_game()
     room.game.damage[0].cards = [
         Card(CardRank.KING, CardSuit.HEARTS),
         Card(CardRank.KING, CardSuit.DIAMONDS),
@@ -290,6 +351,9 @@ def test_room_store_rejects_stale_action_revision():
     store = RoomStore()
     room, _ = store.create_room("Host")
     room.players[1] = "Guest"
+    room.ready_players = {0, 1}
+    room.stage = "game"
+    room.game = create_quick_match_game()
     active_player = room.game.current_player
     direction = room.game.get_legal_moves(active_player)[0]
     starting_position = room.game.board.get_player_position(active_player)
@@ -341,12 +405,49 @@ def test_browser_room_client_uses_javascript_bridge(monkeypatch, game_setup):
     assert bridge.calls[0][1] == "http://192.168.1.10:8765/rooms"
 
 
+def test_browser_room_import_does_not_need_desktop_http_server():
+    """The web room client should import in runtimes that do not ship http.server."""
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        """
+        import builtins
+
+        real_import = builtins.__import__
+
+        def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "http.server":
+                raise ModuleNotFoundError("No module named 'http.server'")
+            return real_import(name, globals, locals, fromlist, level)
+
+        builtins.__import__ = guarded_import
+
+        from multiplayer.browser_room import BrowserRoomClient
+
+        print(BrowserRoomClient.__name__)
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "BrowserRoomClient" in result.stdout
+
+
 def test_multiplayer_lobby_screen_lays_out_room_controls():
     """The local room screen exposes the expected create/join controls."""
     window = SmokeWindow(width=1200, height=900)
     screen = MultiplayerLobbyScreen(window)
 
-    assert set(screen.button_rects) == {"create", "join", "back"}
+    assert set(screen.button_rects) == {"create", "join", "ready", "back"}
     assert screen.get_player_name() == "Player"
     assert screen.get_server_url() == MultiplayerLobbyScreen.DEFAULT_SERVER_URL
     screen.server_entry.set_text("127.0.0.1:8765")
@@ -354,6 +455,28 @@ def test_multiplayer_lobby_screen_lays_out_room_controls():
 
     surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
     screen.render(surface)
+
+
+def test_multiplayer_lobby_web_paste_sets_server_url(monkeypatch):
+    """Ctrl+V in the web server URL field should not use pygame_gui's desktop clipboard."""
+    import platform
+
+    window = SmokeWindow(width=1200, height=900)
+    window.is_web = True
+    screen = MultiplayerLobbyScreen(window)
+    screen.server_entry.focus()
+
+    class WindowBridge:
+        @staticmethod
+        def prompt(message: str, default: str) -> str:
+            return "  10.74.27.104:8765  "
+
+    monkeypatch.setattr(platform, "window", WindowBridge(), raising=False)
+
+    event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_v, mod=pygame.KMOD_CTRL)
+
+    assert screen.handle_events(event) is True
+    assert screen.get_server_url() == "http://10.74.27.104:8765"
 
 
 def test_multiplayer_game_screen_blocks_remote_turn_input(game_setup):
@@ -403,6 +526,7 @@ def test_multiplayer_game_screen_blocks_remote_turn_input(game_setup):
     surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
     screen.render(surface)
     assert screen.hand_card_rects == []
+    assert screen._get_player_names() == {0: "Host", 1: "Guest"}
 
 
 def test_card_combat_value():
@@ -1158,6 +1282,18 @@ def test_player_tokens_only_offset_when_sharing_a_tile():
     assert BoardRenderer.get_player_x_offset(1, sharing_tile=False) == 0
     assert BoardRenderer.get_player_x_offset(0, sharing_tile=True) < 0
     assert BoardRenderer.get_player_x_offset(1, sharing_tile=True) > 0
+
+
+def test_player_name_label_font_shrinks_for_long_names():
+    """Long custom player names should fit inside marker label chips."""
+    renderer = BoardRenderer()
+    renderer.update_layout(1200, 900)
+    long_name = "AlexandertheChampion"
+    max_width = int(renderer.CELL_SIZE * 1.75)
+
+    font = renderer._get_fitted_player_label_font(long_name, max_width)
+
+    assert font.size(long_name)[0] <= max_width
 
 
 def test_board_renderer_uses_square_grid_without_labyrinth_overlay():

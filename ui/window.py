@@ -152,6 +152,7 @@ class GameWindow:
                 (self.WINDOW_WIDTH, self.WINDOW_HEIGHT),
                 resource_loader=SequentialResourceLoader(),
             )
+            self.ui_manager.paste_text_enabled = False
         else:
             self.ui_manager = pygame_gui.UIManager((self.WINDOW_WIDTH, self.WINDOW_HEIGHT))
 

@@ -13,6 +13,15 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-04-30 - Codex
+Commit: `pending` - Finished local-room pregame flow and browser room fixes
+Summary:
+- Added a browser-facing status page at the room server root URL so opening the printed local/LAN address explains how to use it instead of returning `Unknown endpoint`.
+- Made `multiplayer` package exports lazy so browser builds can import `multiplayer.browser_room` without touching desktop-only `http.server`.
+- Added a Ready gate, synchronized coin flip, shared draft, synchronized omen reveal, and named player markers for local/web room matches.
+- Added a web-safe Server URL paste fallback and optional HTTPS room-server hosting through `--certfile` and `--keyfile`.
+- Rebuilt the local web package and added regression coverage for the room-server root page, browser import path, room pregame flow, paste fallback, and fitted player-name labels.
+
 ## 2026-04-30 - Blake Evans
 Commit: `pending` - Optimized the web build and fixed browser startup plus input alignment
 Summary:

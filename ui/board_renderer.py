@@ -73,6 +73,22 @@ class BoardRenderer:
             self.font_medium = pygame.font.Font(None, medium_size)
             self.player_label_font = pygame.font.Font(None, label_size)
 
+    def _get_game_font(self, size: int) -> pygame.font.Font:
+        """Return the board font at a specific size."""
+        if self.MEDIEVAL_SHARP_PATH.exists():
+            return pygame.font.Font(str(self.MEDIEVAL_SHARP_PATH), size)
+        return pygame.font.Font(None, size)
+
+    def _get_fitted_player_label_font(self, text: str, max_width: int) -> pygame.font.Font:
+        """Shrink long player names so marker labels stay inside their chip."""
+        base_size = max(16, int(round(self.CELL_SIZE * 0.22)))
+        min_size = 9
+        for size in range(base_size, min_size - 1, -1):
+            font = self._get_game_font(size)
+            if font.size(text)[0] <= max_width:
+                return font
+        return self._get_game_font(min_size)
+
     def _load_player_portrait(self) -> Optional[pygame.Surface]:
         """Load the circular portrait asset used for player markers."""
         if not self.PLAYER_PORTRAIT_PATH.exists():
@@ -314,12 +330,13 @@ class BoardRenderer:
         suit_roles: dict,
         phase: GamePhase = None,
         highlight_positions: Optional[set[Position]] = None,
+        player_names: Optional[dict[int, str]] = None,
     ) -> None:
         """Render the board to surface."""
         self.update_layout(surface.get_width(), surface.get_height())
         self._render_grid(surface)
         self._render_cells(surface, board, suit_roles, phase, highlight_positions or set())
-        self._render_players(surface, board)
+        self._render_players(surface, board, player_names or {})
 
     def _render_labyrinth_frame(self, surface: pygame.Surface) -> None:
         """Render the decorative labyrinth frame above the tiles and grid lines."""
@@ -463,7 +480,7 @@ class BoardRenderer:
         rank_text = self.font_small.render(label, True, text_color)
         surface.blit(rank_text, (x, y))
     
-    def _render_players(self, surface: pygame.Surface, board: Board) -> None:
+    def _render_players(self, surface: pygame.Surface, board: Board, player_names: dict[int, str]) -> None:
         """Render player positions."""
         shared_tile = (
             board.get_player_position(0) is not None
@@ -477,7 +494,7 @@ class BoardRenderer:
                 x_offset = self.get_player_x_offset(player_id, shared_tile, min(cell_rect.width, cell_rect.height))
                 x = cell_rect.centerx + x_offset
                 y = cell_rect.centery
-                self._render_player_marker(surface, player_id, color, x, y, shared_tile)
+                self._render_player_marker(surface, player_id, color, x, y, shared_tile, player_names)
 
     def _render_player_marker(
         self,
@@ -487,6 +504,7 @@ class BoardRenderer:
         x: int,
         y: int,
         shared_tile: bool,
+        player_names: dict[int, str],
     ) -> None:
         """Render a labeled portrait marker for one player."""
         radius = self.PLAYER_MARKER_RADIUS - 2 if shared_tile else self.PLAYER_MARKER_RADIUS
@@ -504,7 +522,7 @@ class BoardRenderer:
         pygame.draw.circle(surface, color, center, radius, 3)
         pygame.draw.circle(surface, (236, 236, 240), center, radius, 1)
 
-        self._render_player_label(surface, player_id, color, center, radius, shared_tile)
+        self._render_player_label(surface, player_id, color, center, radius, shared_tile, player_names)
 
     def _render_player_label(
         self,
@@ -514,9 +532,13 @@ class BoardRenderer:
         center: tuple[int, int],
         radius: int,
         shared_tile: bool,
+        player_names: dict[int, str],
     ) -> None:
         """Render the player name above the circular portrait."""
-        label = self.player_label_font.render(f"Player {player_id + 1}", True, (246, 246, 248))
+        player_name = str(player_names.get(player_id) or f"Player {player_id + 1}").strip() or f"Player {player_id + 1}"
+        max_text_width = max(48, int(self.CELL_SIZE * (1.35 if shared_tile else 1.75)))
+        font = self._get_fitted_player_label_font(player_name, max_text_width)
+        label = font.render(player_name, True, (246, 246, 248))
         label_rect = label.get_rect()
         label_rect.inflate_ip(14, 8)
 

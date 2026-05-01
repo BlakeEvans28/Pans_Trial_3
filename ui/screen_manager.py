@@ -1296,17 +1296,23 @@ class MultiplayerLobbyScreen(Screen):
         button_gap = self.scale_x(18, 10)
         button_width = min(self.scale_x(250, 150), max(1, (content.width - button_gap) // 2))
         button_height = self._get_wood_icon_height_for_width(button_width)
-        button_y = self.panel_rect.bottom - self.scale_y(142, 104)
+        button_y = self.panel_rect.bottom - self.scale_y(178, 134)
         self.button_rects = {
             "create": pygame.Rect(content.centerx - button_width - button_gap // 2, button_y, button_width, button_height),
             "join": pygame.Rect(content.centerx + button_gap // 2, button_y, button_width, button_height),
         }
-        back_width = min(self.scale_x(260, 160), content.width)
+        lower_button_y = self.panel_rect.bottom - self.scale_y(86, 66)
+        self.button_rects["ready"] = pygame.Rect(
+            content.centerx - button_width - button_gap // 2,
+            lower_button_y,
+            button_width,
+            button_height,
+        )
         self.button_rects["back"] = pygame.Rect(
-            content.centerx - back_width // 2,
-            self.panel_rect.bottom - self.scale_y(72, 56),
-            back_width,
-            self._get_wood_icon_height_for_width(back_width),
+            content.centerx + button_gap // 2,
+            lower_button_y,
+            button_width,
+            button_height,
         )
 
     def _set_entry_rect(self, entry, rect: pygame.Rect) -> None:
@@ -1335,6 +1341,43 @@ class MultiplayerLobbyScreen(Screen):
             value = f"http://{value}"
         return value or self.DEFAULT_SERVER_URL
 
+    def _handle_server_url_paste(self, event: pygame.event.Event) -> bool:
+        if event.type != pygame.KEYDOWN:
+            return False
+        if event.key != pygame.K_v or not (event.mod & pygame.KMOD_CTRL or event.mod & pygame.KMOD_META):
+            return False
+        if event.mod & pygame.KMOD_ALT:
+            return False
+        if not getattr(self.server_entry, "is_focused", False):
+            return False
+
+        pasted_text = self._read_clipboard_text()
+        if pasted_text:
+            self._apply_server_url_paste(pasted_text)
+        else:
+            self.set_status("Paste a copied server URL into the browser prompt.", clear_room_details=False)
+        return True
+
+    def _read_clipboard_text(self) -> str:
+        if getattr(self.window, "is_web", False):
+            try:
+                import platform
+
+                pasted_text = platform.window.prompt("Paste the room server URL:", self.server_entry.get_text())
+                return str(pasted_text or "").strip()
+            except Exception:
+                return ""
+
+        try:
+            return str(pygame.scrap.get_text() or "").strip()
+        except Exception:
+            return ""
+
+    def _apply_server_url_paste(self, pasted_text: str) -> None:
+        server_url = " ".join(str(pasted_text or "").split()).strip().rstrip("/")
+        if server_url:
+            self.server_entry.set_text(server_url)
+
     def set_status(
         self,
         text: str,
@@ -1354,6 +1397,8 @@ class MultiplayerLobbyScreen(Screen):
             self.server_entry.set_text(server_url)
 
     def handle_events(self, event: pygame.event.Event) -> bool:
+        if self._handle_server_url_paste(event):
+            return True
         if event.type == pygame.MOUSEMOTION:
             self.hovered_button = self._button_at(event.pos)
             return False
@@ -1363,6 +1408,8 @@ class MultiplayerLobbyScreen(Screen):
                 return "CREATE_ROOM"
             if button == "join":
                 return "JOIN_ROOM"
+            if button == "ready":
+                return "READY_ROOM"
             if button == "back":
                 return "MENU"
         return False
@@ -1422,6 +1469,7 @@ class MultiplayerLobbyScreen(Screen):
         for key, label in [
             ("create", "Create Room"),
             ("join", "Join Room"),
+            ("ready", "Ready"),
             ("back", "Back"),
         ]:
             self._render_wood_button(
@@ -2219,6 +2267,10 @@ class DraftScreen(Screen):
 
     def _pick_card(self, index: int):
         """Draft one card and advance the turn order."""
+        session = getattr(self.window, "multiplayer_session", None)
+        if session is not None:
+            return self._pick_multiplayer_card(index, session)
+
         if index >= len(self.available_cards):
             return True
 
@@ -2241,6 +2293,33 @@ class DraftScreen(Screen):
         self.current_player = 1 - self.current_player
         self._update_buttons()
         return True
+
+    def _pick_multiplayer_card(self, index: int, session) -> bool:
+        if self.current_player != session.player_id:
+            return True
+        if index >= len(self.available_cards):
+            return True
+        card = self.available_cards[index]
+        if card is None or not self._can_pick_card(card):
+            return True
+        if session.submit_draft_pick(index):
+            self.apply_multiplayer_snapshot(session)
+        return True
+
+    def apply_multiplayer_snapshot(self, session) -> None:
+        """Mirror the shared room draft state into this screen."""
+        if getattr(session, "draft_cards", None):
+            self.draft_cards = list(session.draft_cards)
+        if getattr(session, "available_cards", None):
+            self.available_cards = list(session.available_cards)
+        self.player_hands = {
+            0: list(getattr(session, "draft_hands", {0: [], 1: []}).get(0, [])),
+            1: list(getattr(session, "draft_hands", {0: [], 1: []}).get(1, [])),
+        }
+        self.current_player = int(getattr(session, "current_drafter", self.current_player))
+        self.kings_drafted = int(getattr(session, "kings_drafted", self.kings_drafted))
+        self.player_cards = list(getattr(session, "player_cards", self.player_cards))
+        self._update_buttons()
 
     def _can_pick_card(self, card) -> bool:
         """Only two Kings may be drafted; the remaining two become player cards."""
@@ -2315,7 +2394,13 @@ class DraftScreen(Screen):
             anchor="center",
         )
 
-        prompt_text = f"Player {self.current_player + 1} picks a card"
+        session = getattr(self.window, "multiplayer_session", None)
+        player_names = getattr(session, "players", {}) if session is not None else {}
+        current_name = player_names.get(self.current_player, f"Player {self.current_player + 1}")
+        if session is not None and self.current_player != getattr(session, "player_id", self.current_player):
+            prompt_text = f"Waiting for {current_name} to pick"
+        else:
+            prompt_text = f"{current_name} picks a card"
         prompt_area = pygame.Rect(
             info_content.x,
             title_area.bottom + self.scale_y(6, 4),
@@ -2801,11 +2886,14 @@ class JackRevealScreen(Screen):
         self.card_font = self._get_game_font(self.font_size(42, 24))
         self.small_font = self._get_game_font(self.font_size(24, 16))
 
-    def start_reveal(self, jack_cards: list, player_cards: list | None = None) -> None:
+    def start_reveal(self, jack_cards: list, player_cards: list | None = None, jack_order: list | None = None) -> None:
         """Begin a new autonomous Jack reveal animation."""
-        shuffled_jacks = list(jack_cards)
-        shuffle(shuffled_jacks)
-        self.jack_order = [card.suit for card in shuffled_jacks[:4]]
+        if jack_order is not None:
+            self.jack_order = list(jack_order)
+        else:
+            shuffled_jacks = list(jack_cards)
+            shuffle(shuffled_jacks)
+            self.jack_order = [card.suit for card in shuffled_jacks[:4]]
         self.player_cards = list(player_cards or [])
         self.elapsed = 0.0
         self.revealed_count = 0

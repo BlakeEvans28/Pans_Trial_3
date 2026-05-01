@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import html
 import json
-from random import shuffle
+from random import choice, shuffle
 import socket
+import ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock, Thread, current_thread
 from typing import Any
@@ -13,34 +15,44 @@ from urllib import error as urlerror
 from urllib import request
 from urllib.parse import urlparse
 
-from deck_utils import create_6x6_labyrinth, draft_hands, get_jack_suit_order, setup_game_deck
-from engine import Action, GameState, Position
-from .serialization import decode_action, decode_game_state, encode_action, encode_game_state
+from deck_utils import create_6x6_labyrinth, draft_hands, get_jack_suit_order, setup_game_deck, setup_pregame_cards
+from engine import Action, Card, CardRank, GameState, Position
+from .serialization import (
+    decode_action,
+    decode_game_state,
+    decode_room_payload,
+    encode_action,
+    encode_game_state,
+    encode_room_payload,
+)
 
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 
 
-def create_quick_match_game() -> GameState:
-    """Create a direct-to-labyrinth two-player game for localhost rooms."""
+def create_game_from_pregame(
+    labyrinth_cards: list[Card],
+    player0_hand: list[Card],
+    player1_hand: list[Card],
+    jack_order: list,
+    starting_player: int = 1,
+) -> GameState:
+    """Create a traversing game from completed shared pregame setup."""
     from engine import GamePhase
-
-    labyrinth_cards, player0_deck, player1_deck, jack_cards = setup_game_deck()
-    player0_hand, player1_hand, starting_player = draft_hands(player0_deck, player1_deck)
-    jack_order = get_jack_suit_order(jack_cards)
 
     game = GameState()
     game.setup_suit_roles(jack_order)
+    available_labyrinth_cards = list(labyrinth_cards)
 
     for _ in range(100):
-        grid = create_6x6_labyrinth(labyrinth_cards)
+        grid = create_6x6_labyrinth(available_labyrinth_cards)
         game.setup_board(grid)
         game.place_player(0, Position(5, 3))
         game.place_player(1, Position(0, 2))
         if game.get_legal_moves(0) and game.get_legal_moves(1):
             break
-        shuffle(labyrinth_cards)
+        shuffle(available_labyrinth_cards)
 
     for card in player0_hand:
         game.add_card_to_hand(0, card)
@@ -53,28 +65,67 @@ def create_quick_match_game() -> GameState:
     return game
 
 
+def create_quick_match_game() -> GameState:
+    """Create a direct-to-labyrinth two-player game for localhost rooms."""
+    labyrinth_cards, player0_deck, player1_deck, jack_cards = setup_game_deck()
+    player0_hand, player1_hand, starting_player = draft_hands(player0_deck, player1_deck)
+    jack_order = get_jack_suit_order(jack_cards)
+    return create_game_from_pregame(labyrinth_cards, player0_hand, player1_hand, jack_order, starting_player)
+
+
 @dataclass
 class Room:
     code: str
-    game: GameState
+    game: GameState | None = None
     players: dict[int, str] = field(default_factory=dict)
+    ready_players: set[int] = field(default_factory=set)
+    stage: str = "lobby"
     revision: int = 0
     message: str = "Waiting for another player."
+    labyrinth_cards: list[Card] = field(default_factory=list)
+    draft_cards: list[Card] = field(default_factory=list)
+    available_cards: list[Card | None] = field(default_factory=list)
+    jack_cards: list[Card] = field(default_factory=list)
+    jack_order: list = field(default_factory=list)
+    draft_starting_player: int = 0
+    current_drafter: int = 0
+    draft_hands: dict[int, list[Card]] = field(default_factory=lambda: {0: [], 1: []})
+    kings_drafted: int = 0
+    player_cards: list[Card] = field(default_factory=list)
 
     @property
     def ready(self) -> bool:
         return 0 in self.players and 1 in self.players
 
+    @property
+    def all_players_ready(self) -> bool:
+        return self.ready and 0 in self.ready_players and 1 in self.ready_players
+
     def snapshot(self, player_id: int | None = None) -> dict[str, Any]:
-        return {
+        payload = {
             "room_code": self.code,
             "player_id": player_id,
             "players": {str(key): value for key, value in sorted(self.players.items())},
             "ready": self.ready,
+            "ready_players": sorted(self.ready_players),
+            "stage": self.stage,
             "revision": self.revision,
-            "message": "Both players connected." if self.ready else self.message,
-            "state": encode_game_state(self.game),
+            "message": self.message,
+            "pregame": {
+                "draft_cards": encode_room_payload(self.draft_cards),
+                "available_cards": encode_room_payload(self.available_cards),
+                "jack_cards": encode_room_payload(self.jack_cards),
+                "jack_order": encode_room_payload(self.jack_order),
+                "draft_starting_player": self.draft_starting_player,
+                "current_drafter": self.current_drafter,
+                "draft_hands": encode_room_payload(self.draft_hands),
+                "kings_drafted": self.kings_drafted,
+                "player_cards": encode_room_payload(self.player_cards),
+            },
         }
+        if self.game is not None:
+            payload["state"] = encode_game_state(self.game)
+        return payload
 
 
 class RoomStore:
@@ -92,20 +143,34 @@ class RoomStore:
                 self._next_code += 1
                 if code not in self._rooms:
                     break
-            room = Room(code=code, game=create_quick_match_game())
+            labyrinth_cards, draft_cards, jack_cards = setup_pregame_cards()
+            draft_starting_player = choice([0, 1])
+            room = Room(
+                code=code,
+                labyrinth_cards=labyrinth_cards,
+                draft_cards=list(draft_cards),
+                available_cards=list(draft_cards),
+                jack_cards=jack_cards,
+                jack_order=get_jack_suit_order(jack_cards),
+                draft_starting_player=draft_starting_player,
+                current_drafter=draft_starting_player,
+            )
             room.players[0] = player_name or "Player 1"
+            room.message = "Waiting for another player."
             self._rooms[code] = room
             return room, 0
 
     def join_room(self, code: str, player_name: str) -> tuple[Room, int]:
         with self._lock:
             room = self._get_room_locked(code)
+            if room.stage != "lobby":
+                raise ValueError("Room has already started")
             open_seats = [player_id for player_id in (0, 1) if player_id not in room.players]
             if not open_seats:
                 raise ValueError("Room already has two players")
             player_id = open_seats[0]
             room.players[player_id] = player_name or f"Player {player_id + 1}"
-            room.message = "Both players connected." if room.ready else "Waiting for another player."
+            room.message = "Both players connected. Press Ready when you are both looking at this screen."
             room.revision += 1
             return room, player_id
 
@@ -113,6 +178,77 @@ class RoomStore:
         with self._lock:
             room = self._get_room_locked(code)
             self._advance_automation_locked(room)
+            return room
+
+    def set_player_ready(self, code: str, player_id: int) -> Room:
+        with self._lock:
+            room = self._get_room_locked(code)
+            if player_id not in room.players:
+                raise ValueError("Player is not in this room")
+            if not room.ready:
+                raise ValueError("Room is waiting for another player")
+            if room.stage != "lobby":
+                return room
+
+            room.ready_players.add(player_id)
+            if room.all_players_ready:
+                room.stage = "coin_flip"
+                room.message = "Both players are ready. Starting the coin flip."
+            else:
+                room.message = f"{room.players[player_id]} is ready. Waiting for the other player."
+            room.revision += 1
+            return room
+
+    def submit_draft_pick(
+        self,
+        code: str,
+        player_id: int,
+        card_index: int,
+        expected_revision: int | None = None,
+    ) -> Room:
+        with self._lock:
+            room = self._get_room_locked(code)
+            if not room.all_players_ready:
+                raise ValueError("Both players must be ready before the draft")
+            if room.stage not in {"coin_flip", "draft"}:
+                raise ValueError("The draft is not active")
+            if player_id != room.current_drafter:
+                raise ValueError("It is not this player's draft pick")
+            if expected_revision is not None and expected_revision != room.revision:
+                raise ValueError("Room state changed; refresh and try again")
+            if card_index < 0 or card_index >= len(room.available_cards):
+                raise ValueError("Draft card is out of range")
+
+            card = room.available_cards[card_index]
+            if card is None:
+                raise ValueError("Draft card was already taken")
+            if not self._can_draft_card_locked(room, card):
+                raise ValueError("Only two Heroes may be drafted")
+
+            room.stage = "draft"
+            room.draft_hands[player_id].append(card)
+            if card.rank == CardRank.KING:
+                room.kings_drafted += 1
+            room.available_cards[card_index] = None
+
+            total_picks = len(room.draft_hands[0]) + len(room.draft_hands[1])
+            if total_picks >= 10:
+                room.player_cards = [card for card in room.available_cards if card is not None]
+                room.game = create_game_from_pregame(
+                    room.labyrinth_cards,
+                    room.draft_hands[0],
+                    room.draft_hands[1],
+                    room.jack_order,
+                    starting_player=1,
+                )
+                room.stage = "game"
+                room.message = "Draft complete. Revealing the omens."
+            else:
+                room.current_drafter = 1 - room.current_drafter
+                next_name = room.players.get(room.current_drafter, f"Player {room.current_drafter + 1}")
+                room.message = f"Waiting for {next_name} to draft."
+
+            room.revision += 1
             return room
 
     def submit_action(
@@ -124,8 +260,8 @@ class RoomStore:
     ) -> Room:
         with self._lock:
             room = self._get_room_locked(code)
-            if not room.ready:
-                raise ValueError("Room is waiting for another player")
+            if room.stage != "game" or room.game is None:
+                raise ValueError("Game has not started yet")
             if player_id not in room.players:
                 raise ValueError("Player is not in this room")
             if expected_revision is not None and expected_revision != room.revision:
@@ -144,11 +280,15 @@ class RoomStore:
                 room.revision += 1
             return room
 
+    def _can_draft_card_locked(self, room: Room, card: Card) -> bool:
+        return not (card.rank == CardRank.KING and room.kings_drafted >= 2)
+
     def leave_room(self, code: str, player_id: int) -> Room | None:
         with self._lock:
             room = self._get_room_locked(code)
             if player_id in room.players:
                 departed_name = room.players.pop(player_id)
+                room.ready_players.discard(player_id)
                 room.message = f"{departed_name} left the room."
                 room.revision += 1
             if not room.players:
@@ -157,6 +297,8 @@ class RoomStore:
             return room
 
     def _advance_automation_locked(self, room: Room) -> None:
+        if room.stage != "game" or room.game is None:
+            return
         advanced = False
         for _ in range(8):
             if not room.game.advance_forced_traversing():
@@ -168,6 +310,8 @@ class RoomStore:
             room.revision += 1
 
     def _check_game_over_once(self, room: Room) -> bool:
+        if room.game is None:
+            return False
         if room.game.winner is not None:
             return False
         return room.game.check_game_over()
@@ -192,6 +336,81 @@ def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[s
     handler.wfile.write(data)
 
 
+def _html_response(handler: BaseHTTPRequestHandler, status: int, body: str) -> None:
+    data = body.encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "text/html; charset=utf-8")
+    handler.send_header("Content-Length", str(len(data)))
+    handler.end_headers()
+    handler.wfile.write(data)
+
+
+def _server_status_page(server_url: str) -> str:
+    escaped_server_url = html.escape(server_url, quote=True)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pan's Trial Room Server</title>
+  <style>
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #1d221f;
+      color: #f3ead8;
+      font-family: Arial, sans-serif;
+    }}
+    main {{
+      width: min(720px, calc(100% - 32px));
+      padding: 28px;
+      border: 1px solid #8a7558;
+      border-radius: 8px;
+      background: #2e352f;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.35);
+    }}
+    h1 {{
+      margin: 0 0 12px;
+      font-size: clamp(28px, 6vw, 44px);
+    }}
+    p {{
+      margin: 12px 0;
+      line-height: 1.5;
+    }}
+    code {{
+      display: inline-block;
+      padding: 3px 6px;
+      border-radius: 5px;
+      background: #171b18;
+      color: #f8d77e;
+    }}
+    ol {{
+      margin: 16px 0 0;
+      padding-left: 24px;
+    }}
+    li {{
+      margin: 8px 0;
+      line-height: 1.45;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Pan's Trial room server is running</h1>
+    <p>This URL is the multiplayer room server, not the game screen.</p>
+    <p>Use <code>{escaped_server_url}</code> in the game's <strong>Two Player</strong> screen as the Server URL.</p>
+    <ol>
+      <li>Open Pan's Trial and choose <strong>Two Player</strong>.</li>
+      <li>Enter this Server URL, then choose <strong>Create Room</strong>.</li>
+      <li>Share the same Server URL and the room code with the other player.</li>
+    </ol>
+  </main>
+</body>
+</html>"""
+
+
 def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     length = int(handler.headers.get("Content-Length", "0") or 0)
     if length <= 0:
@@ -199,7 +418,7 @@ def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return json.loads(handler.rfile.read(length).decode("utf-8"))
 
 
-def make_room_handler(store: RoomStore):
+def make_room_handler(store: RoomStore, scheme: str = "http"):
     """Build a request handler bound to a specific room store."""
 
     class LocalRoomHandler(BaseHTTPRequestHandler):
@@ -209,6 +428,10 @@ def make_room_handler(store: RoomStore):
         def do_GET(self) -> None:
             try:
                 parts = self._path_parts()
+                if not parts:
+                    host = self.headers.get("Host") or f"{self.server.server_address[0]}:{self.server.server_address[1]}"
+                    _html_response(self, 200, _server_status_page(f"{scheme}://{host}"))
+                    return
                 if len(parts) == 2 and parts[0] == "rooms":
                     room = store.get_room(parts[1])
                     _json_response(self, 200, room.snapshot())
@@ -228,6 +451,25 @@ def make_room_handler(store: RoomStore):
 
                 if len(parts) == 3 and parts[0] == "rooms" and parts[2] == "join":
                     room, player_id = store.join_room(parts[1], str(body.get("name") or "").strip())
+                    _json_response(self, 200, room.snapshot(player_id))
+                    return
+
+                if len(parts) == 3 and parts[0] == "rooms" and parts[2] == "ready":
+                    player_id = int(body.get("player_id"))
+                    room = store.set_player_ready(parts[1], player_id)
+                    _json_response(self, 200, room.snapshot(player_id))
+                    return
+
+                if len(parts) == 3 and parts[0] == "rooms" and parts[2] == "draft":
+                    player_id = int(body.get("player_id"))
+                    revision = body.get("revision")
+                    expected_revision = int(revision) if revision is not None else None
+                    room = store.submit_draft_pick(
+                        parts[1],
+                        player_id,
+                        int(body.get("card_index")),
+                        expected_revision,
+                    )
                     _json_response(self, 200, room.snapshot(player_id))
                     return
 
@@ -265,27 +507,37 @@ def make_room_handler(store: RoomStore):
 class LocalRoomServer:
     """Background localhost server used by the Create Room flow."""
 
-    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
+    def __init__(
+        self,
+        host: str = DEFAULT_HOST,
+        port: int = DEFAULT_PORT,
+        ssl_context: ssl.SSLContext | None = None,
+    ) -> None:
         self.host = host
         self.port = port
+        self.ssl_context = ssl_context
         self.store = RoomStore()
         self.httpd: ThreadingHTTPServer | None = None
         self.thread: Thread | None = None
 
     @property
     def base_url(self) -> str:
-        return f"http://{self.host}:{self.port}"
+        scheme = "https" if self.ssl_context is not None else "http"
+        return f"{scheme}://{self.host}:{self.port}"
 
     def start(self) -> None:
         if self.httpd is not None:
             return
 
-        handler = make_room_handler(self.store)
+        scheme = "https" if self.ssl_context is not None else "http"
+        handler = make_room_handler(self.store, scheme=scheme)
         port = self.port
         last_error = None
         for candidate in range(port, port + 20):
             try:
                 self.httpd = ThreadingHTTPServer((self.host, candidate), handler)
+                if self.ssl_context is not None:
+                    self.httpd.socket = self.ssl_context.wrap_socket(self.httpd.socket, server_side=True)
                 self.port = candidate
                 break
             except OSError as exc:
@@ -317,9 +569,20 @@ class LocalRoomClient:
         self.player_name = player_name
         self.players: dict[int, str] = {}
         self.ready = False
+        self.ready_players: set[int] = set()
+        self.stage = "lobby"
         self.revision = -1
         self.message = ""
         self.game: GameState | None = None
+        self.draft_cards: list[Card] = []
+        self.available_cards: list[Card | None] = []
+        self.jack_cards: list[Card] = []
+        self.jack_order: list = []
+        self.draft_starting_player = 0
+        self.current_drafter = 0
+        self.draft_hands: dict[int, list[Card]] = {0: [], 1: []}
+        self.kings_drafted = 0
+        self.player_cards: list[Card] = []
         self.last_error: str | None = None
         self._poll_elapsed = 0.0
 
@@ -367,6 +630,32 @@ class LocalRoomClient:
             self.last_error = str(exc)
             return False
 
+    def mark_ready(self) -> bool:
+        try:
+            snapshot = _post_json(
+                f"{self.base_url}/rooms/{self.room_code}/ready",
+                {"player_id": self.player_id},
+            )
+            return self._apply_snapshot(snapshot)
+        except OSError as exc:
+            self.last_error = str(exc)
+            return False
+
+    def submit_draft_pick(self, card_index: int) -> bool:
+        try:
+            snapshot = _post_json(
+                f"{self.base_url}/rooms/{self.room_code}/draft",
+                {
+                    "player_id": self.player_id,
+                    "revision": self.revision,
+                    "card_index": card_index,
+                },
+            )
+            return self._apply_snapshot(snapshot)
+        except OSError as exc:
+            self.last_error = str(exc)
+            return False
+
     def leave(self) -> None:
         try:
             _post_json(
@@ -380,12 +669,39 @@ class LocalRoomClient:
         previous_revision = self.revision
         self.players = {int(key): value for key, value in snapshot.get("players", {}).items()}
         self.ready = bool(snapshot.get("ready"))
+        self.ready_players = {int(player_id) for player_id in snapshot.get("ready_players", [])}
+        self.stage = str(snapshot.get("stage") or self.stage)
         self.revision = int(snapshot.get("revision", self.revision))
         self.message = str(snapshot.get("message") or "")
+        self._apply_pregame_snapshot(snapshot.get("pregame") or {})
         if snapshot.get("state"):
             self.game = decode_game_state(snapshot["state"])
+        else:
+            self.game = None
         self.last_error = None
         return self.revision != previous_revision
+
+    def _apply_pregame_snapshot(self, pregame: dict[str, Any]) -> None:
+        if not pregame:
+            return
+        if pregame.get("draft_cards"):
+            self.draft_cards = list(decode_room_payload(pregame["draft_cards"]))
+        if pregame.get("available_cards"):
+            self.available_cards = list(decode_room_payload(pregame["available_cards"]))
+        if pregame.get("jack_cards"):
+            self.jack_cards = list(decode_room_payload(pregame["jack_cards"]))
+        if pregame.get("jack_order"):
+            self.jack_order = list(decode_room_payload(pregame["jack_order"]))
+        self.draft_starting_player = int(pregame.get("draft_starting_player", self.draft_starting_player))
+        self.current_drafter = int(pregame.get("current_drafter", self.current_drafter))
+        if pregame.get("draft_hands"):
+            self.draft_hands = {
+                int(key): list(value)
+                for key, value in dict(decode_room_payload(pregame["draft_hands"])).items()
+            }
+        self.kings_drafted = int(pregame.get("kings_drafted", self.kings_drafted))
+        if pregame.get("player_cards"):
+            self.player_cards = list(decode_room_payload(pregame["player_cards"]))
 
 
 def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:

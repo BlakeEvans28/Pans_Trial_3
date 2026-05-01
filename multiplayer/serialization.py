@@ -16,6 +16,16 @@ def _decode_object(value: str) -> object:
     return pickle.loads(base64.b64decode(value.encode("ascii")))
 
 
+def encode_room_payload(value: object) -> str:
+    """Return a compact local-only string representation of room setup data."""
+    return _encode_object(value)
+
+
+def decode_room_payload(payload: str) -> object:
+    """Decode room setup data produced by encode_room_payload."""
+    return _decode_object(payload)
+
+
 def encode_game_state(game: GameState) -> str:
     """Return a compact local-only string representation of a game state."""
     return _encode_object(game)

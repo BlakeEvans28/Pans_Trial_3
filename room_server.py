@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import socket
+import ssl
 import time
+from pathlib import Path
 
 from multiplayer.local_room import DEFAULT_PORT, LocalRoomServer
 
@@ -13,7 +15,21 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Host Pan's Trial local room matches.")
     parser.add_argument("--host", default="0.0.0.0", help="Address to bind. Use 0.0.0.0 for LAN play.")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Starting port for the room server.")
+    parser.add_argument("--certfile", type=Path, help="TLS certificate file for HTTPS room hosting.")
+    parser.add_argument("--keyfile", type=Path, help="TLS private key file for HTTPS room hosting.")
     return parser.parse_args()
+
+
+def create_ssl_context(certfile: Path | None, keyfile: Path | None) -> ssl.SSLContext | None:
+    """Create a server TLS context when certificate paths are provided."""
+    if certfile is None and keyfile is None:
+        return None
+    if certfile is None or keyfile is None:
+        raise SystemExit("--certfile and --keyfile must be provided together.")
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile=certfile, keyfile=keyfile)
+    return context
 
 
 def get_lan_addresses() -> list[str]:
@@ -41,16 +57,19 @@ def get_lan_addresses() -> list[str]:
 
 def main() -> None:
     args = parse_args()
-    server = LocalRoomServer(host=args.host, port=args.port)
+    ssl_context = create_ssl_context(args.certfile, args.keyfile)
+    server = LocalRoomServer(host=args.host, port=args.port, ssl_context=ssl_context)
     server.start()
+    scheme = "https" if ssl_context is not None else "http"
 
     print("=" * 54)
     print("Pan's Trial room server")
     print("=" * 54)
     print(f"Listening on : {server.host}:{server.port}")
-    print(f"Local URL    : http://127.0.0.1:{server.port}")
+    print(f"Local URL    : {scheme}://127.0.0.1:{server.port}")
     for address in get_lan_addresses():
-        print(f"LAN URL      : http://{address}:{server.port}")
+        print(f"LAN URL      : {scheme}://{address}:{server.port}")
+    print("Paste one of these URLs into the game's Two Player Server URL field.")
     print("Give your friend the LAN URL and the room code from the game.")
     print("Press Ctrl+C to stop.")
 
