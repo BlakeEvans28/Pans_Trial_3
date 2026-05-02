@@ -5,6 +5,7 @@
 
 # For AI
 
+The full screen version of the UI is not appeasing. I want it to go back to the old version where the heiarchy was on the right side, the damages were on the left and the tap to inspect didn't exist. I want the banner back on top. I don't like the tap to inspect. Rework the damage to say health, and subtract down from 25 their value left based on the traps and weapons used against them. I also want the pop ups to go to the old HUD version as well. They dont fit well in this new version. like the appeasing pan was a 2x2.
 
 ## Must-have before submitting
 
