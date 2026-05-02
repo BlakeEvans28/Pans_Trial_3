@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import ssl
 import time
@@ -14,9 +15,20 @@ from multiplayer.local_room import DEFAULT_PORT, LocalRoomServer
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Host Pan's Trial local room matches.")
     parser.add_argument("--host", default="0.0.0.0", help="Address to bind. Use 0.0.0.0 for LAN play.")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Starting port for the room server.")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("PORT", DEFAULT_PORT)),
+        help="Starting port for the room server. Defaults to the PORT environment variable when set.",
+    )
     parser.add_argument("--certfile", type=Path, help="TLS certificate file for HTTPS room hosting.")
     parser.add_argument("--keyfile", type=Path, help="TLS private key file for HTTPS room hosting.")
+    parser.add_argument(
+        "--web-root",
+        type=Path,
+        default=Path("WEB_BUILD") / "site",
+        help="Static web build folder to serve from the room-server URL.",
+    )
     return parser.parse_args()
 
 
@@ -58,7 +70,11 @@ def get_lan_addresses() -> list[str]:
 def main() -> None:
     args = parse_args()
     ssl_context = create_ssl_context(args.certfile, args.keyfile)
-    server = LocalRoomServer(host=args.host, port=args.port, ssl_context=ssl_context)
+    requested_web_root = args.web_root
+    if requested_web_root is not None and not requested_web_root.is_absolute():
+        requested_web_root = Path(__file__).resolve().parent / requested_web_root
+    web_root = requested_web_root if requested_web_root and requested_web_root.exists() else None
+    server = LocalRoomServer(host=args.host, port=args.port, ssl_context=ssl_context, web_root=web_root)
     server.start()
     scheme = "https" if ssl_context is not None else "http"
 
@@ -66,11 +82,20 @@ def main() -> None:
     print("Pan's Trial room server")
     print("=" * 54)
     print(f"Listening on : {server.host}:{server.port}")
-    print(f"Local URL    : {scheme}://127.0.0.1:{server.port}")
+    if web_root is not None:
+        print(f"Web root     : {web_root.resolve()}")
+        print(f"Game URL     : {scheme}://127.0.0.1:{server.port}")
+    else:
+        print("Web root     : not found; serving room-server status page only")
+        print(f"Local URL    : {scheme}://127.0.0.1:{server.port}")
     for address in get_lan_addresses():
-        print(f"LAN URL      : {scheme}://{address}:{server.port}")
-    print("Paste one of these URLs into the game's Two Player Server URL field.")
-    print("Give your friend the LAN URL and the room code from the game.")
+        label = "LAN Game URL" if web_root is not None else "LAN URL"
+        print(f"{label:<13}: {scheme}://{address}:{server.port}")
+    if web_root is not None:
+        print("Open the Game URL in a browser. The same URL is used for Two Player rooms.")
+    else:
+        print("Paste one of these URLs into the game's Two Player Server URL field.")
+        print("Give your friend the LAN URL and the room code from the game.")
     print("Press Ctrl+C to stop.")
 
     try:

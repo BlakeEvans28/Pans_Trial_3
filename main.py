@@ -254,20 +254,23 @@ async def main():
                 
                 # Handle screen transitions
                 if result == "PLAY":
-                    leave_multiplayer_room(stop_server=True)
-                    labyrinth_cards, draft_cards, jack_cards = setup_pregame_cards()
-                    pregame_setup = {
-                        "labyrinth_cards": labyrinth_cards,
-                        "draft_cards": draft_cards,
-                        "jack_cards": jack_cards,
-                        "hands": ([], []),
-                        "player_cards": [],
-                        "draft_starting_player": choice([0, 1]),
-                        "starting_player": 1,
-                    }
-                    coin_flip_screen = ensure_screen(ScreenType.COIN_FLIP)
-                    coin_flip_screen.start_flip(pregame_setup["draft_starting_player"])
-                    screen_manager.set_screen(ScreenType.COIN_FLIP)
+                    if screen_manager.current_screen == ScreenType.GAME_OVER and multiplayer_client is not None:
+                        multiplayer_client.request_rematch()
+                    else:
+                        leave_multiplayer_room(stop_server=True)
+                        labyrinth_cards, draft_cards, jack_cards = setup_pregame_cards()
+                        pregame_setup = {
+                            "labyrinth_cards": labyrinth_cards,
+                            "draft_cards": draft_cards,
+                            "jack_cards": jack_cards,
+                            "hands": ([], []),
+                            "player_cards": [],
+                            "draft_starting_player": choice([0, 1]),
+                            "starting_player": 1,
+                        }
+                        coin_flip_screen = ensure_screen(ScreenType.COIN_FLIP)
+                        coin_flip_screen.start_flip(pregame_setup["draft_starting_player"])
+                        screen_manager.set_screen(ScreenType.COIN_FLIP)
 
                 elif result == "HOW_TO_PLAY":
                     ensure_screen(ScreenType.HOW_TO_PLAY)
@@ -298,7 +301,7 @@ async def main():
                         )
                         window.multiplayer_session = multiplayer_client
                         lobby_screen.set_status(
-                            "Room created. Share this server URL and room code, then both players press Ready.",
+                            "Room created. Share the room code, then both players press Ready.",
                             room_code=multiplayer_client.room_code,
                             server_url=server_url,
                         )
@@ -357,7 +360,15 @@ async def main():
                     screen_manager.set_screen(ScreenType.JACK_REVEAL)
                 
                 elif result == "MENU":
-                    if screen_manager.current_screen in (ScreenType.MULTIPLAYER, ScreenType.GAME_OVER):
+                    if (
+                        screen_manager.current_screen == ScreenType.GAME_OVER
+                        and multiplayer_client is not None
+                        and not getattr(multiplayer_client, "rematch_declined", False)
+                    ):
+                        multiplayer_client.decline_rematch()
+                    if screen_manager.current_screen == ScreenType.GAME_OVER:
+                        leave_multiplayer_room(stop_server=False)
+                    elif screen_manager.current_screen == ScreenType.MULTIPLAYER:
                         leave_multiplayer_room(stop_server=True)
                     screen_manager.set_screen(ScreenType.START)
 
@@ -471,6 +482,14 @@ async def main():
                         jack_order=multiplayer_client.jack_order,
                     )
                     screen_manager.set_screen(ScreenType.JACK_REVEAL)
+
+            elif screen_manager.current_screen == ScreenType.GAME_OVER and multiplayer_client is not None:
+                if multiplayer_client.stage == "coin_flip":
+                    game = None
+                    pregame_setup = None
+                    coin_flip_screen = ensure_screen(ScreenType.COIN_FLIP)
+                    coin_flip_screen.start_flip(multiplayer_client.draft_starting_player)
+                    screen_manager.set_screen(ScreenType.COIN_FLIP)
             
             # Render
             if screen_manager.current_screen == ScreenType.GAME and game_screen is not None:
@@ -494,9 +513,13 @@ async def main():
                     else game.check_game_over()
                 )
             ):
-                print(f"\nGAME OVER! Player {game.winner + 1} wins!")
-                print(f"Final damage - P1: {game.get_damage_total(0)}, P2: {game.get_damage_total(1)}")
                 game_over_screen = ensure_screen(ScreenType.GAME_OVER)
+                player_names = game_over_screen._get_player_names()
+                print(f"\nGAME OVER! {player_names[game.winner]} wins!")
+                print(
+                    f"Final damage - {player_names[0]}: {game.get_damage_total(0)}, "
+                    f"{player_names[1]}: {game.get_damage_total(1)}"
+                )
                 game_over_screen.set_result(
                     game.winner,
                     game.get_damage_total(0),

@@ -27,6 +27,7 @@ from ui.audio_manager import AudioManager
 from ui.input_handler import InputHandler
 from ui.board_renderer import BoardRenderer
 from ui.game_screen import GameScreen
+from ui.player_names import normalize_player_names, replace_player_tokens
 from ui.screen_manager import CoinFlipScreen, DraftScreen, GameOverScreen, MultiplayerLobbyScreen, SettingsScreen
 from ui.window import GameWindow
 
@@ -303,6 +304,92 @@ def test_local_room_rejects_wrong_player_and_frees_seat_on_leave():
         server.stop()
 
 
+def test_local_room_suffixes_duplicate_picked_names():
+    """Two players who pick the same name should display as unique names."""
+    server = LocalRoomServer(port=8906)
+    server.start()
+    try:
+        host = LocalRoomClient.create("Brandt", server.base_url)
+        guest = LocalRoomClient.join("Brandt", server.base_url, host.room_code)
+        host.refresh()
+
+        assert host.players == {0: "Brandt", 1: "Brandt1"}
+        assert guest.players == {0: "Brandt", 1: "Brandt1"}
+    finally:
+        server.stop()
+
+
+def test_local_room_rematch_waits_for_both_players():
+    """A multiplayer rematch should restart only after both players choose Play Again."""
+    server = LocalRoomServer(port=8926)
+    server.start()
+    try:
+        host = LocalRoomClient.create("Host", server.base_url)
+        guest = LocalRoomClient.join("Guest", server.base_url, host.room_code)
+        _ready_and_complete_room_draft(host, guest)
+
+        room = server.store.get_room(host.room_code)
+        room.game.winner = 0
+        room.revision += 1
+        host.refresh()
+        guest.refresh()
+
+        assert host.request_rematch()
+        guest.refresh()
+
+        assert host.stage == "game"
+        assert guest.stage == "game"
+        assert guest.rematch_votes == {0}
+        assert guest.message == "Host would like to play again."
+
+        assert guest.request_rematch()
+        host.refresh()
+        guest.refresh()
+
+        assert host.stage == "coin_flip"
+        assert guest.stage == "coin_flip"
+        assert host.game is None
+        assert guest.game is None
+        assert host.rematch_votes == set()
+        assert guest.rematch_votes == set()
+        assert host.ready_players == {0, 1}
+        assert guest.ready_players == {0, 1}
+        assert len(host.draft_cards) == 12
+        assert host.draft_hands == {0: [], 1: []}
+    finally:
+        server.stop()
+
+
+def test_local_room_menu_declines_pending_rematch_for_other_player():
+    """If one player goes to menu after game over, the other cannot rematch alone."""
+    server = LocalRoomServer(port=8946)
+    server.start()
+    try:
+        host = LocalRoomClient.create("Host", server.base_url)
+        guest = LocalRoomClient.join("Guest", server.base_url, host.room_code)
+        _ready_and_complete_room_draft(host, guest)
+
+        room = server.store.get_room(host.room_code)
+        room.game.winner = 1
+        room.revision += 1
+        host.refresh()
+        guest.refresh()
+
+        assert host.request_rematch()
+        assert guest.decline_rematch()
+        guest.leave()
+        host.refresh()
+
+        assert host.rematch_declined is True
+        assert host.rematch_declined_by == 1
+        assert host.rematch_declined_name == "Guest"
+        assert host.rematch_votes == set()
+        assert not host.request_rematch()
+        assert host.rematch_declined is True
+    finally:
+        server.stop()
+
+
 def test_local_room_server_root_shows_status_page():
     """Opening the printed room-server URL in a browser should explain how to connect."""
     from urllib import request
@@ -318,6 +405,33 @@ def test_local_room_server_root_shows_status_page():
         assert "Pan's Trial room server is running" in body
         assert "Two Player" in body
         assert "Unknown endpoint" not in body
+    finally:
+        server.stop()
+
+
+def test_room_server_can_serve_web_build_and_room_api():
+    """A hosted room server should be able to serve the game page and rooms from one URL."""
+    from urllib import request
+
+    web_root = Path(__file__).resolve().parent / "fixtures" / "web_root"
+
+    server = LocalRoomServer(port=8936, web_root=web_root)
+    server.start()
+    try:
+        with request.urlopen(f"{server.base_url}/", timeout=0.75) as response:
+            body = response.read().decode("utf-8")
+            content_type = response.headers.get("Content-Type", "")
+
+        assert "text/html" in content_type
+        assert "Pan's Trial" in body
+
+        with request.urlopen(f"{server.base_url}/bundle.tar.gz", timeout=0.75) as response:
+            assert response.read().strip() == b"fake-bundle"
+            assert response.headers.get("Content-Type") == "application/gzip"
+
+        host = LocalRoomClient.create("Host", server.base_url)
+        assert host.room_code
+        assert host.player_id == 0
     finally:
         server.stop()
 
@@ -443,13 +557,18 @@ def test_browser_room_import_does_not_need_desktop_http_server():
 
 
 def test_multiplayer_lobby_screen_lays_out_room_controls():
-    """The local room screen exposes the expected create/join controls."""
+    """The room screen exposes code-only create/join controls."""
     window = SmokeWindow(width=1200, height=900)
     screen = MultiplayerLobbyScreen(window)
 
     assert set(screen.button_rects) == {"create", "join", "ready", "back"}
     assert screen.get_player_name() == "Player"
     assert screen.get_server_url() == MultiplayerLobbyScreen.DEFAULT_SERVER_URL
+    assert not screen.server_entry.visible
+    screen.on_enter()
+    assert screen.name_entry.visible
+    assert screen.room_entry.visible
+    assert not screen.server_entry.visible
     screen.server_entry.set_text("127.0.0.1:8765")
     assert screen.get_server_url() == MultiplayerLobbyScreen.DEFAULT_SERVER_URL
 
@@ -457,26 +576,116 @@ def test_multiplayer_lobby_screen_lays_out_room_controls():
     screen.render(surface)
 
 
-def test_multiplayer_lobby_web_paste_sets_server_url(monkeypatch):
-    """Ctrl+V in the web server URL field should not use pygame_gui's desktop clipboard."""
+def test_multiplayer_lobby_code_only_flow_keeps_server_url_internal():
+    """Players should only need the room code while the server URL remains automatic."""
+    window = SmokeWindow(width=1200, height=900)
+    window.is_web = True
+    screen = MultiplayerLobbyScreen(window)
+
+    screen.on_enter()
+    screen.room_entry.set_text("1000")
+    screen.set_status("Room created.", room_code="1000", server_url="https://pans.example")
+
+    assert screen.get_room_code() == "1000"
+    assert screen.get_server_url() == "https://pans.example"
+    assert screen.room_code_text == "1000"
+    assert screen.server_url_text == "https://pans.example"
+    assert not screen.server_entry.visible
+
+
+def test_multiplayer_lobby_web_uses_hosted_default_server_url(monkeypatch):
+    """Hosted web builds should default Two Player rooms to the page's server URL."""
     import platform
 
     window = SmokeWindow(width=1200, height=900)
     window.is_web = True
-    screen = MultiplayerLobbyScreen(window)
-    screen.server_entry.focus()
 
     class WindowBridge:
         @staticmethod
-        def prompt(message: str, default: str) -> str:
-            return "  10.74.27.104:8765  "
+        def panTrialResolveRoomServerUrl() -> str:
+            return "https://pans.example"
 
     monkeypatch.setattr(platform, "window", WindowBridge(), raising=False)
 
-    event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_v, mod=pygame.KMOD_CTRL)
+    screen = MultiplayerLobbyScreen(window)
 
-    assert screen.handle_events(event) is True
-    assert screen.get_server_url() == "http://10.74.27.104:8765"
+    assert screen.get_server_url() == "https://pans.example"
+
+
+def test_player_name_helpers_replace_tokens_and_suffix_duplicates():
+    """UI copy should use picked names instead of P1/P2 or Player 1/2."""
+    names = normalize_player_names({0: "Alex", 1: "Alex"})
+
+    assert names == {0: "Alex", 1: "Alex1"}
+    assert replace_player_tokens("P2 hit Player 1.", names) == "Alex1 hit Alex."
+
+
+def test_multiplayer_text_entry_supports_undo_shortcut():
+    """Ctrl+Z should undo the last edit inside multiplayer text fields."""
+    window = SmokeWindow(width=1200, height=900)
+    screen = MultiplayerLobbyScreen(window)
+    entry = screen.name_entry
+    entry.focus()
+    entry.set_text("Pan")
+
+    backspace = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_BACKSPACE, mod=0)
+    undo = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_z, mod=pygame.KMOD_CTRL)
+
+    assert entry.process_event(backspace) is True
+    assert entry.get_text() == "Pa"
+    assert entry.process_event(undo) is True
+    assert entry.get_text() == "Pan"
+
+
+def test_multiplayer_web_text_entry_clipboard_shortcuts(monkeypatch):
+    """Web text fields should support Ctrl+C, Ctrl+V, and Ctrl+X through the page bridge."""
+    import platform
+
+    class Clipboard:
+        def __init__(self) -> None:
+            self.written = []
+
+        def readText(self, fallback: str) -> str:
+            return "1234"
+
+        def writeText(self, text: str) -> str:
+            self.written.append(text)
+            return text
+
+    clipboard = Clipboard()
+    monkeypatch.setattr(
+        platform,
+        "window",
+        type("Window", (), {"panTrialClipboard": clipboard})(),
+        raising=False,
+    )
+
+    window = SmokeWindow(width=1200, height=900)
+    window.is_web = True
+    screen = MultiplayerLobbyScreen(window)
+    entry = screen.room_entry
+    entry.focus()
+    entry.set_text("")
+
+    paste = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_v, mod=pygame.KMOD_CTRL)
+    copy = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_c, mod=pygame.KMOD_CTRL)
+    cut = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_x, mod=pygame.KMOD_CTRL)
+    undo = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_z, mod=pygame.KMOD_CTRL)
+
+    assert entry.process_event(paste) is True
+    assert entry.get_text() == "1234"
+
+    entry.select_range = [0, 4]
+    assert entry.process_event(copy) is True
+    assert clipboard.written[-1] == "1234"
+
+    entry.select_range = [0, 4]
+    assert entry.process_event(cut) is True
+    assert entry.get_text() == ""
+    assert clipboard.written[-1] == "1234"
+
+    assert entry.process_event(undo) is True
+    assert entry.get_text() == "1234"
 
 
 def test_multiplayer_game_screen_blocks_remote_turn_input(game_setup):
@@ -1313,10 +1522,24 @@ def test_board_renderer_uses_square_grid_without_labyrinth_overlay():
     assert below_neighbor.y - top_left.y == renderer.CELL_SIZE
 
 
-def test_game_window_uses_fixed_web_framebuffer_size():
-    """Web builds should keep the internal game surface locked to the browser framebuffer size."""
+def test_game_window_uses_browser_viewport_size_when_available(monkeypatch):
+    """Web builds should size the game surface to the browser viewport."""
+    import platform
+
     window = GameWindow.__new__(GameWindow)
     window.is_web = True
+
+    monkeypatch.setattr(platform, "window", type("Window", (), {"innerWidth": 1510, "innerHeight": 812})(), raising=False)
+
+    assert window._get_initial_window_size() == (1510, 812)
+
+
+def test_game_window_falls_back_to_base_web_framebuffer_size(monkeypatch):
+    """Web builds still have a stable fallback before the browser reports a viewport."""
+    window = GameWindow.__new__(GameWindow)
+    window.is_web = True
+
+    monkeypatch.setattr(pygame.display, "Info", lambda: type("Info", (), {"current_w": 0, "current_h": 0})())
 
     assert window._get_initial_window_size() == (
         GameWindow.BASE_WINDOW_WIDTH,
@@ -1324,13 +1547,30 @@ def test_game_window_uses_fixed_web_framebuffer_size():
     )
 
 
-def test_game_window_ignores_web_resize_requests():
-    """Browser resize events should not change the game's internal layout size."""
+def test_game_window_resizes_web_framebuffer(monkeypatch):
+    """Browser resize events should update the game's internal layout size."""
     window = GameWindow.__new__(GameWindow)
     window.is_web = True
     window.fullscreen = False
+    window.minimum_resize_width = 1
+    window.minimum_resize_height = 1
+    window.WINDOW_WIDTH = 1200
+    window.WINDOW_HEIGHT = 900
 
-    assert window.resize(1600, 1100) is False
+    class UIManager:
+        resolution = None
+
+        def set_window_resolution(self, size):
+            self.resolution = size
+
+    window.ui_manager = UIManager()
+    monkeypatch.setattr(window, "_get_browser_viewport_size", lambda: None)
+    monkeypatch.setattr(pygame.display, "set_mode", lambda size, flags=0: pygame.Surface(size))
+
+    assert window.resize(1600, 1100) is True
+    assert window.WINDOW_WIDTH == 1600
+    assert window.WINDOW_HEIGHT == 1100
+    assert window.ui_manager.resolution == (1600, 1100)
 
 
 def test_coin_flip_faces_share_one_centered_footprint():
@@ -1427,6 +1667,30 @@ def test_draft_tutorial_panel_avoids_card_grid_smoke():
     assert not screen.tutorial_toggle_rect.colliderect(grid_rect)
 
 
+def test_draft_grid_prefers_two_rows_of_six_on_wide_short_viewports():
+    """A wide browser viewport should keep the draft pool as a 2x6 grid."""
+    window = SmokeWindow(width=1600, height=620)
+    screen = DraftScreen(window)
+
+    rows = {rect.y for rect in screen.card_rects}
+    columns = {rect.x for rect in screen.card_rects}
+
+    assert len(rows) == 2
+    assert len(columns) == 6
+
+
+def test_draft_grid_falls_back_when_six_columns_cannot_fit():
+    """Narrow screens should still use the compact 3x4 draft layout."""
+    window = SmokeWindow(width=520, height=700)
+    screen = DraftScreen(window)
+
+    rows = {rect.y for rect in screen.card_rects}
+    columns = {rect.x for rect in screen.card_rects}
+
+    assert len(rows) == 4
+    assert len(columns) == 3
+
+
 def test_compact_hand_card_inspect_smoke(game_setup):
     """Compact hand cards should open the Inspect popup before play."""
     window = SmokeWindow(width=560, height=660)
@@ -1500,6 +1764,87 @@ def test_game_over_summary_scrolls_inside_parchment_frame():
 
     screen.render(surface)
     assert screen.match_summary_scroll_offset > 0
+
+
+def test_game_over_uses_multiplayer_display_names():
+    """Victory text should use room names, with duplicate names made unique."""
+    window = SmokeWindow(width=1200, height=900)
+    window.multiplayer_session = type("Session", (), {"players": {0: "Brandt", 1: "Brandt"}})()
+    screen = GameOverScreen(window)
+
+    screen.set_result(
+        1,
+        28,
+        10,
+        {
+            "damage_cards": {},
+            "events": ["P2 launched by Ballista. P1 reached 25 or more damage."],
+        },
+    )
+
+    assert screen.winner_text == "Brandt1 Wins!"
+    assert screen.damage_text == "Final damage - Brandt: 28 | Brandt1: 10"
+    assert screen._replace_player_tokens(screen.match_summary["events"][0]) == (
+        "Brandt1 launched by Ballista. Brandt reached 25 or more damage."
+    )
+
+
+def test_game_over_multiplayer_play_again_is_room_vote():
+    """Multiplayer Play Again should vote in the room instead of restarting alone."""
+    window = SmokeWindow(width=1200, height=900)
+
+    class Session:
+        player_id = 0
+        players = {0: "Host", 1: "Guest"}
+        rematch_votes = set()
+        rematch_declined = False
+        rematch_declined_by = None
+        rematch_declined_name = ""
+        last_error = None
+        request_calls = 0
+        decline_calls = 0
+
+        def request_rematch(self):
+            self.request_calls += 1
+            self.rematch_votes.add(self.player_id)
+            return True
+
+        def decline_rematch(self):
+            self.decline_calls += 1
+            self.rematch_declined = True
+            self.rematch_declined_by = self.player_id
+            self.rematch_declined_name = self.players[self.player_id]
+            return True
+
+    session = Session()
+    window.multiplayer_session = session
+    screen = GameOverScreen(window)
+
+    play_event = pygame.event.Event(
+        pygame.MOUSEBUTTONDOWN,
+        {"pos": screen.game_over_button_rects["play"].center},
+    )
+    menu_event = pygame.event.Event(
+        pygame.MOUSEBUTTONDOWN,
+        {"pos": screen.game_over_button_rects["menu"].center},
+    )
+
+    assert screen.handle_events(play_event) is True
+    assert session.request_calls == 1
+    assert screen._get_multiplayer_rematch_notice() == "Waiting for Guest to choose Play Again."
+
+    session.rematch_votes = {1}
+    assert screen._get_multiplayer_rematch_notice() == "'Guest' would like to play again."
+
+    assert screen.handle_events(menu_event) == "MENU"
+    assert session.decline_calls == 1
+    assert screen._is_play_again_enabled() is False
+
+    assert screen.handle_events(play_event) is True
+    assert session.request_calls == 1
+
+    surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
+    screen.render(surface)
 
 
 def test_plane_shift_confirmation_preview_smoke(game_setup):

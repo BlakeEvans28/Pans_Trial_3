@@ -13,6 +13,15 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-05-02 - Codex
+Commit: `pending` - Prepared a deployable web multiplayer prototype
+Summary:
+- Made the hosted room server serve the web build and room API from one URL, with code-only room joining and auto-generated room codes.
+- Updated browser layout handling so the game fills the available screen instead of leaving black side bars.
+- Added multiplayer text-field copy, paste, cut, and undo shortcuts; kept the draft pool in a 2 x 6 grid on wide screens; and replaced Player 1/2 labels with picked names.
+- Added two-player Play Again consent: one player's rematch request shows a pop-up to the other player, both votes start a fresh shared match, and choosing Main Menu closes rematch for the room.
+- Added regression coverage for room rematches, player-name display, text shortcuts, web serving, draft layout, and pytest-safe manual pygame smoke launching.
+
 ## 2026-04-30 - Codex
 Commit: `pending` - Finished local-room pregame flow and browser room fixes
 Summary:

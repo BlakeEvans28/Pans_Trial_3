@@ -289,7 +289,7 @@ class GameScreen(Screen):
         info_x = WINDOW_WIDTH - info_width - MARGIN
         self.info_label = pygame_gui.elements.UILabel(
             relative_rect=pygame.Rect((info_x, MARGIN), (info_width, STATUS_HEIGHT)),
-            text="P1 Damage: 0 | P2 Damage: 0",
+            text=f"{self._get_player_name(0)} Damage: 0 | {self._get_player_name(1)} Damage: 0",
             manager=self.ui_manager
         )
         
@@ -375,7 +375,7 @@ class GameScreen(Screen):
             hand_y = WINDOW_HEIGHT - 175 + i * 28
             label = pygame_gui.elements.UILabel(
                 relative_rect=pygame.Rect((MARGIN, hand_y), (260, 24)),
-                text=f"Player {i+1} Turn",
+                text=f"{self._get_player_name(i)} Turn",
                 manager=self.ui_manager
             )
             self.hand_labels.append(label)
@@ -390,7 +390,7 @@ class GameScreen(Screen):
 
         self.weapon_label = pygame_gui.elements.UILabel(
             relative_rect=pygame.Rect((weapon_x, weapon_label_y), (BUTTON_WIDTH, 24)),
-            text="P1 Weapons",
+            text=f"{self._get_player_name(0)} Weapons",
             manager=self.ui_manager
         )
 
@@ -430,7 +430,7 @@ class GameScreen(Screen):
                 damage_x = WINDOW_WIDTH - BUTTON_WIDTH - MARGIN - 170
             label = pygame_gui.elements.UILabel(
                 relative_rect=pygame.Rect((damage_x, damage_label_y), (BUTTON_WIDTH, 24)),
-                text=f"P{player_id + 1} Damage",
+                text=f"{self._get_player_name(player_id)} Damage",
                 manager=self.ui_manager
             )
             self.damage_labels.append(label)
@@ -824,7 +824,7 @@ class GameScreen(Screen):
                     try:
                         action = MoveAction(self.game.current_player, direction)
                         self._apply_action(action)
-                        print(f"Player {action.player_id + 1} moved {direction}")
+                        print(f"{self._get_player_name(action.player_id)} moved {direction}")
                         return True
                     except Exception as e:
                         print(f"Move failed: {e}")
@@ -839,7 +839,7 @@ class GameScreen(Screen):
                         if self.game.phase == GamePhase.APPEASING:
                             action = PlayCardAction(self.game.current_player, card)
                             self._apply_action(action)
-                            print(f"Player {action.player_id + 1} played {card}")
+                            print(f"{self._get_player_name(action.player_id)} played {card}")
                     return True
 
         return False
@@ -851,7 +851,10 @@ class GameScreen(Screen):
         session = self._get_multiplayer_session()
         if session is not None:
             if action.player_id != session.player_id:
-                self._show_notice(f"Waiting for P{action.player_id + 1}. You are P{session.player_id + 1}.")
+                self._show_notice(
+                    f"Waiting for {self._get_player_name(action.player_id)}. "
+                    f"You are {self._get_player_name(session.player_id)}."
+                )
                 return False
             applied = session.submit_action(action)
             if session.game is not None:
@@ -878,14 +881,7 @@ class GameScreen(Screen):
 
     def _get_player_names(self) -> dict[int, str]:
         """Return display names for player markers."""
-        session = self._get_multiplayer_session()
-        if session is None:
-            return {0: "Player 1", 1: "Player 2"}
-        return {
-            player_id: name
-            for player_id, name in getattr(session, "players", {}).items()
-            if str(name).strip()
-        }
+        return super()._get_player_names()
 
     def _is_multiplayer_input_locked(self) -> bool:
         """Return True when this client should only watch the room state."""
@@ -924,8 +920,7 @@ class GameScreen(Screen):
         elif self.game.winner is not None:
             message = ""
         elif self.game.current_player != session.player_id:
-            name = session.players.get(self.game.current_player, f"P{self.game.current_player + 1}")
-            message = f"Room {session.room_code}: waiting for {name}."
+            message = f"Room {session.room_code}: waiting for {self._get_player_name(self.game.current_player)}."
         else:
             return
 
@@ -1033,7 +1028,7 @@ class GameScreen(Screen):
         self._advance_phase_banner_transition(time_delta)
 
         # Update status
-        player = f"P{self.game.current_player + 1}"
+        player = self._get_player_name(self.game.current_player)
         pending_request_type = self.game.get_pending_request_type()
         if pending_request_type != "plane_shift":
             self.pending_plane_shift_line = None
@@ -2064,7 +2059,7 @@ class GameScreen(Screen):
                     if self.game.can_use_weapon(self.game.current_player, card):
                         player_id = self.game.current_player
                         if self._apply_action(ChooseCombatCardAction(player_id, card)):
-                            print(f"Player {player_id + 1} used weapon card: {card}")
+                            print(f"{self._get_player_name(player_id)} used weapon card: {card}")
                     return True
                 if self.is_compact_layout():
                     self.inspected_hand_card_index = index
@@ -2073,7 +2068,7 @@ class GameScreen(Screen):
                     return True
                 player_id = self.game.current_player
                 if self._apply_action(PlayCardAction(player_id, card)):
-                    print(f"Player {player_id + 1} played {card}")
+                    print(f"{self._get_player_name(player_id)} played {card}")
                 return True
         return False
 
@@ -2098,10 +2093,10 @@ class GameScreen(Screen):
                 self.inspected_hand_card_index = None
                 if self._can_choose_hand_weapon():
                     if self._apply_action(ChooseCombatCardAction(player_id, card)):
-                        print(f"Player {player_id + 1} used weapon card: {card}")
+                        print(f"{self._get_player_name(player_id)} used weapon card: {card}")
                 elif self._can_play_appeasing_hand_cards():
                     if self._apply_action(PlayCardAction(player_id, card)):
-                        print(f"Player {player_id + 1} played {card}")
+                        print(f"{self._get_player_name(player_id)} played {card}")
             return True
 
         return True
@@ -2281,7 +2276,7 @@ class GameScreen(Screen):
             self._render_game_wood_button(
                 surface,
                 rect,
-                f"P{player_id + 1} Damage: {self.game.get_damage_total(player_id)}",
+                f"{self._get_player_name(player_id)} Damage: {self.game.get_damage_total(player_id)}",
                 selected=active,
                 preferred_font_size=self.font_size(18, 13),
             )
@@ -2408,7 +2403,7 @@ class GameScreen(Screen):
         self._render_carved_text(
             surface,
             self.popup_small_font,
-            f"P{self.game.current_player + 1} {prompt}",
+            f"{self._get_player_name(self.game.current_player)} {prompt}",
             (70, 62, 50),
             title_rect.center,
             anchor="center",
@@ -2577,7 +2572,7 @@ class GameScreen(Screen):
 
         winner_card = played_cards[winner]
         loser_card = played_cards[loser]
-        title = f"P{winner + 1} wins Appeasing Pan"
+        title = f"{self._get_player_name(winner)} wins Appeasing Pan"
         detail = (
             f"{self._format_card_role_label(winner_card)} beats "
             f"{self._format_card_role_label(loser_card)} - "
@@ -2623,7 +2618,7 @@ class GameScreen(Screen):
         if winner_value != loser_value:
             return f"higher rank ({winner_value} beats {loser_value})."
 
-        return f"exact tie; P{winner + 1} keeps the request choice."
+        return f"exact tie; {self._get_player_name(winner)} keeps the request choice."
 
     def _render_notice_banner(self, surface: pygame.Surface) -> None:
         """Render a transient gameplay notice if one is active."""
@@ -2873,7 +2868,7 @@ class GameScreen(Screen):
         surface.blit(title, (title_x, content_rect.y))
 
         subtitle = self.popup_small_font.render(
-            f"Player {self.game.current_player + 1} chooses now.",
+            f"{self._get_player_name(self.game.current_player)} chooses now.",
             True,
             (198, 198, 198),
         )
@@ -2953,7 +2948,7 @@ class GameScreen(Screen):
         surface.blit(title, (panel_rect.x + self.scale(26, 16), panel_rect.y + self.scale(18, 12)))
 
         subtitle = self.popup_small_font.render(
-            f"P{self.game.current_player + 1}: {self._format_card_label(card)} - {self._get_card_role_name(card)}",
+            f"{self._get_player_name(self.game.current_player)}: {self._format_card_label(card)} - {self._get_card_role_name(card)}",
             True,
             (210, 210, 210),
         )
@@ -3013,8 +3008,8 @@ class GameScreen(Screen):
         )
 
         headings = {
-            0: (panel_rect.x + self.scale(40, 24), f"P1 Damage ({self.game.get_damage_total(0)})"),
-            1: (panel_rect.centerx + self.scale(20, 12), f"P2 Damage ({self.game.get_damage_total(1)})"),
+            0: (panel_rect.x + self.scale(40, 24), f"{self._get_player_name(0)} Damage ({self.game.get_damage_total(0)})"),
+            1: (panel_rect.centerx + self.scale(20, 12), f"{self._get_player_name(1)} Damage ({self.game.get_damage_total(1)})"),
         }
         for player_id, (x, text) in headings.items():
             highlight = player_id == chooser if first_selection_pending else True
@@ -3282,7 +3277,7 @@ class GameScreen(Screen):
         content_rect = self._get_stone_content_rect(panel_rect, extra_x=self.scale_x(4, 2))
 
         title = self.popup_title_font.render(
-            f"P{player_id + 1} Damage Pile ({self.game.get_damage_total(player_id)})",
+            f"{self._get_player_name(player_id)} Damage Pile ({self.game.get_damage_total(player_id)})",
             True,
             (240, 236, 214),
         )

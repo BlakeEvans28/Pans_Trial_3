@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: pans-trial
+    env: python
+    plan: free
+    buildCommand: python -m pip install --upgrade pip && python -m pip install -r requirements-web.txt && python build_web.py --build-only
+    startCommand: python room_server.py --host 0.0.0.0 --web-root WEB_BUILD/site

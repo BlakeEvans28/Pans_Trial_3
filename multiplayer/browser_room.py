@@ -33,6 +33,10 @@ class BrowserRoomClient:
         self.draft_hands: dict[int, list[Card]] = {0: [], 1: []}
         self.kings_drafted = 0
         self.player_cards: list[Card] = []
+        self.rematch_votes: set[int] = set()
+        self.rematch_declined = False
+        self.rematch_declined_by: int | None = None
+        self.rematch_declined_name = ""
         self.last_error: str | None = None
         self._poll_elapsed = 0.0
 
@@ -109,6 +113,30 @@ class BrowserRoomClient:
             self.last_error = str(exc)
             return False
 
+    def request_rematch(self) -> bool:
+        try:
+            snapshot = _bridge_request(
+                "POST",
+                f"{self.base_url}/rooms/{self.room_code}/rematch",
+                {"player_id": self.player_id},
+            )
+            return self._apply_snapshot(snapshot)
+        except OSError as exc:
+            self.last_error = str(exc)
+            return False
+
+    def decline_rematch(self) -> bool:
+        try:
+            snapshot = _bridge_request(
+                "POST",
+                f"{self.base_url}/rooms/{self.room_code}/decline",
+                {"player_id": self.player_id},
+            )
+            return self._apply_snapshot(snapshot)
+        except OSError as exc:
+            self.last_error = str(exc)
+            return False
+
     def leave(self) -> None:
         try:
             _bridge_request(
@@ -127,6 +155,11 @@ class BrowserRoomClient:
         self.stage = str(snapshot.get("stage") or self.stage)
         self.revision = int(snapshot.get("revision", self.revision))
         self.message = str(snapshot.get("message") or "")
+        self.rematch_votes = {int(player_id) for player_id in snapshot.get("rematch_votes", [])}
+        self.rematch_declined = bool(snapshot.get("rematch_declined", False))
+        raw_declined_by = snapshot.get("rematch_declined_by")
+        self.rematch_declined_by = int(raw_declined_by) if raw_declined_by is not None else None
+        self.rematch_declined_name = str(snapshot.get("rematch_declined_name") or "")
         self._apply_pregame_snapshot(snapshot.get("pregame") or {})
         if snapshot.get("state"):
             self.game = decode_game_state(snapshot["state"])

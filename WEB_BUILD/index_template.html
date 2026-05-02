@@ -6,7 +6,7 @@ Loading __BUNDLE__ from __BUNDLE__.apk
     Template Version : 0.9.3
     Python  : 3.12
     CDN URL : https://pygame-web.github.io/cdn/0.9.3/
-    Screen  : __WIDTH__x__HEIGHT__
+    Screen  : fullscreen browser viewport
     Title   : __TITLE__
     Folder  : __BUNDLE__
     Authors : pgw
@@ -131,7 +131,14 @@ asyncio.run(custom_site())
 # --></script><head>
     <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
     <style>
-        html, body { margin: 0; padding: 0; overflow: hidden; background: #000000; }
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000000;
+        }
         #rotate-hint {
             position: fixed; inset: 0; z-index: 99999;
             display: none; align-items: center; justify-content: center;
@@ -290,6 +297,61 @@ asyncio.run(custom_site())
               document.body.appendChild(closed);
           }, 120);
       };
+      window.panTrialConfiguredRoomServerUrl = __ROOM_SERVER_URL__;
+      window.panTrialResolveRoomServerUrl = function() {
+          var params = new URLSearchParams(window.location.search || "");
+          var queryUrl = params.get("roomServer") || params.get("server");
+          if (queryUrl) {
+              return String(queryUrl).trim().replace(/\/+$/, "");
+          }
+          if (window.panTrialConfiguredRoomServerUrl) {
+              return String(window.panTrialConfiguredRoomServerUrl).trim().replace(/\/+$/, "");
+          }
+          var protocol = window.location.protocol;
+          var hostname = window.location.hostname;
+          var isLocalhost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "";
+          if ((protocol === "http:" || protocol === "https:") && !isLocalhost) {
+              return window.location.origin.replace(/\/+$/, "");
+          }
+          if ((protocol === "http:" || protocol === "https:") && window.location.port === "8765") {
+              return window.location.origin.replace(/\/+$/, "");
+          }
+          return "http://127.0.0.1:8765";
+      };
+      window.panTrialClipboard = {
+          lastText: "",
+          _fallbackCopy: function(text) {
+              var textarea = document.createElement("textarea");
+              textarea.value = text;
+              textarea.setAttribute("readonly", "");
+              textarea.style.position = "fixed";
+              textarea.style.left = "-10000px";
+              textarea.style.top = "0";
+              document.body.appendChild(textarea);
+              textarea.select();
+              try {
+                  document.execCommand("copy");
+              } catch (_) {}
+              document.body.removeChild(textarea);
+          },
+          writeText: function(text) {
+              this.lastText = String(text || "");
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                  navigator.clipboard.writeText(this.lastText).catch(function() {});
+              } else {
+                  this._fallbackCopy(this.lastText);
+              }
+              return this.lastText;
+          },
+          readText: function(fallbackText) {
+              var pastedText = window.prompt("Paste text:", "");
+              if (pastedText === null) {
+                  return String(fallbackText || this.lastText || "");
+              }
+              this.lastText = String(pastedText || "");
+              return this.lastText;
+          }
+      };
       window.panTrialRoomBridge = {
           request: function(method, url, body) {
               var xhr = new XMLHttpRequest();
@@ -330,6 +392,17 @@ asyncio.run(custom_site())
 --><script type="application/javascript">
 // END BLOCK
 
+function panTrialGetViewportFrame() {
+    var width = window.innerWidth || document.documentElement.clientWidth || __WIDTH__;
+    var height = window.innerHeight || document.documentElement.clientHeight || __HEIGHT__;
+    return {
+        width: Math.max(1, Math.round(width)),
+        height: Math.max(1, Math.round(height))
+    };
+}
+
+var panTrialInitialFrame = panTrialGetViewportFrame();
+
 config = {
     xtermjs : "1",
     _sdl2 : "canvas",
@@ -343,9 +416,9 @@ config = {
     cdn : "https://pygame-web.github.io/cdn/0.9.3/",
     autorun : 0,
     PYBUILD : "3.12",
-    fb_ar   : __ASPECT__,
-    fb_width : "__WIDTH__",
-    fb_height : "__HEIGHT__"
+    fb_ar   : panTrialInitialFrame.width / panTrialInitialFrame.height,
+    fb_width : String(panTrialInitialFrame.width),
+    fb_height : String(panTrialInitialFrame.height)
 }
 
 function show_infobox() {
@@ -403,10 +476,13 @@ function show_infobox() {
             background-color: transparent;
             z-index: 5;
             padding: 0;
-            margin: auto;
+            margin: 0;
             display: block;
             position: fixed;
-            inset: 0;
+            left: 0;
+            top: 0;
+            width: 100vw !important;
+            height: 100vh !important;
             touch-action: none;
         }
 
@@ -564,12 +640,9 @@ function show_infobox() {
     function get_canvas_layout() {
         var viewportWidth = window.innerWidth || document.documentElement.clientWidth || __WIDTH__;
         var viewportHeight = window.innerHeight || document.documentElement.clientHeight || __HEIGHT__;
-        var scale = Math.min(viewportWidth / __WIDTH__, viewportHeight / __HEIGHT__);
-        var width = Math.max(1, Math.round(__WIDTH__ * scale));
-        var height = Math.max(1, Math.round(__HEIGHT__ * scale));
         return {
-            width: width,
-            height: height
+            width: Math.max(1, Math.round(viewportWidth)),
+            height: Math.max(1, Math.round(viewportHeight))
         };
     }
 
@@ -586,11 +659,7 @@ function show_infobox() {
         canvas.__ourWrite = true;
         setStyle("top", "0px", "important");
         canvas.__ourWrite = true;
-        setStyle("right", "0px", "important");
-        canvas.__ourWrite = true;
-        setStyle("bottom", "0px", "important");
-        canvas.__ourWrite = true;
-        setStyle("margin", "auto", "important");
+        setStyle("margin", "0", "important");
     }
 
     (function installEnforcer() {
@@ -617,16 +686,17 @@ function show_infobox() {
     })();
 
     function force_canvas_size() {
+        var frame = panTrialGetViewportFrame();
         if (typeof config !== "undefined") {
-            config.fb_width = "__WIDTH__";
-            config.fb_height = "__HEIGHT__";
-            config.fb_ar = __ASPECT__;
+            config.fb_width = String(frame.width);
+            config.fb_height = String(frame.height);
+            config.fb_ar = frame.width / frame.height;
             config.gui_divider = 1;
         }
         var canvas3d = document.getElementById("canvas3d");
         if (canvas3d) {
-            canvas3d.width = __WIDTH__;
-            canvas3d.height = __HEIGHT__;
+            canvas3d.width = frame.width;
+            canvas3d.height = frame.height;
         }
         if (typeof window_resize === "function") {
             try { window_resize(); } catch (error) {}

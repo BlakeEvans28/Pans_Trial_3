@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pan_theme import get_family_color
 from engine import Board, Position, GamePhase
+from .player_names import normalize_player_names
 
 
 class BoardRenderer:
@@ -482,6 +483,7 @@ class BoardRenderer:
     
     def _render_players(self, surface: pygame.Surface, board: Board, player_names: dict[int, str]) -> None:
         """Render player positions."""
+        player_names = normalize_player_names(player_names)
         shared_tile = (
             board.get_player_position(0) is not None
             and board.get_player_position(0) == board.get_player_position(1)

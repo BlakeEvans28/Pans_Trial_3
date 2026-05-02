@@ -4,3 +4,39 @@
 
 
 # For AI
+
+
+## Must-have before submitting
+
+- Make one public playable URL that starts the game without any local setup. The current hosted room-server path should be tested from a different computer or phone, not just localhost.
+- Add a short in-game first-run tutorial or guided first turn. Judges should understand the goal, movement, combat/request choices, and win condition without reading a separate document.
+- Add a "Solo Tutorial" mode, even if the AI is simple. A competition judge may not have a second player available during review.
+- Make the Two Player flow self-explanatory: create room, copy/share room code, join room, ready up, reconnect/leave handling, and clear error messages when the server is unreachable.
+- Add a loading screen with progress text and a retry/reload hint. Browser builds can take time, and a silent wait looks broken.
+
+
+## Prototype polish
+
+- Add hover/click sounds and visual feedback to all major buttons so the web version feels responsive.
+- Add a concise controls/help overlay accessible during gameplay.
+- Add a pause/menu button with Restart, Main Menu, Settings, and Leave Room.
+- Improve mobile/tablet layout or explicitly show a "desktop/laptop recommended" message if mobile is not a target.
+- Add stronger feedback for turn ownership in multiplayer: "Your turn", "Waiting for Player 2", and disabled actions for the inactive player.
+- Add small animation moments for drafting, omen reveal, movement, attacks, traps, and victory.
+
+## Stability and deployment
+
+- Add an automated smoke test that builds the web package and confirms `WEB_BUILD/site/index.html` plus `/rooms` can be served together.
+- Add browser console error checks during local web testing, especially for missing assets/audio and blocked network requests.
+- Add a simple health endpoint to the room server, such as `/health`, for hosted uptime checks.
+- Add cleanup for inactive multiplayer rooms so old rooms do not pile up on a hosted server.
+- Add environment-variable configuration for production settings like allowed origins, room timeout, and max rooms.
+- Confirm the final build size is accepted by the chosen competition host.
+
+## Nice-to-have stretch goals
+
+- Add matchmaking-style "Quick Room" so players do not need to manually share a code.
+- Add spectator/replay mode for judging and demos.
+- Add a settings preset for accessibility: larger text, reduced animation, and high contrast.
+- Add credits/license screen for art, fonts, audio, and libraries.
+- Add a small title-screen badge or footer with version/build date so testers can report bugs against the right build.

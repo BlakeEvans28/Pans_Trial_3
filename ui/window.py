@@ -164,6 +164,9 @@ class GameWindow:
     def _get_initial_window_size(self) -> tuple[int, int]:
         """Pick a starting size that fits on the current display."""
         if self.is_web:
+            browser_size = self._get_browser_viewport_size()
+            if browser_size is not None:
+                return browser_size
             return self.BASE_WINDOW_WIDTH, self.BASE_WINDOW_HEIGHT
 
         display_info = pygame.display.Info()
@@ -179,6 +182,39 @@ class GameWindow:
         height = max(min(self.MIN_WINDOW_HEIGHT, available_height), height)
         return width, height
 
+    def _get_browser_viewport_size(self) -> tuple[int, int] | None:
+        """Return the current browser viewport size for web builds when available."""
+        if not self.is_web:
+            return None
+
+        try:
+            import platform
+
+            window = getattr(platform, "window", None)
+            width = int(getattr(window, "innerWidth", 0) or 0)
+            height = int(getattr(window, "innerHeight", 0) or 0)
+            if width > 0 and height > 0:
+                return (
+                    max(1, width),
+                    max(1, height),
+                )
+        except Exception:
+            pass
+
+        try:
+            display_info = pygame.display.Info()
+            width = int(display_info.current_w or 0)
+            height = int(display_info.current_h or 0)
+            if width > 0 and height > 0:
+                return (
+                    max(1, width),
+                    max(1, height),
+                )
+        except Exception:
+            pass
+
+        return None
+
     def _refresh_background(self) -> None:
         """Rebuild the cached background surface for the current size."""
         self.background = pygame.Surface((self.WINDOW_WIDTH, self.WINDOW_HEIGHT))
@@ -186,8 +222,13 @@ class GameWindow:
 
     def resize(self, width: int, height: int) -> bool:
         """Resize the window and UI manager. Returns True when size changed."""
-        if self.fullscreen or self.is_web:
+        if self.fullscreen and not self.is_web:
             return False
+
+        if self.is_web:
+            browser_size = self._get_browser_viewport_size()
+            if browser_size is not None:
+                width, height = browser_size
 
         width = max(self.minimum_resize_width, int(width))
         height = max(self.minimum_resize_height, int(height))
@@ -197,7 +238,8 @@ class GameWindow:
 
         self.WINDOW_WIDTH = width
         self.WINDOW_HEIGHT = height
-        self.screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
+        display_flags = 0 if self.is_web else pygame.RESIZABLE
+        self.screen = pygame.display.set_mode((width, height), display_flags)
         self.ui_manager.set_window_resolution((width, height))
         self._refresh_background()
         return True

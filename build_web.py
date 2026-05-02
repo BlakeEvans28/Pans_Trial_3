@@ -7,6 +7,7 @@ import datetime as dt
 import http.server
 import io
 import importlib.util
+import json
 import math
 import os
 import random
@@ -36,6 +37,7 @@ PROJECT_DIRS = (
 FRAMEBUFFER_WIDTH = 1200
 FRAMEBUFFER_HEIGHT = 900
 ZIP_NAME = "pans_trial_web.zip"
+SITE_DIR_NAME = "site"
 DEPENDENCY_INSTALL_HINT = "Install web build dependencies with: python -m pip install -r requirements-web.txt"
 WEB_AUDIO_FILES = (
     "Pan_Intro_Updated.mp3",
@@ -130,6 +132,14 @@ def parse_args() -> argparse.Namespace:
         "--build-only",
         action="store_true",
         help="Build the web package without starting a local HTTP server.",
+    )
+    parser.add_argument(
+        "--room-server-url",
+        default="",
+        help=(
+            "Default multiplayer room server URL baked into index.html. "
+            "Leave blank to use the hosted page origin in production."
+        ),
     )
     return parser.parse_args()
 
@@ -375,7 +385,12 @@ def install_local_pygbag_cdn(project_root: Path, build_web_dir: Path) -> int:
     return total_bytes
 
 
-def install_index_html(project_root: Path, build_web_dir: Path, bundle_name: str) -> None:
+def install_index_html(
+    project_root: Path,
+    build_web_dir: Path,
+    bundle_name: str,
+    room_server_url: str = "",
+) -> None:
     template_path = project_root / "WEB_BUILD" / "index_template.html"
     html = template_path.read_text(encoding="utf-8")
     replacements = {
@@ -385,6 +400,7 @@ def install_index_html(project_root: Path, build_web_dir: Path, bundle_name: str
         "__HEIGHT__": str(FRAMEBUFFER_HEIGHT),
         "__ASPECT__": f"{FRAMEBUFFER_WIDTH / FRAMEBUFFER_HEIGHT:.12g}",
         "__BUILD_VERSION__": dt.datetime.now().strftime("%Y%m%d%H%M"),
+        "__ROOM_SERVER_URL__": json.dumps(room_server_url.strip().rstrip("/")),
     }
     for old, new in replacements.items():
         html = html.replace(old, new)
@@ -417,6 +433,13 @@ def create_zip(build_web_dir: Path, output_zip: Path) -> None:
                 archive.write(file_path, arcname=file_path.relative_to(build_web_dir))
 
 
+def install_deploy_site(build_web_dir: Path, deploy_dir: Path) -> None:
+    """Refresh the static site folder used by hosted room-server deployments."""
+    if deploy_dir.exists():
+        shutil.rmtree(deploy_dir)
+    shutil.copytree(build_web_dir, deploy_dir)
+
+
 def serve_build(build_web_dir: Path, port: int) -> None:
     print(f"Serving on http://localhost:{port}")
     print("Press Ctrl+C to stop.")
@@ -436,6 +459,7 @@ def main() -> None:
     staging_root = project_root / "build" / f"pans_trial_web_{stamp}"
     build_web_dir = staging_root / "build" / "web"
     output_zip = project_root / "WEB_BUILD" / ZIP_NAME
+    deploy_dir = project_root / "WEB_BUILD" / SITE_DIR_NAME
 
     print("=" * 52)
     print("Building Pan's Trial for the web")
@@ -450,10 +474,11 @@ def main() -> None:
 
     original_asset_bytes, staged_asset_bytes = stage_project(project_root, staging_root)
     create_bundle_archives(staging_root, build_web_dir, staging_root.name)
-    install_index_html(project_root, build_web_dir, staging_root.name)
+    install_index_html(project_root, build_web_dir, staging_root.name, args.room_server_url)
     install_favicon(project_root, build_web_dir)
     browser_audio_bytes = install_browser_audio(project_root, build_web_dir)
     local_cdn_bytes = install_local_pygbag_cdn(project_root, build_web_dir)
+    install_deploy_site(build_web_dir, deploy_dir)
     create_zip(build_web_dir, output_zip)
 
     original_asset_mb = original_asset_bytes / 1024 / 1024
@@ -463,6 +488,7 @@ def main() -> None:
     print(f"Web assets   : {staged_asset_mb:.1f} MB (saved {saved_asset_mb:.1f} MB from {original_asset_mb:.1f} MB)")
     print(f"Browser audio: {browser_audio_bytes / 1024 / 1024:.1f} MB")
     print(f"Local CDN    : {local_cdn_bytes / 1024 / 1024:.1f} MB (for localhost pygbag dependency loading)")
+    print(f"Deploy site  : {deploy_dir}")
     print(f"Web zip      : {output_zip} ({build_size_mb:.1f} MB)")
 
     if not args.build_only:

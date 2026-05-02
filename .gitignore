@@ -11,6 +11,7 @@ dist_onedir/
 !Pans_Trial_slim.spec
 Pans_Trial_exe.zip
 WEB_BUILD/*.zip
+WEB_BUILD/site/
 
 # Local editor files
 *.code-workspace

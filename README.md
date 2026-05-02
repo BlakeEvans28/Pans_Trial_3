@@ -67,11 +67,11 @@ Start the room server on the host machine:
 python room_server.py
 ```
 
-Then use one of the printed URLs, such as `http://192.168.1.25:8765`, in the `Two Player` screen:
+Then open one of the printed game URLs, such as `http://192.168.1.25:8765`, in both browsers:
 
-1. Open the game in the first client, choose `Two Player`, enter a name and the server URL, then choose `Create Room`.
-2. Share the server URL and room code with the other player.
-3. Open the game in the second client, choose `Two Player`, enter a name, server URL, and room code, then choose `Join Room`.
+1. In the first client, choose `Two Player`, enter a name, then choose `Create Room`.
+2. Share only the room code with the other player.
+3. In the second client, choose `Two Player`, enter a name and the room code, then choose `Join Room`.
 4. Both players choose `Ready`; the shared coin flip, draft, omen reveal, and labyrinth game begin from the same room state.
 
 For web clients, serve the web build over HTTP when connecting to an HTTP room server. Many browsers block an HTTPS page from contacting a plain HTTP room server. To host the room server over HTTPS, provide a TLS certificate and key:
@@ -82,7 +82,7 @@ python room_server.py --certfile path\to\cert.pem --keyfile path\to\key.pem
 
 When HTTPS is enabled, use the printed `https://` room URL in the `Two Player` screen. Self-signed certificates may need to be accepted in the browser before the game can contact the room server.
 
-For same-machine desktop testing, you can skip `room_server.py`: leave the default server URL in the first desktop client and choose `Create Room`. That client will start a private localhost server automatically.
+For same-machine desktop testing, you can skip `room_server.py`: choose `Two Player` in the first desktop client and choose `Create Room`. That client will start a private localhost server automatically, and the second same-machine client can join with the room code.
 
 ## Run Tests
 
@@ -111,6 +111,15 @@ python build_web.py --port 8000
 ```
 
 Then open `http://localhost:8000` in a browser while the command is still running.
+
+For a single hosted URL with multiplayer included, build the web site and run the room server from the same origin:
+
+```powershell
+python build_web.py --build-only
+python room_server.py --host 0.0.0.0
+```
+
+That serves the generated `WEB_BUILD\site` folder and the `/rooms` API together. On cloud hosts that support a `Procfile` or `render.yaml`, the included config runs those commands for you during deployment, so the service starts when the URL is opened instead of needing a server on your computer.
 
 ## Build the Executable
 

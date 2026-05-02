@@ -21,6 +21,8 @@ from pan_theme import (
     get_rank_name_with_value,
 )
 from .suit_icons import draw_suit_icon
+from .text_entry import ShortcutTextEntryLine
+from .player_names import get_window_player_names, replace_player_tokens
 
 
 class ScreenType(Enum):
@@ -79,6 +81,18 @@ class Screen:
     def font_size(self, value: int, minimum: int = 1) -> int:
         """Scale a font size using the active text-size setting."""
         return self.window.font_size(value, minimum)
+
+    def _get_player_names(self) -> dict[int, str]:
+        """Return the active display names for both players."""
+        return get_window_player_names(self.window)
+
+    def _get_player_name(self, player_id: int) -> str:
+        """Return one player's active display name."""
+        return self._get_player_names().get(player_id, f"Player {player_id + 1}")
+
+    def _replace_player_tokens(self, text: str) -> str:
+        """Replace P1/P2 or Player 1/2 labels with active display names."""
+        return replace_player_tokens(text, self._get_player_names())
 
     def _load_image(self, path: Path) -> pygame.Surface | None:
         """Load a screen image if the asset is available."""
@@ -1214,7 +1228,7 @@ class HowToPlayScreen(Screen):
 
 
 class MultiplayerLobbyScreen(Screen):
-    """Create or join a localhost two-player room."""
+    """Create or join a hosted or local two-player room."""
 
     DEFAULT_SERVER_URL = "http://127.0.0.1:8765"
 
@@ -1229,9 +1243,9 @@ class MultiplayerLobbyScreen(Screen):
         self.hovered_button = None
         self.button_rects: dict[str, pygame.Rect] = {}
         self.panel_rect = pygame.Rect(0, 0, 1, 1)
-        self.status_text = "Desktop quick match: create a room, share the code, then start in the labyrinth."
+        self.status_text = "Create Room makes a code automatically. To join, type only that room code."
         self.room_code_text = ""
-        self.server_url_text = self.DEFAULT_SERVER_URL
+        self.server_url_text = self._get_default_server_url()
         self._refresh_fonts()
         self._create_ui()
         self.on_resize()
@@ -1243,24 +1257,28 @@ class MultiplayerLobbyScreen(Screen):
         self.small_font = self._get_game_font(self.font_size(22, 16))
 
     def _create_ui(self) -> None:
-        self.name_entry = pygame_gui.elements.UITextEntryLine(
+        use_browser_clipboard = getattr(self.window, "is_web", False)
+        self.name_entry = ShortcutTextEntryLine(
             relative_rect=pygame.Rect((0, 0), (1, 1)),
             manager=self.ui_manager,
             object_id="multiplayer_name",
+            use_browser_clipboard=use_browser_clipboard,
         )
         self.name_entry.set_text("Player")
-        self.room_entry = pygame_gui.elements.UITextEntryLine(
+        self.room_entry = ShortcutTextEntryLine(
             relative_rect=pygame.Rect((0, 0), (1, 1)),
             manager=self.ui_manager,
             object_id="multiplayer_room",
+            use_browser_clipboard=use_browser_clipboard,
         )
         self.room_entry.set_allowed_characters("numbers")
-        self.server_entry = pygame_gui.elements.UITextEntryLine(
+        self.server_entry = ShortcutTextEntryLine(
             relative_rect=pygame.Rect((0, 0), (1, 1)),
             manager=self.ui_manager,
             object_id="multiplayer_server",
+            use_browser_clipboard=use_browser_clipboard,
         )
-        self.server_entry.set_text(self.DEFAULT_SERVER_URL)
+        self.server_entry.set_text(self._get_default_server_url())
 
     def _layout_ui(self) -> None:
         margin = self.scale_x(42, 18)
@@ -1290,7 +1308,7 @@ class MultiplayerLobbyScreen(Screen):
         )
         self._set_entry_rect(
             self.server_entry,
-            pygame.Rect(field_x, first_field_y + self.scale_y(184, 142), field_width, field_height),
+            pygame.Rect(-self.scale_x(240, 120), -self.scale_y(80, 40), 1, 1),
         )
 
         button_gap = self.scale_x(18, 10)
@@ -1327,7 +1345,7 @@ class MultiplayerLobbyScreen(Screen):
     def _show_all_elements(self) -> None:
         self.name_entry.show()
         self.room_entry.show()
-        self.server_entry.show()
+        self.server_entry.hide()
 
     def get_player_name(self) -> str:
         return (self.name_entry.get_text() or "Player").strip() or "Player"
@@ -1336,47 +1354,25 @@ class MultiplayerLobbyScreen(Screen):
         return (self.room_entry.get_text() or "").strip()
 
     def get_server_url(self) -> str:
-        value = (self.server_entry.get_text() or self.DEFAULT_SERVER_URL).strip().rstrip("/")
+        default_server_url = self._get_default_server_url()
+        value = (self.server_entry.get_text() or default_server_url).strip().rstrip("/")
         if value and "://" not in value:
             value = f"http://{value}"
-        return value or self.DEFAULT_SERVER_URL
+        return value or default_server_url
 
-    def _handle_server_url_paste(self, event: pygame.event.Event) -> bool:
-        if event.type != pygame.KEYDOWN:
-            return False
-        if event.key != pygame.K_v or not (event.mod & pygame.KMOD_CTRL or event.mod & pygame.KMOD_META):
-            return False
-        if event.mod & pygame.KMOD_ALT:
-            return False
-        if not getattr(self.server_entry, "is_focused", False):
-            return False
-
-        pasted_text = self._read_clipboard_text()
-        if pasted_text:
-            self._apply_server_url_paste(pasted_text)
-        else:
-            self.set_status("Paste a copied server URL into the browser prompt.", clear_room_details=False)
-        return True
-
-    def _read_clipboard_text(self) -> str:
+    def _get_default_server_url(self) -> str:
         if getattr(self.window, "is_web", False):
             try:
                 import platform
 
-                pasted_text = platform.window.prompt("Paste the room server URL:", self.server_entry.get_text())
-                return str(pasted_text or "").strip()
+                resolver = getattr(platform.window, "panTrialResolveRoomServerUrl", None)
+                if resolver is not None:
+                    resolved = str(resolver() or "").strip().rstrip("/")
+                    if resolved:
+                        return resolved
             except Exception:
-                return ""
-
-        try:
-            return str(pygame.scrap.get_text() or "").strip()
-        except Exception:
-            return ""
-
-    def _apply_server_url_paste(self, pasted_text: str) -> None:
-        server_url = " ".join(str(pasted_text or "").split()).strip().rstrip("/")
-        if server_url:
-            self.server_entry.set_text(server_url)
+                pass
+        return self.DEFAULT_SERVER_URL
 
     def set_status(
         self,
@@ -1397,8 +1393,6 @@ class MultiplayerLobbyScreen(Screen):
             self.server_entry.set_text(server_url)
 
     def handle_events(self, event: pygame.event.Event) -> bool:
-        if self._handle_server_url_paste(event):
-            return True
         if event.type == pygame.MOUSEMOTION:
             self.hovered_button = self._button_at(event.pos)
             return False
@@ -1436,7 +1430,7 @@ class MultiplayerLobbyScreen(Screen):
         self._render_carved_text(
             surface,
             self.title_font,
-            "Local Room",
+            "Two Player",
             (74, 66, 54),
             (content.centerx, content.y + self.scale_y(10, 6)),
             anchor="midtop",
@@ -1455,7 +1449,6 @@ class MultiplayerLobbyScreen(Screen):
         labels = [
             ("Your Name", self.name_entry.relative_rect),
             ("Room Code", self.room_entry.relative_rect),
-            ("Server URL", self.server_entry.relative_rect),
         ]
         for label, rect in labels:
             self._render_carved_text(
@@ -1481,7 +1474,7 @@ class MultiplayerLobbyScreen(Screen):
             )
 
         if self.room_code_text:
-            text = f"Room {self.room_code_text} on {self.server_url_text}"
+            text = f"Room Code: {self.room_code_text} - share this code"
             self._draw_wrapped_carved_text(
                 surface,
                 text,
@@ -1498,7 +1491,8 @@ class MultiplayerLobbyScreen(Screen):
         self.hovered_button = None
         if getattr(self.window, "is_web", False):
             self.set_status(
-                "Run room_server.py on one machine. Both players use that same server URL.",
+                "Create Room makes a code automatically. To join, type only that room code.",
+                server_url=self._get_default_server_url(),
                 clear_room_details=True,
             )
 
@@ -1977,10 +1971,7 @@ class CoinFlipScreen(Screen):
 
     def _get_visible_coin_label(self) -> str:
         """Return the coin face that should currently be visible."""
-        if self.finished:
-            return f"P{self.first_player + 1}"
-        flip_index = int(self.elapsed * self.FLIPS_PER_SECOND)
-        return "P1" if flip_index % 2 == 0 else "P2"
+        return self._get_player_name(self._get_visible_coin_player())
 
     def _get_visible_coin_player(self) -> int:
         """Return which player's coin art should currently be visible."""
@@ -2084,14 +2075,14 @@ class CoinFlipScreen(Screen):
             surface.blit(coin_art, coin_art.get_rect(center=center))
         else:
             label = self._get_visible_coin_label()
-            fill = (208, 84, 84) if label == "P1" else (84, 118, 216)
+            fill = (208, 84, 84) if player_id == 0 else (84, 118, 216)
             pygame.draw.circle(surface, fill, center, coin_diameter // 2)
             pygame.draw.circle(surface, (248, 232, 166), center, coin_diameter // 2, self.scale(5, 3))
             coin_text = self.title_font.render(label, True, (24, 24, 30))
             surface.blit(coin_text, coin_text.get_rect(center=center))
 
         result = (
-            f"Player {self.first_player + 1} drafts first."
+            f"{self._get_player_name(self.first_player)} drafts first."
             if self.finished
             else "Flipping to decide who drafts first..."
         )
@@ -2206,21 +2197,21 @@ class DraftScreen(Screen):
 
     def _layout_card_rects(self) -> None:
         """Lay out the 6x2 draft grid for the current window size."""
-        compact = self.is_compact_layout()
-        columns = 3 if compact else 6
-        rows = (12 + columns - 1) // columns
         margin = self.scale_x(34, 16)
         col_spacing = self.scale(12, 6)
         row_spacing = self.scale(18, 8)
         available_width = self.window.WINDOW_WIDTH - 2 * margin
+        six_column_min_width = 6 * 92 + 5 * col_spacing
+        columns = 6 if available_width >= six_column_min_width else 3
+        rows = (12 + columns - 1) // columns
         button_width = min(
             self.scale(150, 92),
             (available_width - (columns - 1) * col_spacing) // columns,
         )
-        button_height = self.scale_y(74, 54) if compact else self.scale(96, 62)
+        button_height = self.scale_y(74, 54) if columns == 3 else self.scale(96, 62)
         grid_width = columns * button_width + (columns - 1) * col_spacing
         start_x = (self.window.WINDOW_WIDTH - grid_width) // 2
-        start_y = self.scale_y(230, 158) if compact else self.scale_y(255, 180)
+        start_y = self.scale_y(230, 158) if columns == 3 else self.scale_y(255, 180)
 
         self.card_rects = []
         for index in range(12):
@@ -2395,8 +2386,7 @@ class DraftScreen(Screen):
         )
 
         session = getattr(self.window, "multiplayer_session", None)
-        player_names = getattr(session, "players", {}) if session is not None else {}
-        current_name = player_names.get(self.current_player, f"Player {self.current_player + 1}")
+        current_name = self._get_player_name(self.current_player)
         if session is not None and self.current_player != getattr(session, "player_id", self.current_player):
             prompt_text = f"Waiting for {current_name} to pick"
         else:
@@ -2529,8 +2519,8 @@ class DraftScreen(Screen):
                 pygame.Rect(margin + panel_width + panel_gap, panel_y, panel_width, panel_height),
             ]
 
-        self._render_hand_panel(surface, panel_rects[0], "Player 1 Trial Hand", self.player_hands[0], (210, 120, 120))
-        self._render_hand_panel(surface, panel_rects[1], "Player 2 Trial Hand", self.player_hands[1], (120, 160, 230))
+        self._render_hand_panel(surface, panel_rects[0], f"{self._get_player_name(0)} Trial Hand", self.player_hands[0], (210, 120, 120))
+        self._render_hand_panel(surface, panel_rects[1], f"{self._get_player_name(1)} Trial Hand", self.player_hands[1], (120, 160, 230))
         self._render_tutorial_overlay(surface)
 
     def _get_draft_grid_rect(self) -> pygame.Rect:
@@ -3057,8 +3047,8 @@ class JackRevealScreen(Screen):
             )
             left_rect = pygame.Rect(self.window.WINDOW_WIDTH // 2 - gap // 2 - card_w, player_y, card_w, card_h)
             right_rect = pygame.Rect(self.window.WINDOW_WIDTH // 2 + gap // 2, player_y, card_w, card_h)
-            self._render_player_card(surface, left_rect, "P1 Player Card", self.player_cards[0] if len(self.player_cards) > 0 else None)
-            self._render_player_card(surface, right_rect, "P2 Player Card", self.player_cards[1] if len(self.player_cards) > 1 else None)
+            self._render_player_card(surface, left_rect, f"{self._get_player_name(0)} Player Card", self.player_cards[0] if len(self.player_cards) > 0 else None)
+            self._render_player_card(surface, right_rect, f"{self._get_player_name(1)} Player Card", self.player_cards[1] if len(self.player_cards) > 1 else None)
 
     def on_enter(self) -> None:
         """Nothing to show outside the rendered animation."""
@@ -3130,8 +3120,8 @@ class GameOverScreen(Screen):
         self.body_font = None
         self.small_font = None
 
-        self.winner_text = "Player 1 Wins!"
-        self.damage_text = "Final damage - P1: 0 | P2: 0"
+        self.winner_text = f"{self._get_player_name(0)} Wins!"
+        self.damage_text = f"Final damage - {self._get_player_name(0)}: 0 | {self._get_player_name(1)}: 0"
         self.match_summary = {}
         self._banner_base = self._crop_overlay_asset(self._load_image(self.BANNER_PATH), pad=8)
         self._banner_cache: dict[tuple[int, int], pygame.Surface] = {}
@@ -3247,8 +3237,9 @@ class GameOverScreen(Screen):
 
     def set_result(self, winner: int, p1_damage: int, p2_damage: int, match_summary: dict | None = None) -> None:
         """Set winner screen text."""
-        self.winner_text = f"Player {winner + 1} Wins!"
-        self.damage_text = f"Final damage - P1: {p1_damage} | P2: {p2_damage}"
+        player_names = self._get_player_names()
+        self.winner_text = f"{player_names[winner]} Wins!"
+        self.damage_text = f"Final damage - {player_names[0]}: {p1_damage} | {player_names[1]}: {p2_damage}"
         self.match_summary = match_summary or {}
         self.match_summary_scroll_offset = 0
         self.match_summary_scroll_max = 0
@@ -3270,16 +3261,41 @@ class GameOverScreen(Screen):
         if event.type == pygame.MOUSEBUTTONDOWN:
             key = self._game_over_button_at(event.pos)
             if key == "play":
-                return "PLAY"
+                return self._handle_play_again()
             if key == "menu":
-                return "MENU"
+                return self._handle_main_menu()
             return False
         if event.type == pygame_gui.UI_BUTTON_PRESSED:
             if event.ui_element == self.play_again_button:
-                return "PLAY"
+                return self._handle_play_again()
             if event.ui_element == self.menu_button:
-                return "MENU"
+                return self._handle_main_menu()
         return False
+
+    def _get_multiplayer_session(self):
+        """Return the active room client while the victory screen is multiplayer."""
+        return getattr(self.window, "multiplayer_session", None)
+
+    def _handle_play_again(self):
+        """Start a local rematch or vote for a shared multiplayer rematch."""
+        session = self._get_multiplayer_session()
+        if session is None or not hasattr(session, "request_rematch"):
+            return "PLAY"
+        if getattr(session, "rematch_declined", False):
+            return True
+        session.request_rematch()
+        return True
+
+    def _handle_main_menu(self):
+        """Leave locally, and in multiplayer tell the other player rematch is closed."""
+        session = self._get_multiplayer_session()
+        if (
+            session is not None
+            and hasattr(session, "decline_rematch")
+            and not getattr(session, "rematch_declined", False)
+        ):
+            session.decline_rematch()
+        return "MENU"
 
     def _game_over_button_at(self, pos: tuple[int, int]) -> str | None:
         """Return the Game Over wood button at a mouse position."""
@@ -3323,19 +3339,97 @@ class GameOverScreen(Screen):
 
         button_top = min(rect.top for rect in self.game_over_button_rects.values()) if self.game_over_button_rects else self.window.WINDOW_HEIGHT
         self._render_match_summary(surface, victory_rect.bottom + self.scale_y(12, 8), button_top - self.scale_y(10, 6))
+        self._render_multiplayer_rematch_notice(surface)
         self._render_game_over_buttons(surface)
 
     def _render_game_over_buttons(self, surface: pygame.Surface) -> None:
         """Render Play Again and Main Menu as wood buttons."""
         labels = {"play": "Play Again", "menu": "Main Menu"}
+        play_enabled = self._is_play_again_enabled()
         for key, rect in self.game_over_button_rects.items():
+            enabled = play_enabled if key == "play" else True
             self._render_wood_button(
                 surface,
                 rect,
                 labels[key],
                 self.hovered_button == key,
                 self.font_size(34, 24),
+                enabled=enabled,
             )
+
+    def _is_play_again_enabled(self) -> bool:
+        """Return whether the visible Play Again control should accept clicks."""
+        session = self._get_multiplayer_session()
+        return session is None or not getattr(session, "rematch_declined", False)
+
+    def _get_multiplayer_rematch_notice(self) -> str:
+        """Return the short multiplayer rematch status shown as a pop-up."""
+        session = self._get_multiplayer_session()
+        if session is None or not hasattr(session, "rematch_votes"):
+            return ""
+        if getattr(session, "last_error", None):
+            return f"Room issue: {session.last_error}"
+
+        player_names = self._get_player_names()
+        if getattr(session, "rematch_declined", False):
+            declined_by = getattr(session, "rematch_declined_by", None)
+            declined_name = str(getattr(session, "rematch_declined_name", "") or "")
+            if not declined_name and declined_by in player_names:
+                declined_name = player_names[declined_by]
+            if not declined_name:
+                declined_name = "The other player"
+            return f"{declined_name} went back to the main menu. Return to the main menu."
+
+        votes = {int(player_id) for player_id in getattr(session, "rematch_votes", set())}
+        if not votes:
+            return ""
+        if votes.issuperset({0, 1}):
+            return "Starting a new match..."
+
+        local_player = getattr(session, "player_id", None)
+        other_player = 1 - local_player if local_player in (0, 1) else None
+        if other_player in votes and local_player not in votes:
+            return f"'{player_names.get(other_player, 'Other player')}' would like to play again."
+        if local_player in votes:
+            waiting_for = player_names.get(other_player, "the other player") if other_player is not None else "the other player"
+            return f"Waiting for {waiting_for} to choose Play Again."
+        return ""
+
+    def _render_multiplayer_rematch_notice(self, surface: pygame.Surface) -> None:
+        """Draw the multiplayer rematch pop-up above the victory buttons."""
+        notice = self._get_multiplayer_rematch_notice()
+        if not notice or not self.game_over_button_rects:
+            return
+
+        button_top = min(rect.top for rect in self.game_over_button_rects.values())
+        width = min(self.window.WINDOW_WIDTH - 2 * self.scale_x(52, 20), self.scale_x(620, 360))
+        height = self.scale_y(58, 42)
+        rect = pygame.Rect(
+            (self.window.WINDOW_WIDTH - width) // 2,
+            max(self.scale_y(112, 72), button_top - height - self.scale_y(14, 8)),
+            width,
+            height,
+        )
+
+        popup = pygame.Surface(rect.size, pygame.SRCALPHA)
+        popup.fill((236, 218, 178, 226))
+        surface.blit(popup, rect.topleft)
+        pygame.draw.rect(surface, (86, 58, 32), rect, self.scale(3, 2), border_radius=self.scale(8, 6))
+
+        font = self._get_fitted_game_font(
+            notice,
+            self.font_size(25, 18),
+            pygame.Rect(0, 0, rect.width - self.scale_x(28, 18), rect.height - self.scale_y(14, 10)),
+            2,
+            self.font_size(15, 12),
+        )
+        lines = self._wrap_text_lines(notice, font, rect.width - self.scale_x(28, 18), 2)
+        line_height = font.get_linesize()
+        start_y = rect.centery - (len(lines) * line_height) // 2
+        for index, line in enumerate(lines):
+            text = font.render(line, True, (58, 39, 22))
+            text_rect = text.get_rect(center=(rect.centerx, start_y + index * line_height + line_height // 2))
+            surface.blit(text, text_rect)
 
     def _render_victory_art(self, surface: pygame.Surface, frame_rect: pygame.Rect) -> pygame.Rect:
         """Render the victory ribbon art in the top header area."""
@@ -3414,12 +3508,12 @@ class GameOverScreen(Screen):
         p1_cards = ", ".join(get_card_display(card, compact=True) for card in damage_cards.get(0, [])[-6:]) or "None"
         p2_cards = ", ".join(get_card_display(card, compact=True) for card in damage_cards.get(1, [])[-6:]) or "None"
         lines = [
-            f"P1 damage: {p1_cards}",
-            f"P2 damage: {p2_cards}",
+            f"{self._get_player_name(0)} damage: {p1_cards}",
+            f"{self._get_player_name(1)} damage: {p2_cards}",
         ]
-        lines.extend(self.match_summary.get("appeasing", [])[-2:])
-        lines.extend(self.match_summary.get("requests", [])[-2:])
-        lines.extend(self.match_summary.get("events", [])[-3:])
+        lines.extend(self._replace_player_tokens(line) for line in self.match_summary.get("appeasing", [])[-2:])
+        lines.extend(self._replace_player_tokens(line) for line in self.match_summary.get("requests", [])[-2:])
+        lines.extend(self._replace_player_tokens(line) for line in self.match_summary.get("events", [])[-3:])
 
         winner_font = self._get_fitted_game_font(
             self.winner_text,

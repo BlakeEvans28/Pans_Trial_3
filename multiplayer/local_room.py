@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import html
 import json
+import mimetypes
+from pathlib import Path, PurePosixPath
 from random import choice, shuffle
 import socket
 import ssl
@@ -13,7 +15,7 @@ from threading import Lock, Thread, current_thread
 from typing import Any
 from urllib import error as urlerror
 from urllib import request
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from deck_utils import create_6x6_labyrinth, draft_hands, get_jack_suit_order, setup_game_deck, setup_pregame_cards
 from engine import Action, Card, CardRank, GameState, Position
@@ -29,6 +31,21 @@ from .serialization import (
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
+
+
+def _get_unique_player_name(player_name: str, player_id: int, existing_names) -> str:
+    """Return a non-empty room display name, suffixing duplicate picked names."""
+    name = " ".join(str(player_name or "").split()).strip() or f"Player {player_id + 1}"
+    existing = {str(existing or "").strip().casefold() for existing in existing_names if str(existing or "").strip()}
+    if name.casefold() not in existing:
+        return name
+
+    suffix = 1
+    candidate = f"{name}{suffix}"
+    while candidate.casefold() in existing:
+        suffix += 1
+        candidate = f"{name}{suffix}"
+    return candidate
 
 
 def create_game_from_pregame(
@@ -92,6 +109,10 @@ class Room:
     draft_hands: dict[int, list[Card]] = field(default_factory=lambda: {0: [], 1: []})
     kings_drafted: int = 0
     player_cards: list[Card] = field(default_factory=list)
+    rematch_votes: set[int] = field(default_factory=set)
+    rematch_declined: bool = False
+    rematch_declined_by: int | None = None
+    rematch_declined_name: str = ""
 
     @property
     def ready(self) -> bool:
@@ -111,6 +132,10 @@ class Room:
             "stage": self.stage,
             "revision": self.revision,
             "message": self.message,
+            "rematch_votes": sorted(self.rematch_votes),
+            "rematch_declined": self.rematch_declined,
+            "rematch_declined_by": self.rematch_declined_by,
+            "rematch_declined_name": self.rematch_declined_name,
             "pregame": {
                 "draft_cards": encode_room_payload(self.draft_cards),
                 "available_cards": encode_room_payload(self.available_cards),
@@ -155,7 +180,7 @@ class RoomStore:
                 draft_starting_player=draft_starting_player,
                 current_drafter=draft_starting_player,
             )
-            room.players[0] = player_name or "Player 1"
+            room.players[0] = _get_unique_player_name(player_name, 0, [])
             room.message = "Waiting for another player."
             self._rooms[code] = room
             return room, 0
@@ -169,7 +194,7 @@ class RoomStore:
             if not open_seats:
                 raise ValueError("Room already has two players")
             player_id = open_seats[0]
-            room.players[player_id] = player_name or f"Player {player_id + 1}"
+            room.players[player_id] = _get_unique_player_name(player_name, player_id, room.players.values())
             room.message = "Both players connected. Press Ready when you are both looking at this screen."
             room.revision += 1
             return room, player_id
@@ -280,6 +305,38 @@ class RoomStore:
                 room.revision += 1
             return room
 
+    def request_rematch(self, code: str, player_id: int) -> Room:
+        """Record one player's Play Again vote and restart once both players agree."""
+        with self._lock:
+            room = self._get_room_locked(code)
+            self._validate_finished_room_locked(room, player_id)
+            if room.rematch_declined:
+                return room
+            if player_id in room.rematch_votes:
+                return room
+
+            room.rematch_votes.add(player_id)
+            if room.ready and room.rematch_votes.issuperset({0, 1}):
+                self._reset_for_rematch_locked(room)
+                room.message = "Both players chose Play Again. Starting a new coin flip."
+            else:
+                player_name = room.players.get(player_id, f"Player {player_id + 1}")
+                room.message = f"{player_name} would like to play again."
+            room.revision += 1
+            return room
+
+    def decline_rematch(self, code: str, player_id: int) -> Room:
+        """Mark the finished match as not rematching because one player chose menu."""
+        with self._lock:
+            room = self._get_room_locked(code)
+            self._validate_finished_room_locked(room, player_id)
+            changed = not room.rematch_declined or room.rematch_declined_by != player_id
+            player_name = room.players.get(player_id, f"Player {player_id + 1}")
+            self._mark_rematch_declined_locked(room, player_id, player_name)
+            if changed:
+                room.revision += 1
+            return room
+
     def _can_draft_card_locked(self, room: Room, card: Card) -> bool:
         return not (card.rank == CardRank.KING and room.kings_drafted >= 2)
 
@@ -288,6 +345,8 @@ class RoomStore:
             room = self._get_room_locked(code)
             if player_id in room.players:
                 departed_name = room.players.pop(player_id)
+                if self._is_finished_game_locked(room) and not room.rematch_declined:
+                    self._mark_rematch_declined_locked(room, player_id, departed_name)
                 room.ready_players.discard(player_id)
                 room.message = f"{departed_name} left the room."
                 room.revision += 1
@@ -308,6 +367,43 @@ class RoomStore:
             advanced = True
         if advanced:
             room.revision += 1
+
+    def _validate_finished_room_locked(self, room: Room, player_id: int) -> None:
+        if player_id not in room.players:
+            raise ValueError("Player is not in this room")
+        if not self._is_finished_game_locked(room):
+            raise ValueError("The match is not finished yet")
+
+    def _is_finished_game_locked(self, room: Room) -> bool:
+        return room.stage == "game" and room.game is not None and room.game.winner is not None
+
+    def _mark_rematch_declined_locked(self, room: Room, player_id: int, player_name: str) -> None:
+        room.rematch_votes.clear()
+        room.rematch_declined = True
+        room.rematch_declined_by = player_id
+        room.rematch_declined_name = player_name
+        room.message = f"{player_name} returned to the main menu."
+
+    def _reset_for_rematch_locked(self, room: Room) -> None:
+        labyrinth_cards, draft_cards, jack_cards = setup_pregame_cards()
+        draft_starting_player = choice([0, 1])
+        room.game = None
+        room.stage = "coin_flip"
+        room.ready_players = {0, 1}
+        room.labyrinth_cards = labyrinth_cards
+        room.draft_cards = list(draft_cards)
+        room.available_cards = list(draft_cards)
+        room.jack_cards = jack_cards
+        room.jack_order = get_jack_suit_order(jack_cards)
+        room.draft_starting_player = draft_starting_player
+        room.current_drafter = draft_starting_player
+        room.draft_hands = {0: [], 1: []}
+        room.kings_drafted = 0
+        room.player_cards = []
+        room.rematch_votes.clear()
+        room.rematch_declined = False
+        room.rematch_declined_by = None
+        room.rematch_declined_name = ""
 
     def _check_game_over_once(self, room: Room) -> bool:
         if room.game is None:
@@ -340,6 +436,24 @@ def _html_response(handler: BaseHTTPRequestHandler, status: int, body: str) -> N
     data = body.encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "text/html; charset=utf-8")
+    handler.send_header("Content-Length", str(len(data)))
+    handler.end_headers()
+    handler.wfile.write(data)
+
+
+def _static_file_response(handler: BaseHTTPRequestHandler, file_path: Path) -> None:
+    content_type, encoding = mimetypes.guess_type(str(file_path))
+    if file_path.name.endswith(".tar.gz"):
+        content_type = "application/gzip"
+        encoding = None
+    elif file_path.suffix in {".apk", ".whl"}:
+        content_type = "application/octet-stream"
+
+    data = file_path.read_bytes()
+    handler.send_response(200)
+    handler.send_header("Content-Type", content_type or "application/octet-stream")
+    if encoding:
+        handler.send_header("Content-Encoding", encoding)
     handler.send_header("Content-Length", str(len(data)))
     handler.end_headers()
     handler.wfile.write(data)
@@ -418,8 +532,10 @@ def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return json.loads(handler.rfile.read(length).decode("utf-8"))
 
 
-def make_room_handler(store: RoomStore, scheme: str = "http"):
+def make_room_handler(store: RoomStore, scheme: str = "http", web_root: Path | str | None = None):
     """Build a request handler bound to a specific room store."""
+
+    resolved_web_root = Path(web_root).resolve() if web_root is not None else None
 
     class LocalRoomHandler(BaseHTTPRequestHandler):
         def do_OPTIONS(self) -> None:
@@ -428,13 +544,18 @@ def make_room_handler(store: RoomStore, scheme: str = "http"):
         def do_GET(self) -> None:
             try:
                 parts = self._path_parts()
+                if parts and parts[0] == "rooms":
+                    if len(parts) == 2:
+                        room = store.get_room(parts[1])
+                        _json_response(self, 200, room.snapshot())
+                        return
+                    _json_response(self, 404, {"error": "Unknown endpoint"})
+                    return
+                if resolved_web_root is not None and self._serve_static_file():
+                    return
                 if not parts:
                     host = self.headers.get("Host") or f"{self.server.server_address[0]}:{self.server.server_address[1]}"
                     _html_response(self, 200, _server_status_page(f"{scheme}://{host}"))
-                    return
-                if len(parts) == 2 and parts[0] == "rooms":
-                    room = store.get_room(parts[1])
-                    _json_response(self, 200, room.snapshot())
                     return
                 _json_response(self, 404, {"error": "Unknown endpoint"})
             except ValueError as exc:
@@ -482,6 +603,18 @@ def make_room_handler(store: RoomStore, scheme: str = "http"):
                     _json_response(self, 200, room.snapshot(player_id))
                     return
 
+                if len(parts) == 3 and parts[0] == "rooms" and parts[2] == "rematch":
+                    player_id = int(body.get("player_id"))
+                    room = store.request_rematch(parts[1], player_id)
+                    _json_response(self, 200, room.snapshot(player_id))
+                    return
+
+                if len(parts) == 3 and parts[0] == "rooms" and parts[2] == "decline":
+                    player_id = int(body.get("player_id"))
+                    room = store.decline_rematch(parts[1], player_id)
+                    _json_response(self, 200, room.snapshot(player_id))
+                    return
+
                 if len(parts) == 3 and parts[0] == "rooms" and parts[2] == "leave":
                     player_id = int(body.get("player_id"))
                     room = store.leave_room(parts[1], player_id)
@@ -501,6 +634,30 @@ def make_room_handler(store: RoomStore, scheme: str = "http"):
         def _path_parts(self) -> list[str]:
             return [part for part in urlparse(self.path).path.split("/") if part]
 
+        def _serve_static_file(self) -> bool:
+            if resolved_web_root is None:
+                return False
+
+            request_path = unquote(urlparse(self.path).path)
+            relative_path = request_path.lstrip("/") or "index.html"
+            if relative_path.endswith("/"):
+                relative_path = f"{relative_path}index.html"
+
+            candidate = (resolved_web_root / Path(*PurePosixPath(relative_path).parts)).resolve()
+            try:
+                candidate.relative_to(resolved_web_root)
+            except ValueError:
+                _json_response(self, 404, {"error": "Unknown endpoint"})
+                return True
+
+            if candidate.is_dir():
+                candidate = candidate / "index.html"
+            if not candidate.is_file():
+                return False
+
+            _static_file_response(self, candidate)
+            return True
+
     return LocalRoomHandler
 
 
@@ -512,10 +669,12 @@ class LocalRoomServer:
         host: str = DEFAULT_HOST,
         port: int = DEFAULT_PORT,
         ssl_context: ssl.SSLContext | None = None,
+        web_root: Path | str | None = None,
     ) -> None:
         self.host = host
         self.port = port
         self.ssl_context = ssl_context
+        self.web_root = Path(web_root).resolve() if web_root is not None else None
         self.store = RoomStore()
         self.httpd: ThreadingHTTPServer | None = None
         self.thread: Thread | None = None
@@ -530,7 +689,7 @@ class LocalRoomServer:
             return
 
         scheme = "https" if self.ssl_context is not None else "http"
-        handler = make_room_handler(self.store, scheme=scheme)
+        handler = make_room_handler(self.store, scheme=scheme, web_root=self.web_root)
         port = self.port
         last_error = None
         for candidate in range(port, port + 20):
@@ -583,6 +742,10 @@ class LocalRoomClient:
         self.draft_hands: dict[int, list[Card]] = {0: [], 1: []}
         self.kings_drafted = 0
         self.player_cards: list[Card] = []
+        self.rematch_votes: set[int] = set()
+        self.rematch_declined = False
+        self.rematch_declined_by: int | None = None
+        self.rematch_declined_name = ""
         self.last_error: str | None = None
         self._poll_elapsed = 0.0
 
@@ -656,6 +819,28 @@ class LocalRoomClient:
             self.last_error = str(exc)
             return False
 
+    def request_rematch(self) -> bool:
+        try:
+            snapshot = _post_json(
+                f"{self.base_url}/rooms/{self.room_code}/rematch",
+                {"player_id": self.player_id},
+            )
+            return self._apply_snapshot(snapshot)
+        except OSError as exc:
+            self.last_error = str(exc)
+            return False
+
+    def decline_rematch(self) -> bool:
+        try:
+            snapshot = _post_json(
+                f"{self.base_url}/rooms/{self.room_code}/decline",
+                {"player_id": self.player_id},
+            )
+            return self._apply_snapshot(snapshot)
+        except OSError as exc:
+            self.last_error = str(exc)
+            return False
+
     def leave(self) -> None:
         try:
             _post_json(
@@ -673,6 +858,11 @@ class LocalRoomClient:
         self.stage = str(snapshot.get("stage") or self.stage)
         self.revision = int(snapshot.get("revision", self.revision))
         self.message = str(snapshot.get("message") or "")
+        self.rematch_votes = {int(player_id) for player_id in snapshot.get("rematch_votes", [])}
+        self.rematch_declined = bool(snapshot.get("rematch_declined", False))
+        raw_declined_by = snapshot.get("rematch_declined_by")
+        self.rematch_declined_by = int(raw_declined_by) if raw_declined_by is not None else None
+        self.rematch_declined_name = str(snapshot.get("rematch_declined_name") or "")
         self._apply_pregame_snapshot(snapshot.get("pregame") or {})
         if snapshot.get("state"):
             self.game = decode_game_state(snapshot["state"])
