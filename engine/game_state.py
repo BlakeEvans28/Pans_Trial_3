@@ -11,7 +11,7 @@ from .actions import (
     Action, MoveAction, PickupCurrentCardAction, PlayCardAction, ChooseCombatCardAction,
     ChooseRequestAction, SelectDamageCardAction, SelectRestructureSuitAction,
     SelectPlaneShiftDirectionAction, ResolvePlaneShiftAction, ResolveBallistaShotAction,
-    PlaceCardsAction, ActionType
+    CancelRequestSelectionAction, PlaceCardsAction, ActionType
 )
 
 
@@ -364,10 +364,16 @@ class GameState:
             return self._handle_resolve_plane_shift(action)
         elif action.type == ActionType.RESOLVE_BALLISTA_SHOT:
             return self._handle_resolve_ballista_shot(action)
+        elif action.type == ActionType.CANCEL_REQUEST_SELECTION:
+            return self._handle_cancel_request_selection(action)
         elif action.type == ActionType.PLACE_CARDS:
             return self._handle_place_cards(action)
         
         return False
+
+    def _handle_cancel_request_selection(self, action: CancelRequestSelectionAction) -> bool:
+        """Handle backing out of an unresolved Appeasing Pan request."""
+        return self.cancel_pending_request_selection(action.player_id)
 
     def _handle_move(self, action: MoveAction) -> bool:
         """Handle movement action."""

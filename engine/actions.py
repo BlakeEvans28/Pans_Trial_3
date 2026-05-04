@@ -21,6 +21,7 @@ class ActionType(Enum):
     SELECT_PLANE_SHIFT_DIRECTION = "select_plane_shift_direction"
     RESOLVE_PLANE_SHIFT = "resolve_plane_shift"
     RESOLVE_BALLISTA_SHOT = "resolve_ballista_shot"
+    CANCEL_REQUEST_SELECTION = "cancel_request_selection"
     PLACE_CARDS = "place_cards"
 
 
@@ -134,6 +135,14 @@ class ResolveBallistaShotAction(Action):
 
     def __post_init__(self):
         self.type = ActionType.RESOLVE_BALLISTA_SHOT
+
+
+@dataclass
+class CancelRequestSelectionAction(Action):
+    """Back out of an unresolved Appeasing Pan request choice."""
+
+    def __post_init__(self):
+        self.type = ActionType.CANCEL_REQUEST_SELECTION
 
 
 @dataclass

@@ -11,7 +11,7 @@ from .board import Board, Position
 from .actions import (
     Action, ActionType, MoveAction, PickupCurrentCardAction, PlayCardAction, ChooseCombatCardAction,
     ChooseRequestAction, SelectDamageCardAction, SelectRestructureSuitAction, SelectPlaneShiftDirectionAction,
-    ResolvePlaneShiftAction, ResolveBallistaShotAction, PlaceCardsAction, RequestType,
+    ResolvePlaneShiftAction, ResolveBallistaShotAction, CancelRequestSelectionAction, PlaceCardsAction, RequestType,
     direction_to_movement, movement_to_direction
 )
 from .game_state import GameState, GamePhase
@@ -25,7 +25,7 @@ __all__ = [
     # Actions
     "Action", "ActionType", "MoveAction", "PickupCurrentCardAction", "PlayCardAction", "ChooseCombatCardAction",
     "ChooseRequestAction", "SelectDamageCardAction", "SelectRestructureSuitAction", "SelectPlaneShiftDirectionAction",
-    "ResolvePlaneShiftAction", "ResolveBallistaShotAction", "PlaceCardsAction", "RequestType",
+    "ResolvePlaneShiftAction", "ResolveBallistaShotAction", "CancelRequestSelectionAction", "PlaceCardsAction", "RequestType",
     "direction_to_movement", "movement_to_direction",
     # Game State
     "GameState", "GamePhase",

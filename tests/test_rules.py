@@ -16,7 +16,7 @@ from engine import (
     MoveAction, PickupCurrentCardAction, Position, SuitRole, ChooseCombatCardAction,
     ChooseRequestAction, RequestType, ResolveBallistaShotAction, SelectDamageCardAction,
     SelectRestructureSuitAction, SelectPlaneShiftDirectionAction, ResolvePlaneShiftAction,
-    PlaceCardsAction
+    CancelRequestSelectionAction, PlaceCardsAction
 )
 from deck_utils import setup_game_deck, create_6x6_labyrinth, draft_hands, get_jack_suit_order
 from multiplayer import LocalRoomClient, LocalRoomServer
@@ -28,7 +28,7 @@ from ui.input_handler import InputHandler
 from ui.board_renderer import BoardRenderer
 from ui.game_screen import GameScreen
 from ui.player_names import normalize_player_names, replace_player_tokens
-from ui.screen_manager import CoinFlipScreen, DraftScreen, GameOverScreen, MultiplayerLobbyScreen, SettingsScreen
+from ui.screen_manager import CoinFlipScreen, DraftScreen, GameOverScreen, JackRevealScreen, MultiplayerLobbyScreen, SettingsScreen
 from ui.window import GameWindow
 
 
@@ -603,7 +603,11 @@ def test_multiplayer_lobby_screen_lays_out_room_controls():
     assert screen.get_server_url() == MultiplayerLobbyScreen.DEFAULT_SERVER_URL
     button_height = screen.button_rects["create"].height
     assert screen.button_rects["create"].y - screen.room_entry.relative_rect.bottom == int(button_height * 0.5)
-    assert screen.button_rects["ready"].y - screen.button_rects["create"].bottom == int(button_height * 0.25)
+    assert screen.button_rects["ready"].y - screen.button_rects["create"].bottom == int(button_height * 0.25) - button_height // 2
+    screen.set_status("Room created.", room_code="1001")
+    notice_rect = screen._get_room_code_notice_rect()
+    assert notice_rect.y == screen.room_entry.relative_rect.y - screen.scale_y(64, 48) + screen.scale_y(20, 15)
+    assert not notice_rect.colliderect(screen.room_entry.relative_rect)
 
     surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
     screen.render(surface)
@@ -1280,12 +1284,55 @@ def test_pending_request_selection_can_be_cancelled(game_setup):
     assert game.choose_request(0, "steal_life")
     assert game.can_cancel_pending_request_selection(0)
     assert game.apply_action(SelectDamageCardAction(0, 0, own_card))
-    assert game.cancel_pending_request_selection(0)
+    assert game.apply_action(CancelRequestSelectionAction(0))
     assert not game.has_pending_request_resolution()
     assert game.pending_request_players == [0, 1]
     assert game.current_player == 0
     assert game.request_history == []
     assert game.choose_request(0, "plane_shift")
+
+
+def test_multiplayer_back_submits_cancel_request_action(game_setup):
+    """Back from a request popup should update the room server, not just local UI state."""
+    game = game_setup
+    own_card = Card(CardRank.TEN, CardSuit.HEARTS)
+    opponent_card = Card(CardRank.QUEEN, CardSuit.SPADES)
+    game.damage[0].add_card(own_card)
+    game.damage[1].add_card(opponent_card)
+    game.phase = GamePhase.APPEASING
+    game.current_request_winner = 0
+    game.pending_request_players = [0, 1]
+    game.current_player = 0
+    assert game.choose_request(0, "steal_life")
+
+    class Session:
+        player_id = 0
+        room_code = "1000"
+        players = {0: "Host", 1: "Guest"}
+        ready = True
+        last_error = None
+
+        def __init__(self, active_game):
+            self.game = active_game
+            self.submitted = []
+
+        def submit_action(self, action):
+            self.submitted.append(action)
+            return self.game.apply_action(action)
+
+        def update(self, time_delta: float) -> bool:
+            return False
+
+    window = SmokeWindow(width=1200, height=900)
+    session = Session(game)
+    window.multiplayer_session = session
+    screen = GameScreen(window, game)
+
+    assert screen._cancel_pending_request_resolution()
+    assert isinstance(session.submitted[-1], CancelRequestSelectionAction)
+    assert not game.has_pending_request_resolution()
+    assert game.pending_request_players == [0, 1]
+    assert game.current_player == 0
 
 
 def test_appeasing_stronger_color_beats_higher_rank(game_setup):
@@ -1724,6 +1771,36 @@ def test_draft_grid_falls_back_when_six_columns_cannot_fit():
     assert len(columns) == 3
 
 
+def test_omen_reveal_cards_stay_one_row_on_compact_viewports():
+    """The four Omen cards should render as a 4x1 grid even in compact layouts."""
+    window = SmokeWindow(width=520, height=700)
+    screen = JackRevealScreen(window)
+    screen.start_reveal(
+        [],
+        jack_order=[CardSuit.HEARTS, CardSuit.DIAMONDS, CardSuit.CLUBS, CardSuit.SPADES],
+    )
+    screen.finished = True
+
+    rendered_rects = []
+
+    def collect_tarot_card(surface, rect, role_index):
+        rendered_rects.append(rect.copy())
+
+    screen._render_reveal_tarot_card = collect_tarot_card
+    surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
+    screen.render(surface)
+
+    rows = {rect.y for rect in rendered_rects}
+    columns = {rect.x for rect in rendered_rects}
+
+    assert len(rendered_rects) == 4
+    assert len(rows) == 1
+    assert len(columns) == 4
+    assert all(rect.height > rect.width for rect in rendered_rects)
+    assert rendered_rects[0].left >= 0
+    assert rendered_rects[-1].right <= window.WINDOW_WIDTH
+
+
 def test_compact_hand_card_click_plays_directly(game_setup):
     """Compact hand cards should play directly without the retired Inspect popup."""
     window = SmokeWindow(width=560, height=660)
@@ -1744,6 +1821,111 @@ def test_compact_hand_card_click_plays_directly(game_setup):
     surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
     screen.render(surface)
     assert screen.hand_card_rects
+
+
+@pytest.mark.parametrize("width,height", [(560, 660), (900, 700), (1200, 900)])
+def test_player_hand_stays_one_row_when_many_cards(game_setup, width, height):
+    """The active hand should shrink to one row instead of wrapping into two rows."""
+    window = SmokeWindow(width=width, height=height)
+    game = game_setup
+    game.current_player = 0
+    game.phase = GamePhase.APPEASING
+    game.hands[0].cards.clear()
+    ranks = [CardRank.ACE, CardRank.TWO, CardRank.THREE, CardRank.FOUR, CardRank.FIVE]
+    suits = [CardSuit.HEARTS, CardSuit.DIAMONDS, CardSuit.CLUBS, CardSuit.SPADES]
+    for index in range(10):
+        game.add_card_to_hand(0, Card(ranks[index % len(ranks)], suits[index % len(suits)]))
+    screen = GameScreen(window, game)
+
+    hand_rects = [rect for _, rect in screen._get_hand_card_rects()]
+    rows = {rect.y for rect in hand_rects}
+
+    assert len(hand_rects) == 10
+    assert len(rows) == 1
+    assert hand_rects[0].left >= 0
+    assert hand_rects[-1].right <= window.WINDOW_WIDTH
+
+
+@pytest.mark.parametrize("width,height", [(560, 660), (900, 700), (1200, 900)])
+def test_health_chips_leave_room_for_phase_ribbon_on_all_screen_sizes(game_setup, width, height):
+    """Health buttons should sit on the left without covering the phase ribbon."""
+    window = SmokeWindow(width=width, height=height)
+    game = game_setup
+    game.phase = GamePhase.TRAVERSING
+    screen = GameScreen(window, game)
+
+    health_rects = screen._get_damage_summary_rects()
+    banner_rect = screen._get_phase_banner_box()
+    legend_rect = screen._get_suit_role_legend_panel_rect()
+    board_rect = screen.renderer.get_board_rect()
+
+    assert health_rects[0].x == health_rects[1].x
+    assert health_rects[1].top > health_rects[0].bottom
+    assert banner_rect is not None
+    assert legend_rect is not None
+    assert banner_rect.width == int(board_rect.width * 0.75)
+    assert legend_rect.left >= board_rect.right
+    assert not health_rects[0].colliderect(banner_rect)
+    assert not health_rects[1].colliderect(banner_rect)
+    assert not legend_rect.colliderect(banner_rect)
+
+
+def test_suit_role_legend_is_right_side_single_column_strength_order(game_setup):
+    """The Omen legend should read highest-to-lowest in one right-side column."""
+    window = SmokeWindow(width=1200, height=900)
+    game = game_setup
+    game.phase = GamePhase.TRAVERSING
+    screen = GameScreen(window, game)
+
+    label_calls = []
+
+    def collect_label(surface, text, rect, preferred_size, minimum_size, **kwargs):
+        label_calls.append((text, rect.copy()))
+
+    screen._render_wood_legend_label = collect_label
+    surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
+    screen._render_suit_role_legend(surface)
+
+    expected_labels = [
+        screen._get_suit_role_label(game.suit_roles.get(suit))
+        for suit in game.get_appeasing_hierarchy()
+    ]
+    rendered_labels = [text for text, _ in label_calls]
+    label_rects = [rect for _, rect in label_calls]
+
+    assert rendered_labels == expected_labels
+    assert len({rect.x for rect in label_rects}) == 1
+    assert len({rect.y for rect in label_rects}) == 4
+    assert label_rects == sorted(label_rects, key=lambda rect: rect.y)
+
+
+def test_player_markers_are_larger_than_legacy_buttons():
+    """Player portrait markers should be large enough to read as board buttons."""
+    renderer = BoardRenderer()
+
+    assert renderer._get_player_marker_radius(False) >= 22
+    assert renderer._get_player_marker_radius(True) >= 19
+
+
+@pytest.mark.parametrize("width,height", [(560, 660), (900, 700), (1200, 900)])
+def test_pending_placement_cards_are_left_of_board_on_all_screen_sizes(game_setup, width, height):
+    """Post-Appeasing played-card placement should be staged on the left side."""
+    window = SmokeWindow(width=width, height=height)
+    game = game_setup
+    game.current_player = 0
+    game.pending_placement_player = 0
+    game.pending_placement_cards = [
+        Card(CardRank.TEN, CardSuit.HEARTS),
+        Card(CardRank.QUEEN, CardSuit.SPADES),
+    ]
+    screen = GameScreen(window, game)
+
+    board_rect = screen.renderer.get_board_rect()
+    placement_rects = [rect for _, rect in screen._get_pending_placement_card_rects()]
+
+    assert placement_rects
+    assert all(rect.right <= board_rect.left for rect in placement_rects)
+    assert len({rect.x for rect in placement_rects}) == 1
 
 
 def test_game_tutorial_panel_avoids_board_smoke(game_setup):

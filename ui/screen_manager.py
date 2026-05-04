@@ -1327,7 +1327,8 @@ class MultiplayerLobbyScreen(Screen):
         button_height = self._get_wood_icon_height_for_width(button_width)
         room_entry_bottom = self.room_entry.relative_rect.bottom
         button_y = room_entry_bottom + int(button_height * 0.5)
-        lower_button_y = button_y + button_height + int(button_height * 0.25)
+        lower_button_lift = button_height // 2
+        lower_button_y = button_y + button_height + int(button_height * 0.25) - lower_button_lift
         max_lower_y = self.panel_rect.bottom - button_height - self.scale_y(18, 12)
         if lower_button_y > max_lower_y:
             lower_button_y = max_lower_y
@@ -1347,6 +1348,27 @@ class MultiplayerLobbyScreen(Screen):
             lower_button_y,
             button_width,
             button_height,
+        )
+
+    def _get_room_code_notice_rect(self) -> pygame.Rect:
+        """Return the notice rect that confirms the shareable room code."""
+        content = self._get_stone_content_rect(
+            self.panel_rect,
+            extra_x=self.scale_x(10, 4),
+            extra_top=self.scale_y(10, 6),
+            extra_bottom=self.scale_y(10, 6),
+        )
+        notice_height = self.scale_y(34, 26)
+        notice_y = (
+            self.room_entry.relative_rect.y
+            - self.scale_y(64, 48)
+            + self.scale_y(20, 15)
+        )
+        return pygame.Rect(
+            content.x,
+            notice_y,
+            content.width,
+            notice_height,
         )
 
     def _set_entry_rect(self, entry, rect: pygame.Rect) -> None:
@@ -1490,13 +1512,13 @@ class MultiplayerLobbyScreen(Screen):
             )
 
         if self.room_code_text:
-            text = f"Room Code: {self.room_code_text} - share this code"
+            text = f"Room Code: {self.room_code_text} - share this code."
             self._draw_wrapped_carved_text(
                 surface,
                 text,
                 self.small_font,
                 (74, 66, 54),
-                pygame.Rect(content.x, self.button_rects["create"].y - self.scale_y(46, 34), content.width, self.scale_y(38, 28)),
+                self._get_room_code_notice_rect(),
                 self.scale_y(20, 15),
                 2,
                 align="center",
@@ -3007,17 +3029,17 @@ class JackRevealScreen(Screen):
         )
 
         compact = self.is_compact_layout()
-        columns = 2 if compact else 4
-        spacing = self.scale(24, 10)
+        columns = 4
+        spacing = self.scale(20, 8)
         card_width = min(
-            self.scale_x(150, 104) if compact else self.scale(180, 100),
-            (self.window.WINDOW_WIDTH - self.scale_x(80, 32) - (columns - 1) * spacing) // columns,
+            self.scale_x(240, 112) if compact else self.scale_x(250, 136),
+            (self.window.WINDOW_WIDTH - self.scale_x(56, 24) - (columns - 1) * spacing) // columns,
         )
-        card_height = max(self.scale_y(112, 84), int(card_width * (0.78 if compact else 1.22)))
+        card_height = max(self.scale_y(132, 96), int(card_width * 1.36))
         rows = (4 + columns - 1) // columns
         total_width = columns * card_width + (columns - 1) * spacing
         start_x = (self.window.WINDOW_WIDTH - total_width) // 2
-        y = self.scale_y(170, 122) if compact else self.scale_y(260, 190)
+        y = self.scale_y(168, 116) if compact else self.scale_y(232, 168)
 
         for index in range(4):
             row = index // columns

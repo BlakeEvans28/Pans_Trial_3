@@ -30,7 +30,7 @@ class BoardRenderer:
     HOLE_COLOR = (20, 20, 20)
     PLAYER1_COLOR = (200, 50, 50)
     PLAYER2_COLOR = (50, 50, 200)
-    PLAYER_MARKER_RADIUS = 17
+    PLAYER_MARKER_RADIUS = 22
     ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
     PLAYER_PORTRAIT_PATH = Path(__file__).resolve().parent.parent / "assets" / "player_portrait_micah.png"
     LABYRINTH_FRAME_PATH = ASSET_ROOT / "labrynth.png"
@@ -287,12 +287,12 @@ class BoardRenderer:
         compact = surface_width < 720 or surface_height < 680
         if compact:
             side_gutter = max(18, int(surface_width * 0.07))
-            top_margin = max(150, int(surface_height * 0.21))
+            top_margin = max(170, int(surface_height * 0.24))
             bottom_margin = max(130, int(surface_height * 0.18))
             min_cell_size = 44
         else:
             side_gutter = min(max(180, int(surface_width * 0.18)), surface_width // 4)
-            top_margin = max(86, int(surface_height * 0.11))
+            top_margin = max(150, int(surface_height * 0.16))
             bottom_margin = max(190, int(surface_height * 0.20))
             min_cell_size = self.MIN_CELL_SIZE
 
@@ -509,7 +509,7 @@ class BoardRenderer:
         player_names: dict[int, str],
     ) -> None:
         """Render a labeled portrait marker for one player."""
-        radius = self.PLAYER_MARKER_RADIUS - 2 if shared_tile else self.PLAYER_MARKER_RADIUS
+        radius = self._get_player_marker_radius(shared_tile)
         center = (x, y + 6)
 
         pygame.draw.circle(surface, (16, 18, 24), (center[0], center[1] + 2), radius + 1)
@@ -526,6 +526,11 @@ class BoardRenderer:
 
         self._render_player_label(surface, player_id, color, center, radius, shared_tile, player_names)
 
+    def _get_player_marker_radius(self, shared_tile: bool = False) -> int:
+        """Return the current portrait-marker radius."""
+        radius = max(self.PLAYER_MARKER_RADIUS, int(round(self.CELL_SIZE * 0.27)))
+        return max(16, radius - 3) if shared_tile else radius
+
     def _render_player_label(
         self,
         surface: pygame.Surface,
@@ -538,17 +543,17 @@ class BoardRenderer:
     ) -> None:
         """Render the player name above the circular portrait."""
         player_name = str(player_names.get(player_id) or f"Player {player_id + 1}").strip() or f"Player {player_id + 1}"
-        max_text_width = max(48, int(self.CELL_SIZE * (1.35 if shared_tile else 1.75)))
+        max_text_width = max(58, int(self.CELL_SIZE * (1.55 if shared_tile else 2.0)))
         font = self._get_fitted_player_label_font(player_name, max_text_width)
         label = font.render(player_name, True, (246, 246, 248))
         label_rect = label.get_rect()
-        label_rect.inflate_ip(14, 8)
+        label_rect.inflate_ip(20, 10)
 
         label_x = center[0]
         if shared_tile:
             label_x += -16 if player_id == 0 else 16
 
-        label_rect.midbottom = (label_x, center[1] - radius - 4)
+        label_rect.midbottom = (label_x, center[1] - radius - 6)
         chip = pygame.Surface(label_rect.size, pygame.SRCALPHA)
         pygame.draw.rect(chip, (14, 16, 22, 220), chip.get_rect(), border_radius=10)
         pygame.draw.rect(chip, (*color, 235), chip.get_rect(), 1, border_radius=10)
