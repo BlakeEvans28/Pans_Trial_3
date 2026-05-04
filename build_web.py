@@ -435,9 +435,12 @@ def create_zip(build_web_dir: Path, output_zip: Path) -> None:
 
 def install_deploy_site(build_web_dir: Path, deploy_dir: Path) -> None:
     """Refresh the static site folder used by hosted room-server deployments."""
-    if deploy_dir.exists():
-        shutil.rmtree(deploy_dir)
-    shutil.copytree(build_web_dir, deploy_dir)
+    deploy_dir.mkdir(parents=True, exist_ok=True)
+    # OneDrive can mark the local CDN cache as a reparse point, which makes
+    # rmtree fail even with normal write permissions. Overlay the generated
+    # site instead; index.html points at the current bundle, so stale ignored
+    # files do not affect the deployable build.
+    shutil.copytree(build_web_dir, deploy_dir, dirs_exist_ok=True)
 
 
 def serve_build(build_web_dir: Path, port: int) -> None:

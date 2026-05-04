@@ -121,6 +121,8 @@ python room_server.py --host 0.0.0.0
 
 That serves the generated `WEB_BUILD\site` folder and the `/rooms` API together. On cloud hosts that support a `Procfile` or `render.yaml`, the included config runs those commands for you during deployment, so the service starts when the URL is opened instead of needing a server on your computer.
 
+Hosted room servers also expose `/health` for uptime checks. Production limits can be tuned with `PAN_TRIAL_MAX_ROOMS` and `PAN_TRIAL_ROOM_TIMEOUT_SECONDS`, or with the matching `room_server.py` command-line flags.
+
 ## Build the Executable
 
 If you download the full project release, the submitted executable can be rebuilt with PyInstaller and the included slim spec file. The spec removes unused large pygame_gui CJK font bundles so the single executable stays below the 25 MB upload limit.

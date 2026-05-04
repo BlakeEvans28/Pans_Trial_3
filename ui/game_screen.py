@@ -56,8 +56,8 @@ REQUEST_POPUP_COPY = {
     },
     "steal_life": {
         "title": "Steal Life",
-        "description": "Exchange one of your damage cards with one from the enemy pile.",
-        "disabled": "Needs at least one damage card in both piles.",
+        "description": "Exchange one of your lost-health cards with one from the enemy pile.",
+        "disabled": "Needs at least one lost-health card in both piles.",
     },
     "ignore_us": {
         "title": "Ignore Us",
@@ -216,6 +216,10 @@ class GameScreen(Screen):
             height,
         )
 
+    def _get_health_remaining(self, player_id: int) -> int:
+        """Return health left from the 25-point loss threshold."""
+        return max(0, 25 - self.game.get_damage_total(player_id))
+
     def _get_scaled_phase_banner(self, phase: GamePhase, box_size: tuple[int, int]) -> pygame.Surface | None:
         """Return cached phase art scaled to fit the current title area."""
         base = self._phase_banner_base.get(phase)
@@ -289,7 +293,7 @@ class GameScreen(Screen):
         info_x = WINDOW_WIDTH - info_width - MARGIN
         self.info_label = pygame_gui.elements.UILabel(
             relative_rect=pygame.Rect((info_x, MARGIN), (info_width, STATUS_HEIGHT)),
-            text=f"{self._get_player_name(0)} Damage: 0 | {self._get_player_name(1)} Damage: 0",
+            text=f"{self._get_player_name(0)} Health: 25 | {self._get_player_name(1)} Health: 25",
             manager=self.ui_manager
         )
         
@@ -430,7 +434,7 @@ class GameScreen(Screen):
                 damage_x = WINDOW_WIDTH - BUTTON_WIDTH - MARGIN - 170
             label = pygame_gui.elements.UILabel(
                 relative_rect=pygame.Rect((damage_x, damage_label_y), (BUTTON_WIDTH, 24)),
-                text=f"{self._get_player_name(player_id)} Damage",
+                text=f"{self._get_player_name(player_id)} Health",
                 manager=self.ui_manager
             )
             self.damage_labels.append(label)
@@ -1053,9 +1057,9 @@ class GameScreen(Screen):
         elif pending_request_type == "steal_life":
             selected_card = self.game.get_pending_steal_life_card()
             if selected_card is None:
-                status_text = f"APPEASING PAN: {player} selects their damage card first"
+                status_text = f"APPEASING PAN: {player} selects a lost-health card first"
             else:
-                status_text = f"APPEASING PAN: {player} selects enemy damage, or another own card to change"
+                status_text = f"APPEASING PAN: {player} selects enemy lost-health, or another own card to change"
         elif pending_request_type == "plane_shift":
             direction = self.game.get_pending_plane_shift_direction()
             if self.pending_plane_shift_confirmation is not None:
@@ -1409,13 +1413,8 @@ class GameScreen(Screen):
         )
 
     def _is_hand_inspect_popup_active(self) -> bool:
-        """Return True when compact hand-card inspection is open."""
-        cards = self.game.get_player_hand(self.game.current_player)
-        return (
-            self.inspected_hand_card_index is not None
-            and self.is_compact_layout()
-            and 0 <= self.inspected_hand_card_index < len(cards)
-        )
+        """Hand-card inspection has been retired; hand cards play directly."""
+        return False
 
     def _has_center_popup(self) -> bool:
         """Return True when a centered modal popup is active."""
@@ -1441,7 +1440,7 @@ class GameScreen(Screen):
         )
 
     def _get_damage_summary_rects(self) -> dict[int, pygame.Rect]:
-        """Return the clickable top-right damage summary rects."""
+        """Return the health summary rects anchored on the left HUD."""
         if self.is_compact_layout():
             margin = self.scale_x(18, 12)
             gap = self.scale_x(10, 6)
@@ -1468,13 +1467,13 @@ class GameScreen(Screen):
     ) -> tuple[pygame.Rect, pygame.Rect, list[tuple[str, pygame.Rect]], pygame.Rect]:
         """Return the request popup panel, content rect, request buttons, and maze-view button."""
         request_options = self._get_request_popup_options()
-        cols = 1 if self.is_compact_layout() else (2 if len(request_options) > 1 else 1)
+        cols = 2 if len(request_options) > 1 else 1
         rows = max(1, (len(request_options) + cols - 1) // cols)
         title_block_height = self.scale_y(70, 50)
-        button_width = self.scale_x(386 if cols == 2 else 452, 270 if self.is_compact_layout() else 236)
+        button_width = self.scale_x(386 if cols == 2 else 452, 236)
         detail_line_height = max(self.scale_y(22, 16), self.popup_small_font.get_linesize())
         button_height = max(
-            self.scale_y(122, 92) if self.is_compact_layout() else self.scale_y(128, 98),
+            self.scale_y(128, 92),
             self.scale_y(34, 26) + detail_line_height * 2,
         )
         spacing_x = self.scale(20, 12)
@@ -2050,7 +2049,7 @@ class GameScreen(Screen):
         ]
 
     def _handle_hand_card_click(self, pos: tuple[int, int]) -> bool:
-        """Inspect or play a manually rendered hand card."""
+        """Play a manually rendered hand card directly when it is usable."""
         player_hand = self.game.get_player_hand(self.game.current_player)
         for index, rect in self._get_hand_card_rects():
             if rect.collidepoint(pos) and index < len(player_hand):
@@ -2060,9 +2059,6 @@ class GameScreen(Screen):
                         player_id = self.game.current_player
                         if self._apply_action(ChooseCombatCardAction(player_id, card)):
                             print(f"{self._get_player_name(player_id)} used weapon card: {card}")
-                    return True
-                if self.is_compact_layout():
-                    self.inspected_hand_card_index = index
                     return True
                 if not self._can_play_appeasing_hand_cards():
                     return True
@@ -2270,13 +2266,13 @@ class GameScreen(Screen):
         )
 
     def _render_damage_summary(self, surface: pygame.Surface) -> None:
-        """Render clickable damage summary chips."""
+        """Render health-left chips from the 25-point loss threshold."""
         for player_id, rect in self._get_damage_summary_rects().items():
             active = self.damage_popup_player == player_id
             self._render_game_wood_button(
                 surface,
                 rect,
-                f"{self._get_player_name(player_id)} Damage: {self.game.get_damage_total(player_id)}",
+                f"{self._get_player_name(player_id)} Health: {self._get_health_remaining(player_id)}/25",
                 selected=active,
                 preferred_font_size=self.font_size(18, 13),
             )
@@ -2397,7 +2393,7 @@ class GameScreen(Screen):
         if choosing_weapon:
             prompt = "Pick a weapon from hand"
         elif can_play_appeasing:
-            prompt = "Tap card to Inspect" if self.is_compact_layout() else "Click a card to play"
+            prompt = "Click a card to play"
         else:
             prompt = "Active Hand"
         self._render_carved_text(
@@ -2428,8 +2424,6 @@ class GameScreen(Screen):
             usable = self._can_use_hand_card_now(card)
             border = (252, 222, 104) if usable else (110, 116, 130)
             pygame.draw.rect(surface, border, rect, self.scale(3 if usable else 2, 1), border_radius=self.scale(8, 5))
-            if self.is_compact_layout() and not choosing_weapon:
-                self._render_compact_hand_inspect_hint(surface, rect, usable)
 
     def _get_active_hand_title_rect(self, rects: list[tuple[int, pygame.Rect]] | None = None) -> pygame.Rect | None:
         """Return the plaque rect used for the active-hand label above the hand cards."""
@@ -2464,7 +2458,7 @@ class GameScreen(Screen):
         pygame.draw.rect(hint_surface, fill, hint_surface.get_rect(), border_radius=self.scale(5, 3))
         surface.blit(hint_surface, hint_rect.topleft)
 
-        label = "Tap Inspect" if hint_rect.width >= self.scale_x(58, 48) else "Inspect"
+        label = "Play" if hint_rect.width >= self.scale_x(58, 48) else "Use"
         text = self.popup_small_font.render(label, True, (248, 238, 188) if usable else (184, 184, 190))
         surface.blit(text, text.get_rect(center=hint_rect.center))
 
@@ -2779,7 +2773,7 @@ class GameScreen(Screen):
         """Return the active modal rect so tutorial highlights do not cover it from behind."""
         if self._is_hand_inspect_popup_active():
             panel_rect, _, _, _ = self._get_hand_inspect_popup_layout()
-            return panel_rect, "Tutorial: inspect the enlarged card, then play it or close this view."
+            return panel_rect, "Tutorial: play a usable card from your hand."
 
         if self._is_request_popup_active():
             panel_rect, _, _, _ = self._get_request_popup_layout()
@@ -2790,7 +2784,7 @@ class GameScreen(Screen):
 
         if self._is_steal_life_popup_active():
             panel_rect, _ = self._get_steal_life_popup_layout()
-            return panel_rect, "Tutorial: choose one of your damage cards. You can change it before picking the enemy card."
+            return panel_rect, "Tutorial: choose one of your lost-health cards. You can change it before picking the enemy card."
 
         if self._is_restructure_popup_active():
             panel_rect, _ = self._get_restructure_popup_layout()
@@ -2806,7 +2800,7 @@ class GameScreen(Screen):
 
         if self.damage_popup_player is not None:
             panel_rect, _ = self._get_damage_popup_layout(self.damage_popup_player)
-            return panel_rect, "Tutorial: review this damage pile, then click outside the popup to close it."
+            return panel_rect, "Tutorial: review these lost-health cards, then click outside the popup to close it."
 
         return None, None
 
@@ -2991,7 +2985,7 @@ class GameScreen(Screen):
             preferred_font_size=self.font_size(20, 14),
         )
 
-        instruction = "Select your damage card first. You can change it before choosing the enemy card."
+        instruction = "Select your lost-health card first. You can change it before choosing the enemy card."
         self._draw_wrapped_carved_text(
             surface,
             instruction,
@@ -3008,8 +3002,8 @@ class GameScreen(Screen):
         )
 
         headings = {
-            0: (panel_rect.x + self.scale(40, 24), f"{self._get_player_name(0)} Damage ({self.game.get_damage_total(0)})"),
-            1: (panel_rect.centerx + self.scale(20, 12), f"{self._get_player_name(1)} Damage ({self.game.get_damage_total(1)})"),
+            0: (panel_rect.x + self.scale(40, 24), f"{self._get_player_name(0)} Health {self._get_health_remaining(0)}/25"),
+            1: (panel_rect.centerx + self.scale(20, 12), f"{self._get_player_name(1)} Health {self._get_health_remaining(1)}/25"),
         }
         for player_id, (x, text) in headings.items():
             highlight = player_id == chooser if first_selection_pending else True
@@ -3018,7 +3012,7 @@ class GameScreen(Screen):
             surface.blit(heading, (x, panel_rect.y + self.scale(92, 68)))
 
         if not card_rects:
-            empty = self.popup_body_font.render("No damage cards available.", True, (210, 210, 210))
+            empty = self.popup_body_font.render("No lost-health cards available.", True, (210, 210, 210))
             empty_rect = empty.get_rect(center=panel_rect.center)
             surface.blit(empty, empty_rect)
             return
@@ -3271,13 +3265,13 @@ class GameScreen(Screen):
             surface.blit(number, number.get_rect(center=moving.center))
 
     def _render_damage_popup(self, surface: pygame.Surface, player_id: int) -> None:
-        """Render a centered popup listing one player's damage pile."""
+        """Render a centered popup listing one player's lost-health cards."""
         panel_rect, card_rects = self._get_damage_popup_layout(player_id)
         self._render_stone_panel(surface, panel_rect, dim_alpha=22, shadow_alpha=60)
         content_rect = self._get_stone_content_rect(panel_rect, extra_x=self.scale_x(4, 2))
 
         title = self.popup_title_font.render(
-            f"{self._get_player_name(player_id)} Damage Pile ({self.game.get_damage_total(player_id)})",
+            f"{self._get_player_name(player_id)} Health {self._get_health_remaining(player_id)}/25",
             True,
             (240, 236, 214),
         )
@@ -3310,7 +3304,7 @@ class GameScreen(Screen):
             )
             self._draw_wrapped_carved_text(
                 surface,
-                "No damage cards yet.",
+                "No lost-health cards yet.",
                 self.popup_body_font,
                 (74, 66, 54),
                 empty_rect,
@@ -3541,7 +3535,7 @@ class GameScreen(Screen):
         pygame.draw.rect(surface, border, rect, self.scale(3 if selected or floating else 2, 1), border_radius=self.scale(8, 5))
 
     def _get_suit_role_label(self, role) -> str:
-        """Return the shorter role label shown in the top-right color legend."""
+        """Return the shorter role label shown in the right-side color legend."""
         if role is None:
             return "Unknown"
         return {
@@ -3552,19 +3546,17 @@ class GameScreen(Screen):
         }.get(role.value, role.value.title())
 
     def _show_phase_two_legend_guide(self) -> bool:
-        """Return True when the top-right legend should explain Phase 2 strength order."""
-        return self.game.phase == GamePhase.APPEASING and not self.is_compact_layout()
+        """Return True when the right-side legend should explain Phase 2 strength order."""
+        return self.game.phase == GamePhase.APPEASING
 
     def _get_suit_role_legend_panel_rect(self) -> pygame.Rect | None:
-        """Return the wood backing rect for the top-right suit role legend."""
+        """Return the wood backing rect for the right-side suit role legend."""
         labels = [self._get_suit_role_label(self.game.suit_roles.get(suit)) for suit in self.game.jack_order]
         compact = self.is_compact_layout()
         font = self._get_title_style_font(self.font_size(24, 17) if compact else self.font_size(20, 15))
         max_text_width = max((font.size(label)[0] for label in labels), default=0)
 
         if compact:
-            if self.game.phase == GamePhase.APPEASING:
-                return None
             margin = self.scale_x(18, 12)
             gap = self.scale_x(10, 6)
             padding_x = self.scale_x(18, 12)

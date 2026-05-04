@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from random import choice, shuffle
 import socket
 import ssl
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock, Thread, current_thread
 from typing import Any
@@ -31,6 +32,8 @@ from .serialization import (
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
+DEFAULT_MAX_ROOMS = 200
+DEFAULT_ROOM_TIMEOUT_SECONDS = 60 * 60 * 6
 
 
 def _get_unique_player_name(player_name: str, player_id: int, existing_names) -> str:
@@ -113,6 +116,7 @@ class Room:
     rematch_declined: bool = False
     rematch_declined_by: int | None = None
     rematch_declined_name: str = ""
+    last_touched: float = field(default_factory=time.monotonic)
 
     @property
     def ready(self) -> bool:
@@ -156,13 +160,23 @@ class Room:
 class RoomStore:
     """Thread-safe in-memory room storage for one local server process."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        max_rooms: int = DEFAULT_MAX_ROOMS,
+        room_timeout_seconds: int = DEFAULT_ROOM_TIMEOUT_SECONDS,
+    ) -> None:
         self._rooms: dict[str, Room] = {}
         self._lock = Lock()
         self._next_code = 1000
+        self.max_rooms = max(1, int(max_rooms))
+        self.room_timeout_seconds = max(60, int(room_timeout_seconds))
 
     def create_room(self, player_name: str) -> tuple[Room, int]:
         with self._lock:
+            self._cleanup_inactive_rooms_locked()
+            if len(self._rooms) >= self.max_rooms:
+                raise ValueError("Room server is full; try again later")
             while True:
                 code = str(self._next_code)
                 self._next_code += 1
@@ -187,7 +201,9 @@ class RoomStore:
 
     def join_room(self, code: str, player_name: str) -> tuple[Room, int]:
         with self._lock:
+            self._cleanup_inactive_rooms_locked()
             room = self._get_room_locked(code)
+            self._touch_room_locked(room)
             if room.stage != "lobby":
                 raise ValueError("Room has already started")
             open_seats = [player_id for player_id in (0, 1) if player_id not in room.players]
@@ -201,13 +217,16 @@ class RoomStore:
 
     def get_room(self, code: str) -> Room:
         with self._lock:
+            self._cleanup_inactive_rooms_locked()
             room = self._get_room_locked(code)
+            self._touch_room_locked(room)
             self._advance_automation_locked(room)
             return room
 
     def set_player_ready(self, code: str, player_id: int) -> Room:
         with self._lock:
             room = self._get_room_locked(code)
+            self._touch_room_locked(room)
             if player_id not in room.players:
                 raise ValueError("Player is not in this room")
             if not room.ready:
@@ -233,6 +252,7 @@ class RoomStore:
     ) -> Room:
         with self._lock:
             room = self._get_room_locked(code)
+            self._touch_room_locked(room)
             if not room.all_players_ready:
                 raise ValueError("Both players must be ready before the draft")
             if room.stage not in {"coin_flip", "draft"}:
@@ -285,6 +305,7 @@ class RoomStore:
     ) -> Room:
         with self._lock:
             room = self._get_room_locked(code)
+            self._touch_room_locked(room)
             if room.stage != "game" or room.game is None:
                 raise ValueError("Game has not started yet")
             if player_id not in room.players:
@@ -309,6 +330,7 @@ class RoomStore:
         """Record one player's Play Again vote and restart once both players agree."""
         with self._lock:
             room = self._get_room_locked(code)
+            self._touch_room_locked(room)
             self._validate_finished_room_locked(room, player_id)
             if room.rematch_declined:
                 return room
@@ -329,6 +351,7 @@ class RoomStore:
         """Mark the finished match as not rematching because one player chose menu."""
         with self._lock:
             room = self._get_room_locked(code)
+            self._touch_room_locked(room)
             self._validate_finished_room_locked(room, player_id)
             changed = not room.rematch_declined or room.rematch_declined_by != player_id
             player_name = room.players.get(player_id, f"Player {player_id + 1}")
@@ -343,6 +366,7 @@ class RoomStore:
     def leave_room(self, code: str, player_id: int) -> Room | None:
         with self._lock:
             room = self._get_room_locked(code)
+            self._touch_room_locked(room)
             if player_id in room.players:
                 departed_name = room.players.pop(player_id)
                 if self._is_finished_game_locked(room) and not room.rematch_declined:
@@ -354,6 +378,25 @@ class RoomStore:
                 del self._rooms[code]
                 return None
             return room
+
+    def room_count(self) -> int:
+        """Return active room count after dropping stale rooms."""
+        with self._lock:
+            self._cleanup_inactive_rooms_locked()
+            return len(self._rooms)
+
+    def _touch_room_locked(self, room: Room) -> None:
+        room.last_touched = time.monotonic()
+
+    def _cleanup_inactive_rooms_locked(self) -> None:
+        now = time.monotonic()
+        stale_codes = [
+            code
+            for code, room in self._rooms.items()
+            if now - room.last_touched > self.room_timeout_seconds
+        ]
+        for code in stale_codes:
+            del self._rooms[code]
 
     def _advance_automation_locked(self, room: Room) -> None:
         if room.stage != "game" or room.game is None:
@@ -544,6 +587,18 @@ def make_room_handler(store: RoomStore, scheme: str = "http", web_root: Path | s
         def do_GET(self) -> None:
             try:
                 parts = self._path_parts()
+                if parts == ["health"]:
+                    _json_response(
+                        self,
+                        200,
+                        {
+                            "ok": True,
+                            "rooms": store.room_count(),
+                            "max_rooms": store.max_rooms,
+                            "room_timeout_seconds": store.room_timeout_seconds,
+                        },
+                    )
+                    return
                 if parts and parts[0] == "rooms":
                     if len(parts) == 2:
                         room = store.get_room(parts[1])
@@ -670,12 +725,14 @@ class LocalRoomServer:
         port: int = DEFAULT_PORT,
         ssl_context: ssl.SSLContext | None = None,
         web_root: Path | str | None = None,
+        max_rooms: int = DEFAULT_MAX_ROOMS,
+        room_timeout_seconds: int = DEFAULT_ROOM_TIMEOUT_SECONDS,
     ) -> None:
         self.host = host
         self.port = port
         self.ssl_context = ssl_context
         self.web_root = Path(web_root).resolve() if web_root is not None else None
-        self.store = RoomStore()
+        self.store = RoomStore(max_rooms=max_rooms, room_timeout_seconds=room_timeout_seconds)
         self.httpd: ThreadingHTTPServer | None = None
         self.thread: Thread | None = None
 

@@ -9,7 +9,12 @@ import ssl
 import time
 from pathlib import Path
 
-from multiplayer.local_room import DEFAULT_PORT, LocalRoomServer
+from multiplayer.local_room import (
+    DEFAULT_MAX_ROOMS,
+    DEFAULT_PORT,
+    DEFAULT_ROOM_TIMEOUT_SECONDS,
+    LocalRoomServer,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,6 +33,18 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("WEB_BUILD") / "site",
         help="Static web build folder to serve from the room-server URL.",
+    )
+    parser.add_argument(
+        "--max-rooms",
+        type=int,
+        default=int(os.environ.get("PAN_TRIAL_MAX_ROOMS", DEFAULT_MAX_ROOMS)),
+        help="Maximum number of active rooms before create-room requests are rejected.",
+    )
+    parser.add_argument(
+        "--room-timeout-seconds",
+        type=int,
+        default=int(os.environ.get("PAN_TRIAL_ROOM_TIMEOUT_SECONDS", DEFAULT_ROOM_TIMEOUT_SECONDS)),
+        help="Inactive room cleanup timeout. Can also be set with PAN_TRIAL_ROOM_TIMEOUT_SECONDS.",
     )
     return parser.parse_args()
 
@@ -74,7 +91,14 @@ def main() -> None:
     if requested_web_root is not None and not requested_web_root.is_absolute():
         requested_web_root = Path(__file__).resolve().parent / requested_web_root
     web_root = requested_web_root if requested_web_root and requested_web_root.exists() else None
-    server = LocalRoomServer(host=args.host, port=args.port, ssl_context=ssl_context, web_root=web_root)
+    server = LocalRoomServer(
+        host=args.host,
+        port=args.port,
+        ssl_context=ssl_context,
+        web_root=web_root,
+        max_rooms=args.max_rooms,
+        room_timeout_seconds=args.room_timeout_seconds,
+    )
     server.start()
     scheme = "https" if ssl_context is not None else "http"
 
@@ -82,6 +106,8 @@ def main() -> None:
     print("Pan's Trial room server")
     print("=" * 54)
     print(f"Listening on : {server.host}:{server.port}")
+    print(f"Health check : {scheme}://127.0.0.1:{server.port}/health")
+    print(f"Room limits  : max {server.store.max_rooms}, timeout {server.store.room_timeout_seconds}s")
     if web_root is not None:
         print(f"Web root     : {web_root.resolve()}")
         print(f"Game URL     : {scheme}://127.0.0.1:{server.port}")

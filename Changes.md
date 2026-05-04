@@ -13,6 +13,14 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-05-04 - Codex
+Commit: `pending` - Restored the older gameplay HUD direction and added deploy hardening
+Summary:
+- Changed gameplay damage displays to health-left displays out of 25, removed compact hand-card Inspect flow, restored direct hand-card play, and kept the phase banner plus right-side omen hierarchy visible.
+- Returned the Appeasing Pan request chooser to a 2 x 2 button layout and adjusted Two Player room planks to sit below the room-code field with the requested spacing.
+- Made drafted trial-hand chips keep their selected card color and keep the two trial hands side by side on wide draft screens.
+- Added `/health`, room count limits, inactive-room cleanup, environment/CLI room-server tuning, a clearer browser loading hint, a title-screen build badge, and a OneDrive-safe deploy-site refresh.
+
 ## 2026-05-02 - Codex
 Commit: `pending` - Prepared a deployable web multiplayer prototype
 Summary:

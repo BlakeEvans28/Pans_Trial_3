@@ -436,6 +436,36 @@ def test_room_server_can_serve_web_build_and_room_api():
         server.stop()
 
 
+def test_room_server_health_endpoint_and_room_limits():
+    """Hosted deployments should expose health data and reject rooms after the configured cap."""
+    from urllib import request
+
+    server = LocalRoomServer(port=8956, max_rooms=1, room_timeout_seconds=60)
+    server.start()
+    try:
+        with request.urlopen(f"{server.base_url}/health", timeout=0.75) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        assert payload["ok"] is True
+        assert payload["rooms"] == 0
+        assert payload["max_rooms"] == 1
+
+        LocalRoomClient.create("Host", server.base_url)
+        with pytest.raises(OSError, match="server is full"):
+            LocalRoomClient.create("Second", server.base_url)
+    finally:
+        server.stop()
+
+
+def test_room_store_cleans_up_inactive_rooms():
+    """Inactive rooms should be dropped so hosted servers do not fill forever."""
+    store = RoomStore(room_timeout_seconds=60)
+    room, _ = store.create_room("Host")
+    room.last_touched -= 61
+
+    assert store.room_count() == 0
+
+
 def test_room_store_game_over_poll_is_one_shot():
     """Polling a finished room should not keep mutating its summary."""
     store = RoomStore()
@@ -571,6 +601,9 @@ def test_multiplayer_lobby_screen_lays_out_room_controls():
     assert not screen.server_entry.visible
     screen.server_entry.set_text("127.0.0.1:8765")
     assert screen.get_server_url() == MultiplayerLobbyScreen.DEFAULT_SERVER_URL
+    button_height = screen.button_rects["create"].height
+    assert screen.button_rects["create"].y - screen.room_entry.relative_rect.bottom == int(button_height * 0.5)
+    assert screen.button_rects["ready"].y - screen.button_rects["create"].bottom == int(button_height * 0.25)
 
     surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
     screen.render(surface)
@@ -1691,8 +1724,8 @@ def test_draft_grid_falls_back_when_six_columns_cannot_fit():
     assert len(columns) == 3
 
 
-def test_compact_hand_card_inspect_smoke(game_setup):
-    """Compact hand cards should open the Inspect popup before play."""
+def test_compact_hand_card_click_plays_directly(game_setup):
+    """Compact hand cards should play directly without the retired Inspect popup."""
     window = SmokeWindow(width=560, height=660)
     game = game_setup
     game.current_player = 0
@@ -1702,9 +1735,11 @@ def test_compact_hand_card_inspect_smoke(game_setup):
 
     hand_rects = screen._get_hand_card_rects()
     assert hand_rects
+    first_card = game.get_player_hand(0)[hand_rects[0][0]]
     assert screen._handle_hand_card_click(hand_rects[0][1].center)
-    assert screen.inspected_hand_card_index == 0
-    assert screen._is_hand_inspect_popup_active()
+    assert screen.inspected_hand_card_index is None
+    assert not screen._is_hand_inspect_popup_active()
+    assert (0, first_card) in game.phase_started_cards
 
     surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
     screen.render(surface)
@@ -1783,7 +1818,7 @@ def test_game_over_uses_multiplayer_display_names():
     )
 
     assert screen.winner_text == "Brandt1 Wins!"
-    assert screen.damage_text == "Final damage - Brandt: 28 | Brandt1: 10"
+    assert screen.damage_text == "Final health - Brandt: 0/25 | Brandt1: 15/25"
     assert screen._replace_player_tokens(screen.match_summary["events"][0]) == (
         "Brandt1 launched by Ballista. Brandt reached 25 or more damage."
     )

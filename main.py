@@ -517,8 +517,8 @@ async def main():
                 player_names = game_over_screen._get_player_names()
                 print(f"\nGAME OVER! {player_names[game.winner]} wins!")
                 print(
-                    f"Final damage - {player_names[0]}: {game.get_damage_total(0)}, "
-                    f"{player_names[1]}: {game.get_damage_total(1)}"
+                    f"Final health - {player_names[0]}: {max(0, 25 - game.get_damage_total(0))}/25, "
+                    f"{player_names[1]}: {max(0, 25 - game.get_damage_total(1))}/25"
                 )
                 game_over_screen.set_result(
                     game.winner,

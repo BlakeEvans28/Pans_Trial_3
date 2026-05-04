@@ -660,6 +660,7 @@ class StartScreen(Screen):
     """Start/menu screen."""
 
     ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
+    BUILD_BADGE = "Prototype build 2026-05-04"
     MENU_ACTIONS = [
         ("PLAY", "Start Game"),
         ("MULTIPLAYER", "Two Player"),
@@ -786,6 +787,7 @@ class StartScreen(Screen):
         surface.fill((20, 20, 30))
         self._render_title_art(surface)
         self._render_menu_buttons(surface)
+        self._render_build_badge(surface)
 
     def _render_title_art(self, surface: pygame.Surface) -> None:
         """Render the checked-in title artwork as a full-screen background."""
@@ -832,6 +834,15 @@ class StartScreen(Screen):
             label_rect = label_surface.get_rect(center=self._get_menu_label_center(rect))
             surface.blit(shadow, label_rect.move(self.scale(3, 2), self.scale(3, 2)))
             surface.blit(label_surface, label_rect)
+
+    def _render_build_badge(self, surface: pygame.Surface) -> None:
+        """Render a small build/date badge for tester bug reports."""
+        font = self._get_game_font(self.font_size(18, 13))
+        text = font.render(self.BUILD_BADGE, True, (238, 222, 178))
+        shadow = font.render(self.BUILD_BADGE, True, (20, 14, 8))
+        rect = text.get_rect(bottomleft=(self.scale_x(18, 10), self.window.WINDOW_HEIGHT - self.scale_y(14, 8)))
+        surface.blit(shadow, rect.move(self.scale(2, 1), self.scale(2, 1)))
+        surface.blit(text, rect)
 
     def _get_menu_label_center(self, rect: pygame.Rect) -> tuple[int, int]:
         """Return the visual center of the wood plank within the icon canvas."""
@@ -1283,7 +1294,7 @@ class MultiplayerLobbyScreen(Screen):
     def _layout_ui(self) -> None:
         margin = self.scale_x(42, 18)
         panel_width = min(self.scale_x(760, 330), self.window.WINDOW_WIDTH - 2 * margin)
-        panel_height = min(self.scale_y(620, 500), self.window.WINDOW_HEIGHT - 2 * self.scale_y(34, 20))
+        panel_height = min(self.scale_y(650, 520), self.window.WINDOW_HEIGHT - 2 * self.scale_y(34, 20))
         self.panel_rect = pygame.Rect(
             (self.window.WINDOW_WIDTH - panel_width) // 2,
             (self.window.WINDOW_HEIGHT - panel_height) // 2,
@@ -1314,12 +1325,17 @@ class MultiplayerLobbyScreen(Screen):
         button_gap = self.scale_x(18, 10)
         button_width = min(self.scale_x(250, 150), max(1, (content.width - button_gap) // 2))
         button_height = self._get_wood_icon_height_for_width(button_width)
-        button_y = self.panel_rect.bottom - self.scale_y(178, 134)
+        room_entry_bottom = self.room_entry.relative_rect.bottom
+        button_y = room_entry_bottom + int(button_height * 0.5)
+        lower_button_y = button_y + button_height + int(button_height * 0.25)
+        max_lower_y = self.panel_rect.bottom - button_height - self.scale_y(18, 12)
+        if lower_button_y > max_lower_y:
+            lower_button_y = max_lower_y
+            button_y = lower_button_y - button_height - int(button_height * 0.25)
         self.button_rects = {
             "create": pygame.Rect(content.centerx - button_width - button_gap // 2, button_y, button_width, button_height),
             "join": pygame.Rect(content.centerx + button_gap // 2, button_y, button_width, button_height),
         }
-        lower_button_y = self.panel_rect.bottom - self.scale_y(86, 66)
         self.button_rects["ready"] = pygame.Rect(
             content.centerx - button_width - button_gap // 2,
             lower_button_y,
@@ -2501,7 +2517,8 @@ class DraftScreen(Screen):
             if self.draft_tutorial_panel_rect is not None
             else counts_y + self.scale_y(32, 22)
         )
-        if self.is_compact_layout():
+        side_by_side_hands = self.window.WINDOW_WIDTH >= 900
+        if self.is_compact_layout() and not side_by_side_hands:
             panel_width = self.window.WINDOW_WIDTH - 2 * margin
             panel_height = max(self.scale_y(66, 54), (self.window.WINDOW_HEIGHT - panel_y - margin - panel_gap) // 2)
             panel_rects = [
@@ -2714,10 +2731,14 @@ class DraftScreen(Screen):
                     self.scale_y(26, 20),
                 )
                 pygame.draw.rect(surface, (38, 42, 54), chip_rect, border_radius=self.scale(7, 5))
-                pygame.draw.rect(surface, (92, 98, 112), chip_rect, 1, border_radius=self.scale(7, 5))
                 if index < len(cards):
-                    label = self.small_font.render(get_card_display(cards[index], compact=True), True, (232, 232, 232))
+                    card = cards[index]
+                    pygame.draw.rect(surface, self._muted_family_color(card.suit), chip_rect, border_radius=self.scale(7, 5))
+                    pygame.draw.rect(surface, get_family_color(card.suit), chip_rect, 2, border_radius=self.scale(7, 5))
+                    label = self.small_font.render(get_card_display(card, compact=True), True, (35, 35, 35))
                     surface.blit(label, label.get_rect(center=chip_rect.center))
+                else:
+                    pygame.draw.rect(surface, (92, 98, 112), chip_rect, 1, border_radius=self.scale(7, 5))
             return
 
         card_spacing = self.scale(10, 6)
@@ -3121,7 +3142,7 @@ class GameOverScreen(Screen):
         self.small_font = None
 
         self.winner_text = f"{self._get_player_name(0)} Wins!"
-        self.damage_text = f"Final damage - {self._get_player_name(0)}: 0 | {self._get_player_name(1)}: 0"
+        self.damage_text = f"Final health - {self._get_player_name(0)}: 25 | {self._get_player_name(1)}: 25"
         self.match_summary = {}
         self._banner_base = self._crop_overlay_asset(self._load_image(self.BANNER_PATH), pad=8)
         self._banner_cache: dict[tuple[int, int], pygame.Surface] = {}
@@ -3239,7 +3260,9 @@ class GameOverScreen(Screen):
         """Set winner screen text."""
         player_names = self._get_player_names()
         self.winner_text = f"{player_names[winner]} Wins!"
-        self.damage_text = f"Final damage - {player_names[0]}: {p1_damage} | {player_names[1]}: {p2_damage}"
+        p1_health = max(0, 25 - p1_damage)
+        p2_health = max(0, 25 - p2_damage)
+        self.damage_text = f"Final health - {player_names[0]}: {p1_health}/25 | {player_names[1]}: {p2_health}/25"
         self.match_summary = match_summary or {}
         self.match_summary_scroll_offset = 0
         self.match_summary_scroll_max = 0
@@ -3508,8 +3531,8 @@ class GameOverScreen(Screen):
         p1_cards = ", ".join(get_card_display(card, compact=True) for card in damage_cards.get(0, [])[-6:]) or "None"
         p2_cards = ", ".join(get_card_display(card, compact=True) for card in damage_cards.get(1, [])[-6:]) or "None"
         lines = [
-            f"{self._get_player_name(0)} damage: {p1_cards}",
-            f"{self._get_player_name(1)} damage: {p2_cards}",
+            f"{self._get_player_name(0)} lost-health cards: {p1_cards}",
+            f"{self._get_player_name(1)} lost-health cards: {p2_cards}",
         ]
         lines.extend(self._replace_player_tokens(line) for line in self.match_summary.get("appeasing", [])[-2:])
         lines.extend(self._replace_player_tokens(line) for line in self.match_summary.get("requests", [])[-2:])

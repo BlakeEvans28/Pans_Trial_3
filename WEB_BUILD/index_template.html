@@ -457,6 +457,14 @@ function show_infobox() {
             width: 300px;
         }
 
+        #loading-help {
+            max-width: min(680px, calc(100vw - 32px));
+            margin: 14px auto 0;
+            color: #f0d98a;
+            line-height: 1.45;
+            font-size: 15px;
+        }
+
         #infobox {
             position: fixed;
             background: #111111;
@@ -560,9 +568,12 @@ function show_infobox() {
 
 <body>
     <div id="transfer" align=center>
-        <div class="emscripten" id="status">Downloading in about 20 seconds...</div>
+        <div class="emscripten" id="status">Loading Pan's Trial...</div>
         <div class="emscripten">
             <progress value="0" max="100" id="progress"></progress>
+        </div>
+        <div id="loading-help">
+            If this takes longer than a minute, reload the page. Desktop or laptop landscape play is recommended for the prototype HUD.
         </div>
     </div>
 
