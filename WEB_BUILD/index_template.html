@@ -352,7 +352,58 @@ asyncio.run(custom_site())
               return this.lastText;
           }
       };
+      window.panTrialActiveRoom = null;
+      window.panTrialSummarizeRoomError = function(message) {
+          var text = String(message || "").replace(/\s+/g, " ").trim();
+          var lowered = text.slice(0, 500).toLowerCase();
+          if (lowered.indexOf("<!doctype") !== -1 || lowered.indexOf("<html") !== -1) {
+              return "This URL is serving a web page, not the Pan's Trial room API. Start room_server.py and use its Game URL, or add the roomServer URL for the running room server.";
+          }
+          return text || "Room server request failed.";
+      };
+      window.panTrialLeaveActiveRoom = function() {
+          var room = window.panTrialActiveRoom;
+          if (!room || !room.baseUrl || !room.roomCode) {
+              return;
+          }
+          window.panTrialActiveRoom = null;
+          var url = room.baseUrl.replace(/\/+$/, "") + "/rooms/" + encodeURIComponent(room.roomCode) + "/leave";
+          var payload = JSON.stringify({player_id: room.playerId});
+          if (navigator.sendBeacon) {
+              try {
+                  var blob = new Blob([payload], {type: "application/json"});
+                  if (navigator.sendBeacon(url, blob)) {
+                      return;
+                  }
+              } catch (_) {}
+          }
+          try {
+              var xhr = new XMLHttpRequest();
+              xhr.open("POST", url, false);
+              xhr.setRequestHeader("Content-Type", "application/json");
+              xhr.send(payload);
+          } catch (_) {}
+      };
+      window.addEventListener("pagehide", window.panTrialLeaveActiveRoom);
+      window.addEventListener("beforeunload", window.panTrialLeaveActiveRoom);
       window.panTrialRoomBridge = {
+          rememberRoom: function(baseUrl, roomCode, playerId) {
+              window.panTrialActiveRoom = {
+                  baseUrl: String(baseUrl || "").replace(/\/+$/, ""),
+                  roomCode: String(roomCode || ""),
+                  playerId: Number(playerId)
+              };
+          },
+          clearRoom: function(roomCode, playerId) {
+              var room = window.panTrialActiveRoom;
+              if (
+                  room
+                  && String(room.roomCode) === String(roomCode || "")
+                  && Number(room.playerId) === Number(playerId)
+              ) {
+                  window.panTrialActiveRoom = null;
+              }
+          },
           request: function(method, url, body) {
               var xhr = new XMLHttpRequest();
               xhr.open(method, url, false);
@@ -369,7 +420,9 @@ asyncio.run(custom_site())
                       if (parsed && parsed.error) {
                           message = parsed.error;
                       }
-                  } catch (_) {}
+                  } catch (_) {
+                      message = window.panTrialSummarizeRoomError(message);
+                  }
                   throw new Error(message);
               }
               return xhr.responseText || "{}";

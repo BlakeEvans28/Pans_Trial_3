@@ -16,7 +16,7 @@ from engine import (
     MoveAction, PickupCurrentCardAction, PlayCardAction, Position, SuitRole, ChooseCombatCardAction,
     ChooseRequestAction, RequestType, ResolveBallistaShotAction, SelectDamageCardAction,
     SelectRestructureSuitAction, SelectPlaneShiftDirectionAction, ResolvePlaneShiftAction,
-    CancelRequestSelectionAction, PlaceCardsAction
+    CancelRequestSelectionAction, PlaceCardsAction, SmartPanAI, StrategicAI
 )
 from deck_utils import setup_game_deck, create_6x6_labyrinth, draft_hands, get_jack_suit_order
 from multiplayer import LocalRoomClient, LocalRoomServer
@@ -28,7 +28,7 @@ from ui.input_handler import InputHandler
 from ui.board_renderer import BoardRenderer
 from ui.game_screen import GameScreen
 from ui.player_names import normalize_player_names, replace_player_tokens
-from ui.screen_manager import CoinFlipScreen, DraftScreen, GameOverScreen, JackRevealScreen, MultiplayerLobbyScreen, SettingsScreen
+from ui.screen_manager import CoinFlipScreen, DraftScreen, GameOverScreen, JackRevealScreen, MultiplayerLobbyScreen, SettingsScreen, StartScreen
 from ui.window import GameWindow
 
 
@@ -585,6 +585,63 @@ def test_browser_room_client_uses_javascript_bridge(monkeypatch, game_setup):
     assert bridge.calls[0][1] == "http://192.168.1.10:8765/rooms"
 
 
+def test_browser_room_client_tracks_active_room_for_tab_close(monkeypatch):
+    """Browser rooms should register and clear a best-effort leave target."""
+    import platform
+
+    class Bridge:
+        def __init__(self) -> None:
+            self.remembered = []
+            self.cleared = []
+            self.calls = []
+
+        def rememberRoom(self, base_url: str, room_code: str, player_id: int) -> None:
+            self.remembered.append((base_url, room_code, player_id))
+
+        def clearRoom(self, room_code: str, player_id: int) -> None:
+            self.cleared.append((room_code, player_id))
+
+        def request(self, method: str, url: str, body: str) -> str:
+            self.calls.append((method, url, body))
+            if url.endswith("/rooms"):
+                return json.dumps(
+                    {
+                        "room_code": "1000",
+                        "player_id": 0,
+                        "players": {"0": "Host"},
+                        "ready": False,
+                        "revision": 0,
+                    }
+                )
+            if url.endswith("/rooms/1000/leave"):
+                return json.dumps({"left": True})
+            raise AssertionError(url)
+
+    bridge = Bridge()
+    monkeypatch.setattr(platform, "window", type("Window", (), {"panTrialRoomBridge": bridge})(), raising=False)
+
+    client = BrowserRoomClient.create("Host", "http://rooms.example/")
+    assert bridge.remembered == [("http://rooms.example", "1000", 0)]
+
+    client.leave()
+    assert bridge.cleared == [("1000", 0)]
+
+
+def test_browser_room_client_summarizes_html_room_server_errors(monkeypatch):
+    """A static HTML response should not be printed raw in the lobby status text."""
+    import platform
+
+    class Bridge:
+        @staticmethod
+        def request(method: str, url: str, body: str) -> str:
+            raise RuntimeError("<!DOCTYPE html><html><head></head><body>not the API</body></html>")
+
+    monkeypatch.setattr(platform, "window", type("Window", (), {"panTrialRoomBridge": Bridge()})(), raising=False)
+
+    with pytest.raises(OSError, match="serving a web page"):
+        BrowserRoomClient.create("Host", "https://static.example")
+
+
 def test_browser_room_import_does_not_need_desktop_http_server():
     """The web room client should import in runtimes that do not ship http.server."""
     import subprocess
@@ -639,7 +696,7 @@ def test_multiplayer_lobby_screen_lays_out_room_controls():
     assert screen.get_server_url() == MultiplayerLobbyScreen.DEFAULT_SERVER_URL
     screen.set_status("Room created.", room_code="1001")
 
-    for width, height in [(390, 620), (1200, 900), (1570, 820), (2048, 1280)]:
+    for width, height in [(390, 620), (720, 500), (1200, 900), (1575, 759), (2048, 760), (2048, 1280)]:
         window.WINDOW_WIDTH = width
         window.WINDOW_HEIGHT = height
         screen.on_resize()
@@ -653,6 +710,7 @@ def test_multiplayer_lobby_screen_lays_out_room_controls():
         assert create_rect.y == join_rect.y
         assert ready_rect.y == back_rect.y
         assert ready_rect.y > create_rect.bottom
+        assert not screen.name_entry.relative_rect.colliderect(screen.room_entry.relative_rect)
         assert not notice_rect.colliderect(screen.room_entry.relative_rect)
         assert notice_rect.bottom <= create_rect.y
 
@@ -663,6 +721,7 @@ def test_multiplayer_lobby_screen_lays_out_room_controls():
         ]
         for button_rect in [create_rect, join_rect, ready_rect, back_rect]:
             assert screen.panel_rect.contains(button_rect)
+            assert screen.content_rect.contains(button_rect)
             assert all(not button_rect.colliderect(rect) for rect in protected_rects)
 
         surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
@@ -711,6 +770,99 @@ def test_player_name_helpers_replace_tokens_and_suffix_duplicates():
 
     assert names == {0: "Alex", 1: "Alex1"}
     assert replace_player_tokens("P2 hit Player 1.", names) == "Alex1 hit Alex."
+
+
+def test_start_screen_renames_play_to_single_player_ai():
+    """The home-screen play button should make the AI opponent explicit."""
+    window = SmokeWindow(width=1200, height=900)
+    screen = StartScreen(window)
+
+    assert screen.MENU_ACTIONS[0] == ("PLAY", "Single Player Against AI")
+    surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
+    screen._render_menu_label(surface, "Single Player Against AI", screen.menu_buttons[0][2], False)
+
+
+def test_stone_panel_text_renders_white_with_black_outline():
+    """Stone-panel copy should use the readable white lettering treatment."""
+    window = SmokeWindow(width=900, height=700)
+    screen = SettingsScreen(window)
+    calls = []
+
+    def fake_render_outlined_text(
+        surface,
+        font,
+        text,
+        face_color,
+        outline_color,
+        position,
+        anchor="topleft",
+        outline_width=None,
+    ):
+        calls.append((face_color, outline_color, outline_width))
+        return pygame.Rect(0, 0, 1, 1)
+
+    screen._render_outlined_text = fake_render_outlined_text
+    screen._render_carved_text(
+        pygame.Surface((120, 60)),
+        pygame.font.Font(None, 24),
+        "Settings",
+        (72, 64, 52),
+        (10, 10),
+    )
+
+    assert calls == [((248, 246, 242), (10, 10, 12), 1)]
+
+
+def test_strategic_ai_draft_prefers_strong_legal_cards():
+    """The single-player AI should value Heroes first but obey the two-Hero draft cap."""
+    ai = StrategicAI(player_id=1)
+    cards = [
+        Card(CardRank.KING, CardSuit.HEARTS),
+        Card(CardRank.QUEEN, CardSuit.SPADES),
+        Card(CardRank.TEN, CardSuit.CLUBS),
+    ]
+
+    assert StrategicAI is SmartPanAI
+    assert ai.choose_draft_index(cards, [], [], kings_drafted=0) == 0
+    assert ai.choose_draft_index(cards, [], [], kings_drafted=2) == 1
+
+
+def test_draft_screen_can_let_ai_pick_a_card():
+    """The draft screen exposes one clean hook for the local AI pick."""
+    window = SmokeWindow(width=1200, height=900)
+    window.single_player_ai = StrategicAI(player_id=1, draft_delay=0.0)
+    window.local_player_names = {0: "You", 1: "Pan AI"}
+    screen = DraftScreen(window)
+    screen.start_draft(
+        [
+            Card(CardRank.KING, CardSuit.HEARTS),
+            Card(CardRank.QUEEN, CardSuit.SPADES),
+            Card(CardRank.TEN, CardSuit.CLUBS),
+        ],
+        starting_player=1,
+    )
+
+    assert screen.pick_ai_card() is True
+    assert screen.player_hands[1] == [Card(CardRank.KING, CardSuit.HEARTS)]
+    assert screen.available_cards[0] is None
+
+
+def test_strategic_ai_uses_highest_combat_weapon(game_setup):
+    """During combat, the AI should plan around the strongest weapon card available."""
+    game = game_setup
+    game.phase = GamePhase.TRAVERSING
+    game.suit_roles[CardSuit.HEARTS] = SuitRole.WEAPONS
+    low_weapon = Card(CardRank.THREE, CardSuit.HEARTS)
+    high_weapon = Card(CardRank.KING, CardSuit.HEARTS)
+    game.add_card_to_hand(1, low_weapon)
+    game.add_card_to_hand(1, high_weapon)
+    game.pending_combat_players = [1]
+    game.current_player = 1
+
+    action = StrategicAI(player_id=1).choose_action(game)
+
+    assert isinstance(action, ChooseCombatCardAction)
+    assert action.card == high_weapon
 
 
 def test_multiplayer_text_entry_supports_undo_shortcut():
@@ -829,6 +981,80 @@ def test_multiplayer_game_screen_blocks_remote_turn_input(game_setup):
     screen.render(surface)
     assert screen.hand_card_rects == []
     assert screen._get_player_names() == {0: "Host", 1: "Guest"}
+
+
+def test_game_screen_menu_button_opens_settings_and_main_menu(game_setup):
+    """The in-game Menu button should expose Settings and a match exit."""
+    window = SmokeWindow(width=1200, height=900)
+    game = game_setup
+    screen = GameScreen(window, game)
+
+    menu_event = pygame.event.Event(
+        pygame.MOUSEBUTTONDOWN,
+        {"pos": screen._get_game_menu_button_rect().center},
+    )
+    assert screen.handle_events(menu_event) is True
+    assert screen.pause_menu_open is True
+
+    settings_rect = screen._get_pause_menu_button_rects(screen._get_pause_menu_panel_rect())["settings"]
+    settings_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"pos": settings_rect.center})
+    assert screen.handle_events(settings_event) == "SETTINGS"
+    assert screen.pause_menu_open is False
+
+    assert screen.handle_events(menu_event) is True
+    home_rect = screen._get_pause_menu_button_rects(screen._get_pause_menu_panel_rect())["home"]
+    home_event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"pos": home_rect.center})
+    assert screen.handle_events(home_event) == "LEAVE_GAME"
+
+
+def test_multiplayer_game_screen_opponent_left_allows_main_menu(game_setup):
+    """If the other room player leaves, the remaining player gets a Return Home prompt."""
+    window = SmokeWindow(width=1200, height=900)
+    game = game_setup
+
+    class Session:
+        player_id = 0
+        room_code = "1000"
+        players = {0: "Host"}
+        ready = True
+        last_error = None
+        opponent_departed = True
+        opponent_departed_name = "Guest"
+
+        def update(self, time_delta: float) -> bool:
+            return False
+
+    session = Session()
+    session.game = game
+    window.multiplayer_session = session
+    screen = GameScreen(window, game)
+
+    assert screen._is_match_exit_prompt_active() is True
+    assert "Guest left or disconnected" in screen._get_match_exit_prompt_text()
+
+    panel_rect = screen._get_disconnect_prompt_panel_rect()
+    button_rect = screen._get_disconnect_home_button_rect(panel_rect)
+    event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"pos": button_rect.center})
+
+    assert screen.handle_events(event) == "LEAVE_GAME"
+
+
+def test_single_player_ai_locks_input_and_advances_turn(game_setup):
+    """Human input should pause while the local AI is choosing an action."""
+    window = SmokeWindow(width=1200, height=900)
+    window.single_player_ai = StrategicAI(player_id=1, action_delay=0.0, search_depth=1)
+    window.local_player_names = {0: "You", 1: "Pan AI"}
+    game = game_setup
+    game.phase = GamePhase.TRAVERSING
+    game.current_player = 1
+    screen = GameScreen(window, game)
+
+    key_event = pygame.event.Event(pygame.KEYDOWN, {"key": pygame.K_UP})
+    assert screen.handle_events(key_event) is True
+
+    screen.update(0.2)
+
+    assert screen.ai_action_elapsed == 0.0
 
 
 def test_card_combat_value():

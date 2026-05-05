@@ -47,6 +47,7 @@ class BrowserRoomClient:
         response = _bridge_request("POST", f"{base_url.rstrip('/')}/rooms", {"name": player_name})
         client = cls(base_url, response["room_code"], int(response["player_id"]), player_name)
         client._apply_snapshot(response)
+        client._remember_active_room()
         return client
 
     @classmethod
@@ -54,6 +55,7 @@ class BrowserRoomClient:
         response = _bridge_request("POST", f"{base_url.rstrip('/')}/rooms/{room_code}/join", {"name": player_name})
         client = cls(base_url, response["room_code"], int(response["player_id"]), player_name)
         client._apply_snapshot(response)
+        client._remember_active_room()
         return client
 
     def update(self, time_delta: float = 0.0) -> bool:
@@ -148,6 +150,27 @@ class BrowserRoomClient:
             )
         except OSError:
             pass
+        self._clear_active_room()
+
+    def _remember_active_room(self) -> None:
+        """Tell the page wrapper which room to leave if the tab closes."""
+        try:
+            bridge = _get_bridge()
+            remember = getattr(bridge, "rememberRoom", None)
+            if remember is not None:
+                remember(self.base_url, self.room_code, self.player_id)
+        except Exception:
+            pass
+
+    def _clear_active_room(self) -> None:
+        """Clear the page wrapper's best-effort tab-close leave target."""
+        try:
+            bridge = _get_bridge()
+            clear = getattr(bridge, "clearRoom", None)
+            if clear is not None:
+                clear(self.room_code, self.player_id)
+        except Exception:
+            pass
 
     def _apply_snapshot(self, snapshot: dict[str, Any]) -> bool:
         previous_revision = self.revision
@@ -207,16 +230,40 @@ def _bridge_request(method: str, url: str, payload: dict[str, Any] | None = None
     try:
         raw_response = bridge.request(method, url, json.dumps(payload or {}))
     except Exception as exc:
-        raise OSError(str(exc)) from exc
+        raise OSError(_summarize_room_server_error(str(exc))) from exc
 
     try:
         response = json.loads(str(raw_response or "{}"))
     except json.JSONDecodeError as exc:
+        raw_text = str(raw_response or "")
+        if _looks_like_html(raw_text):
+            raise OSError(_summarize_room_server_error(raw_text)) from exc
         raise OSError(f"Room server returned invalid JSON: {exc}") from exc
 
     if isinstance(response, dict) and response.get("error"):
         raise OSError(str(response["error"]))
     return response
+
+
+def _looks_like_html(message: str) -> bool:
+    lowered = str(message or "").lstrip().lower()
+    return (
+        lowered.startswith("<!doctype")
+        or lowered.startswith("<html")
+        or "<!doctype" in lowered[:300]
+        or "<html" in lowered[:300]
+    )
+
+
+def _summarize_room_server_error(message: str) -> str:
+    """Keep browser room failures readable when a static page answers API requests."""
+    text = " ".join(str(message or "").split())
+    if _looks_like_html(text):
+        return (
+            "This URL is serving a web page, not the Pan's Trial room API. "
+            "Start room_server.py and use its Game URL, or add the roomServer URL for the running room server."
+        )
+    return text or "Room server request failed."
 
 
 def _get_bridge():

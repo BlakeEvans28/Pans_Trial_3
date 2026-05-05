@@ -1028,6 +1028,47 @@ class GameScreen(Screen):
             align="center",
         )
 
+    def _render_single_player_ai_overlay(self, surface: pygame.Surface) -> None:
+        """Show a compact thinking notice while the local AI owns the turn."""
+        if (
+            not self._is_single_player_ai_turn()
+            or self.pause_menu_open
+            or self._is_match_exit_prompt_active()
+            or self._has_center_popup()
+        ):
+            return
+
+        message = f"{self._get_player_name(self.game.current_player)} is planning..."
+        panel_width = min(self.scale_x(380, 250), self.window.WINDOW_WIDTH - 2 * self.scale_x(24, 14))
+        panel_height = self.scale_y(62, 48)
+        phase_banner_rect = self._get_phase_banner_box()
+        top_y = self.scale_y(84, 58)
+        if phase_banner_rect is not None:
+            top_y = max(top_y, phase_banner_rect.bottom + self.scale_y(8, 5))
+        panel_rect = pygame.Rect(
+            (self.window.WINDOW_WIDTH - panel_width) // 2,
+            top_y,
+            panel_width,
+            panel_height,
+        )
+        self._render_stone_panel(surface, panel_rect, dim_alpha=22, shadow_alpha=52)
+        text_rect = self._get_stone_content_rect(panel_rect, extra_top=self.scale_y(2, 1))
+        font = self._get_fitted_game_font(
+            message,
+            self.font_size(24, 17),
+            text_rect,
+            1,
+            self.font_size(15, 12),
+        )
+        self._render_carved_text(
+            surface,
+            font,
+            message,
+            (74, 66, 54),
+            text_rect.center,
+            anchor="center",
+        )
+
     def _handle_tutorial_toggle_click(self, pos: tuple[int, int]) -> bool:
         """Turn off tutorial tips from the currently visible tutorial panel."""
         if not self.window.tutorial_enabled or self.tutorial_toggle_rect is None:
@@ -1325,6 +1366,7 @@ class GameScreen(Screen):
         self._render_appeasing_result_banner(surface)
         self._render_notice_banner(surface)
         self._render_tutorial_overlay(surface)
+        self._render_single_player_ai_overlay(surface)
         self._render_multiplayer_overlay(surface)
         self._render_frame_rate_overlay(surface)
         self._render_game_menu_overlay(surface)
@@ -1712,7 +1754,7 @@ class GameScreen(Screen):
         )
 
     def _get_pause_menu_button_rects(self, panel_rect: pygame.Rect) -> dict[str, pygame.Rect]:
-        """Return centered Resume, Settings, and Return Home button rects inside the stone panel."""
+        """Return centered Resume, Settings, and Main Menu button rects inside the stone panel."""
         content_rect = self._get_stone_content_rect(panel_rect, extra_x=self.scale_x(8, 4))
         button_width = min(self.scale_x(288, 188), content_rect.width)
         button_width = min(content_rect.width, max(self.scale_x(164, 124), button_width))
@@ -1878,7 +1920,7 @@ class GameScreen(Screen):
             self._render_game_wood_button(
                 surface,
                 button_rects["home"],
-                "Return Home",
+                "Main Menu",
                 preferred_font_size=self.font_size(24, 16),
             )
             return

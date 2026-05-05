@@ -6,11 +6,11 @@ Pan's Trial is a two-player digital strategy game built for ECE 348. Two challen
 
 - The full game loop is implemented: draft, coin flip, Omen reveal, Traversing the Labyrinth, Appeasing Pan, Pan requests, post-Appeasing hole placement, game over, match summary, and Play Again.
 - The game can be played from the Windows executable, from source with `main.py`, or in a browser through the `pygbag` web build.
-- The main menu includes `Start Game`, `Two Player`, `How To Play`, `Settings`, and `Quit`.
+- The main menu includes `Single Player Against AI`, `Two Player`, `How To Play`, `Settings`, and `Quit`.
 - `Two Player` uses room codes, a Ready gate, synchronized coin flip/draft/Omen reveal/gameplay, reconnect-friendly snapshots, and shared rematch consent.
 - The current gameplay HUD shows health remaining out of 25 on the left, the phase banner at the top, and the Omen role legend on the right.
 - During Appeasing Pan, the Omen legend lists roles from strongest to weakest and shows an explicit `Strongest` to `Weakest` arrow.
-- The latest rule/UI regression suite is `tests/test_rules.py`, currently 100 tests.
+- The latest rule/UI regression suite is `tests/test_rules.py`, currently 111 tests.
 
 ## Repository Layout
 

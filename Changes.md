@@ -14,6 +14,17 @@ Use this file to track the most recent committed changes in reverse chronologica
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
 ## 2026-05-05 - Codex
+Commit: `pending` - Restored AI/menu updates and tightened browser room layouts
+Summary:
+- Renamed the home-screen play action to `Single Player Against AI`, exported the smart local AI as `StrategicAI`, and kept the AI draft/gameplay flow visible with planning copy.
+- Added the gameplay Menu flow for Resume, Settings, and Main Menu, plus a multiplayer opponent-left/connection-lost prompt with a Return Home action.
+- Switched stone-panel text to high-contrast white lettering with a thin dark outline across the shared stone renderer.
+- Hardened browser room hosting by summarizing accidental HTML/static-site API responses and registering a best-effort room leave when the browser tab closes.
+- Reworked the Two Player lobby layout so fields, status text, room-code notices, and wood buttons stay separated on compact, wide-short, and large screens.
+- Added regression coverage for the AI mode, menu/disconnect flows, browser room bridge behavior, outlined stone text, and responsive multiplayer lobby sizes; verified the suite at `111` tests.
+- Rebuilt the browser package after the source changes so `WEB_BUILD/site` points at the fresh `pans_trial_web_20260505_193140` bundle.
+
+## 2026-05-05 - Codex
 Commit: `pending` - Updated Appeasing legend, web package, and project docs
 Summary:
 - Added a Phase 2-only `Strongest` to `Weakest` guide with a downward arrow on the right-side Appeasing Pan Omen legend.

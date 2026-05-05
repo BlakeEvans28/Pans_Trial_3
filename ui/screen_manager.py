@@ -657,7 +657,7 @@ class StartScreen(Screen):
     ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
     BUILD_BADGE = "Prototype build 2026-05-04"
     MENU_ACTIONS = [
-        ("PLAY", "Single Player"),
+        ("PLAY", "Single Player Against AI"),
         ("MULTIPLAYER", "Two Player"),
         ("HOW_TO_PLAY", "How To Play"),
         ("SETTINGS", "Settings"),
@@ -824,9 +824,37 @@ class StartScreen(Screen):
             else:
                 pygame.draw.rect(surface, (96, 66, 38), rect, border_radius=self.scale(10, 6))
 
-            label_surface = self.menu_font.render(label, True, (255, 246, 214) if hovered else (246, 236, 204))
-            shadow = self.menu_font.render(label, True, (24, 14, 8))
-            label_rect = label_surface.get_rect(center=self._get_menu_label_center(rect))
+            self._render_menu_label(surface, label, rect, hovered)
+
+    def _render_menu_label(self, surface: pygame.Surface, label: str, rect: pygame.Rect, hovered: bool) -> None:
+        """Render a title-menu label, wrapping the AI label when needed."""
+        lines = label.split(" Against ") if " Against " in label else [label]
+        if len(lines) == 2:
+            lines[1] = f"Against {lines[1]}"
+        max_width = max(1, int(rect.width * 0.78))
+        max_height = max(1, int(rect.height * (0.33 if len(lines) > 1 else 0.24)))
+        base_size = self.font_size(42, 30)
+        min_size = self.font_size(17, 13)
+        size = base_size
+        font = self._make_title_style_font(size)
+        while size > min_size:
+            line_height = max(1, int(font.get_linesize() * 0.82))
+            total_height = line_height * len(lines)
+            if max(font.size(line)[0] for line in lines) <= max_width and total_height <= max_height:
+                break
+            size -= 2
+            font = self._make_title_style_font(size)
+
+        color = (255, 246, 214) if hovered else (246, 236, 204)
+        shadow_color = (24, 14, 8)
+        center_x, center_y = self._get_menu_label_center(rect)
+        line_height = max(1, int(font.get_linesize() * 0.82))
+        first_y = center_y - ((len(lines) - 1) * line_height) // 2
+        for index, line in enumerate(lines):
+            line_center = (center_x, first_y + index * line_height)
+            label_surface = font.render(line, True, color)
+            shadow = font.render(line, True, shadow_color)
+            label_rect = label_surface.get_rect(center=line_center)
             surface.blit(shadow, label_rect.move(self.scale(3, 2), self.scale(3, 2)))
             surface.blit(label_surface, label_rect)
 
@@ -1314,6 +1342,7 @@ class MultiplayerLobbyScreen(Screen):
         label_height = self.small_font.get_height()
         label_gap = self.scale_y(6, 4)
         inter_field_gap = self.scale_y(18, 12)
+        field_column_gap = self.scale_x(34, 18)
         notice_gap = self.scale_y(14, 10)
         button_gap_x = self.scale_x(18, 10)
         button_gap_y = self.scale_y(18, 10)
@@ -1321,14 +1350,20 @@ class MultiplayerLobbyScreen(Screen):
         status_line_height = max(self.scale_y(20, 15), self.small_font.get_linesize())
         status_height = status_line_height * 2
         notice_height = status_line_height * 2
+        min_side_field_width = self.scale(240, 170)
+        fields_share_row = (
+            content.width >= 2 * min_side_field_width + field_column_gap
+            and content.height <= self.scale(500, 390)
+        )
+        field_rows = 1 if fields_share_row else 2
         top_fixed_height = (
             title_top_padding
             + title_height
             + status_gap
             + status_height
             + section_gap
-            + 2 * (label_height + label_gap)
-            + inter_field_gap
+            + field_rows * (label_height + label_gap)
+            + (0 if fields_share_row else inter_field_gap)
             + notice_gap * 2
             + notice_height
             + bottom_padding
@@ -1336,7 +1371,7 @@ class MultiplayerLobbyScreen(Screen):
 
         min_field_height = self.scale_y(34, 28)
         preferred_field_height = self.scale_y(42, 34)
-        min_button_width = self.scale_x(132, 104)
+        min_button_width = self.scale(132, 92)
         min_button_height = self._get_wood_icon_height_for_width(min_button_width)
         can_fit_two_columns = content.width >= 2 * min_button_width + button_gap_x
         button_columns = 2 if can_fit_two_columns else 1
@@ -1348,15 +1383,9 @@ class MultiplayerLobbyScreen(Screen):
         available_for_fields_and_buttons = max(1, content.height - top_fixed_height)
         max_field_height = max(
             min_field_height,
-            (available_for_fields_and_buttons - min_button_area_height) // 2,
+            (available_for_fields_and_buttons - min_button_area_height) // field_rows,
         )
         field_height = max(min_field_height, min(preferred_field_height, max_field_height))
-
-        field_side_padding = self.scale_x(16, 10)
-        field_width = min(content.width, self.scale_x(620, 300)) - 2 * field_side_padding
-        field_width = max(self.scale_x(220, 180), field_width)
-        field_width = min(field_width, content.width)
-        field_x = content.centerx - field_width // 2
 
         name_entry_y = (
             content.y
@@ -1368,7 +1397,24 @@ class MultiplayerLobbyScreen(Screen):
             + label_height
             + label_gap
         )
-        room_entry_y = name_entry_y + field_height + inter_field_gap + label_height + label_gap
+        if fields_share_row:
+            total_field_width = min(content.width, self.scale_x(760, 560))
+            field_width = max(1, (total_field_width - field_column_gap) // 2)
+            field_width = min(field_width, content.width // 2)
+            left_x = content.centerx - (2 * field_width + field_column_gap) // 2
+            right_x = left_x + field_width + field_column_gap
+            room_entry_y = name_entry_y
+            name_rect = pygame.Rect(left_x, name_entry_y, field_width, field_height)
+            room_rect = pygame.Rect(right_x, room_entry_y, field_width, field_height)
+        else:
+            field_side_padding = self.scale_x(16, 10)
+            field_width = min(content.width, self.scale_x(620, 300)) - 2 * field_side_padding
+            field_width = max(self.scale(220, 180), field_width)
+            field_width = min(field_width, content.width)
+            field_x = content.centerx - field_width // 2
+            room_entry_y = name_entry_y + field_height + inter_field_gap + label_height + label_gap
+            name_rect = pygame.Rect(field_x, name_entry_y, field_width, field_height)
+            room_rect = pygame.Rect(field_x, room_entry_y, field_width, field_height)
 
         self.status_rect = pygame.Rect(
             content.x,
@@ -1376,8 +1422,8 @@ class MultiplayerLobbyScreen(Screen):
             content.width,
             status_height,
         )
-        self._set_entry_rect(self.name_entry, pygame.Rect(field_x, name_entry_y, field_width, field_height))
-        self._set_entry_rect(self.room_entry, pygame.Rect(field_x, room_entry_y, field_width, field_height))
+        self._set_entry_rect(self.name_entry, name_rect)
+        self._set_entry_rect(self.room_entry, room_rect)
         self._set_entry_rect(
             self.server_entry,
             pygame.Rect(-self.scale_x(240, 120), -self.scale_y(80, 40), 1, 1),
@@ -1395,16 +1441,16 @@ class MultiplayerLobbyScreen(Screen):
             1,
             (content.width - (button_columns - 1) * button_gap_x) // button_columns,
         )
-        preferred_button_width = min(self.scale_x(250, 150), button_width_cap)
+        preferred_button_width = min(self.scale(250, 150), button_width_cap)
         button_height_cap = max(
             1,
             (button_area_height - (button_rows - 1) * button_gap_y) // button_rows,
         )
         width_from_height = self._get_wood_icon_width_for_height(button_height_cap)
-        button_width = max(
-            self.scale_x(96, 78),
-            min(button_width_cap, preferred_button_width, width_from_height),
-        )
+        min_readable_button_width = min(self.scale(96, 72), button_width_cap)
+        button_width = max(min_readable_button_width, min(button_width_cap, preferred_button_width, width_from_height))
+        if self._get_wood_icon_height_for_width(button_width) > button_height_cap:
+            button_width = max(1, min(button_width, button_width_cap, width_from_height))
         button_height = self._get_wood_icon_height_for_width(button_width)
         button_grid_height = (
             button_rows * button_height
@@ -2441,16 +2487,31 @@ class DraftScreen(Screen):
         ):
             self.ai_pick_elapsed += time_delta
             if self.ai_pick_elapsed >= getattr(ai_controller, "draft_delay", 0.55):
-                draft_index = ai_controller.choose_draft_index(
-                    self.available_cards,
-                    self.player_hands[self.current_player],
-                    self.player_hands[1 - self.current_player],
-                    self.kings_drafted,
-                )
-                if draft_index is not None:
-                    self._pick_card(draft_index)
+                self.pick_ai_card()
                 self.ai_pick_elapsed = 0.0
         self._update_buttons()
+
+    def pick_ai_card(self) -> bool:
+        """Let the single-player AI choose and take one draft card."""
+        ai_controller = getattr(self.window, "single_player_ai", None)
+        if (
+            ai_controller is None
+            or self.finished
+            or getattr(self.window, "multiplayer_session", None) is not None
+            or self.current_player != ai_controller.player_id
+        ):
+            return False
+
+        draft_index = ai_controller.choose_draft_index(
+            self.available_cards,
+            self.player_hands[self.current_player],
+            self.player_hands[1 - self.current_player],
+            self.kings_drafted,
+        )
+        if draft_index is None:
+            return False
+        self._pick_card(draft_index)
+        return True
 
     def render(self, surface: pygame.Surface) -> None:
         """Render draft instructions and current picks."""
@@ -2514,9 +2575,12 @@ class DraftScreen(Screen):
         )
 
         session = getattr(self.window, "multiplayer_session", None)
+        ai_controller = getattr(self.window, "single_player_ai", None)
         current_name = self._get_player_name(self.current_player)
         if session is not None and self.current_player != getattr(session, "player_id", self.current_player):
             prompt_text = f"Waiting for {current_name} to pick"
+        elif ai_controller is not None and self.current_player == ai_controller.player_id:
+            prompt_text = f"{current_name} studies the draft"
         else:
             prompt_text = f"{current_name} picks a card"
         prompt_area = pygame.Rect(

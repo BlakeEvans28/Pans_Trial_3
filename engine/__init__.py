@@ -15,6 +15,7 @@ from .actions import (
     direction_to_movement, movement_to_direction
 )
 from .game_state import GameState, GamePhase
+from .ai import SmartPanAI, StrategicAI
 
 __all__ = [
     # Cards
@@ -29,4 +30,6 @@ __all__ = [
     "direction_to_movement", "movement_to_direction",
     # Game State
     "GameState", "GamePhase",
+    # AI
+    "SmartPanAI", "StrategicAI",
 ]

@@ -443,3 +443,6 @@ class SmartPanAI:
         if game.phase == GamePhase.TRAVERSING:
             return game.current_player
         return None
+
+
+StrategicAI = SmartPanAI

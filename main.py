@@ -120,7 +120,7 @@ async def main():
 
         _set_web_status("Importing game engine...")
         from engine import GamePhase
-        from engine.ai import SmartPanAI
+        from engine.ai import StrategicAI
 
         _set_web_status("Importing deck setup...")
         from deck_utils import setup_pregame_cards
@@ -168,8 +168,8 @@ async def main():
 
         def enable_single_player_match() -> None:
             """Configure the next local match as human versus the built-in AI."""
-            window.single_player_ai = SmartPanAI(player_id=1)
-            window.local_player_names = {0: "Player 1", 1: "Pan AI"}
+            window.single_player_ai = StrategicAI(player_id=1)
+            window.local_player_names = {0: "You", 1: "Pan AI"}
 
         def leave_multiplayer_room(stop_server: bool = False) -> None:
             """Clear the current local room session and optionally stop a hosted room."""
@@ -240,7 +240,7 @@ async def main():
         print("=" * 60)
         print("PAN'S TRIAL - PART 2: INTERACTIVE GAMEPLAY")
         print("=" * 60)
-        print("Click 'Single Player' to begin the draft")
+        print("Click 'Single Player Against AI' to begin the draft")
         print("Draft Satyrs, Oracles, and 2 Heroes before the labyrinth begins")
         print("The Omen reveal runs automatically before gameplay starts")
         print("=" * 60)
