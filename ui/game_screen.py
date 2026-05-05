@@ -894,6 +894,8 @@ class GameScreen(Screen):
             return True
         if self.game.winner is not None:
             return True
+        if self._is_simultaneous_appeasing_card_selection():
+            return not self.game.can_submit_appeasing_card(session.player_id)
         return self.game.current_player != session.player_id
 
     def _cancel_locked_multiplayer_input(self) -> None:
@@ -921,6 +923,14 @@ class GameScreen(Screen):
             message = f"Room {session.room_code}: waiting for another player."
         elif self.game.winner is not None:
             message = ""
+        elif (
+            self._is_simultaneous_appeasing_card_selection()
+            and self.game.has_player_played_appeasing_card(session.player_id)
+        ):
+            opponent_id = 1 - session.player_id
+            message = f"Room {session.room_code}: waiting for {self._get_player_name(opponent_id)} to choose."
+        elif self._is_simultaneous_appeasing_card_selection():
+            return
         elif self.game.current_player != session.player_id:
             message = f"Room {session.room_code}: waiting for {self._get_player_name(self.game.current_player)}."
         else:
@@ -1077,10 +1087,20 @@ class GameScreen(Screen):
         elif self.game.phase == GamePhase.APPEASING:
             if self.game.current_request_winner is None:
                 played_count = len(self.game.phase_started_cards)
-                if played_count == 0:
-                    status_text = f"APPEASING PAN: {player} plays a card"
-                elif played_count == 1:
-                    status_text = f"APPEASING PAN: {player} plays the second card"
+                session = self._get_multiplayer_session()
+                if session is not None:
+                    if self.game.has_player_played_appeasing_card(session.player_id):
+                        remaining = [
+                            player_id
+                            for player_id in [0, 1]
+                            if not self.game.has_player_played_appeasing_card(player_id)
+                        ]
+                        waiting_for = self._get_player_name(remaining[0]) if remaining else "the result"
+                        status_text = f"APPEASING PAN: waiting for {waiting_for}"
+                    else:
+                        status_text = f"APPEASING PAN: {self._get_player_name(session.player_id)} chooses a card"
+                elif played_count < 2:
+                    status_text = "APPEASING PAN: both players choose a card"
                 else:
                     status_text = "APPEASING PAN: Resolving duel..."
             else:
@@ -1554,6 +1574,14 @@ class GameScreen(Screen):
         gap = self.scale(12, 8)
         width = self.scale_x(compact_width, 170) if self.is_compact_layout() else self.scale_x(wide_width, 190)
         height = self.scale_y(58, 44)
+        legend_rect = self._get_suit_role_legend_panel_rect()
+
+        if legend_rect is not None:
+            x = legend_rect.centerx - width // 2
+            x = max(margin, min(x, self.window.WINDOW_WIDTH - margin - width))
+            y = legend_rect.bottom + gap
+            y = min(y, self.window.WINDOW_HEIGHT - margin - height)
+            return pygame.Rect(x, max(margin, y), width, height)
 
         if self.is_compact_layout():
             y = min(self.window.WINDOW_HEIGHT - margin - height, board_rect.bottom + gap)
@@ -1566,7 +1594,6 @@ class GameScreen(Screen):
                 height,
             )
 
-        legend_rect = self._get_suit_role_legend_panel_rect()
         if board_rect.right + gap + width <= self.window.WINDOW_WIDTH - margin:
             x = board_rect.right + gap
             y = max(
@@ -1594,8 +1621,11 @@ class GameScreen(Screen):
         height = self.scale_y(48, 36)
         if panel_rect is None:
             rect = self._get_request_side_button_rect(compact_width=170, wide_width=190)
+            center = rect.center
             rect.width = width
             rect.height = height
+            rect.center = center
+            rect.x = max(self.scale(18, 12), min(rect.x, self.window.WINDOW_WIDTH - self.scale(18, 12) - rect.width))
             return rect
         return pygame.Rect(
             panel_rect.right - self.scale_x(26, 16) - width,
@@ -1982,8 +2012,8 @@ class GameScreen(Screen):
             self.pending_plane_shift_confirmation = None
         return resolved
 
-    def _can_play_appeasing_hand_cards(self) -> bool:
-        """Return True when the active player's hand cards can be played for Appeasing Pan."""
+    def _is_simultaneous_appeasing_card_selection(self) -> bool:
+        """Return True while both players may lock their Appeasing Pan card."""
         return (
             self.game.phase == GamePhase.APPEASING
             and self.game.current_request_winner is None
@@ -1991,21 +2021,34 @@ class GameScreen(Screen):
             and not self.game.has_pending_card_placement()
         )
 
+    def _get_hand_owner_player_id(self) -> int:
+        """Return whose hand this client should see and interact with."""
+        session = self._get_multiplayer_session()
+        if session is not None and self._is_simultaneous_appeasing_card_selection():
+            return session.player_id
+        return self.game.current_player
+
+    def _can_play_appeasing_hand_cards(self, player_id: int | None = None) -> bool:
+        """Return True when the active player's hand cards can be played for Appeasing Pan."""
+        player_id = self._get_hand_owner_player_id() if player_id is None else player_id
+        return self.game.can_submit_appeasing_card(player_id)
+
     def _can_choose_hand_weapon(self) -> bool:
         """Return True when combat is waiting on a weapon card from the normal hand."""
         return self.game.has_pending_combat()
 
-    def _can_use_hand_card_now(self, card) -> bool:
+    def _can_use_hand_card_now(self, card, player_id: int | None = None) -> bool:
         """Return True when the clicked hand card has a valid immediate action."""
-        if self._can_play_appeasing_hand_cards():
-            return True
+        player_id = self._get_hand_owner_player_id() if player_id is None else player_id
+        if self._can_play_appeasing_hand_cards(player_id):
+            return self.game.can_submit_appeasing_card(player_id, card)
         if self._can_choose_hand_weapon():
-            return self.game.can_use_weapon(self.game.current_player, card)
+            return self.game.can_use_weapon(player_id, card)
         return False
 
     def _get_hand_card_rects(self) -> list[tuple[int, pygame.Rect]]:
         """Return active-hand card rects at the same size as board tiles."""
-        cards = self.game.get_player_hand(self.game.current_player)
+        cards = self.game.get_player_hand(self._get_hand_owner_player_id())
         if not cards:
             return []
 
@@ -2042,19 +2085,18 @@ class GameScreen(Screen):
 
     def _handle_hand_card_click(self, pos: tuple[int, int]) -> bool:
         """Play a manually rendered hand card directly when it is usable."""
-        player_hand = self.game.get_player_hand(self.game.current_player)
+        player_id = self._get_hand_owner_player_id()
+        player_hand = self.game.get_player_hand(player_id)
         for index, rect in self._get_hand_card_rects():
             if rect.collidepoint(pos) and index < len(player_hand):
                 card = player_hand[index]
                 if self._can_choose_hand_weapon():
-                    if self.game.can_use_weapon(self.game.current_player, card):
-                        player_id = self.game.current_player
+                    if self.game.can_use_weapon(player_id, card):
                         if self._apply_action(ChooseCombatCardAction(player_id, card)):
                             print(f"{self._get_player_name(player_id)} used weapon card: {card}")
                     return True
-                if not self._can_play_appeasing_hand_cards():
+                if not self._can_play_appeasing_hand_cards(player_id):
                     return True
-                player_id = self.game.current_player
                 if self._apply_action(PlayCardAction(player_id, card)):
                     print(f"{self._get_player_name(player_id)} played {card}")
                 return True
@@ -2374,7 +2416,11 @@ class GameScreen(Screen):
     def _render_hand_cards(self, surface: pygame.Surface) -> None:
         """Render the active player's hand as same-size labyrinth tiles."""
         session = self._get_multiplayer_session()
-        if session is not None and self.game.current_player != session.player_id:
+        if (
+            session is not None
+            and self.game.current_player != session.player_id
+            and not self._is_simultaneous_appeasing_card_selection()
+        ):
             self.hand_card_rects = []
             return
 
@@ -2383,8 +2429,9 @@ class GameScreen(Screen):
         if not rects:
             return
 
-        cards = self.game.get_player_hand(self.game.current_player)
-        can_play_appeasing = self._can_play_appeasing_hand_cards()
+        hand_owner = self._get_hand_owner_player_id()
+        cards = self.game.get_player_hand(hand_owner)
+        can_play_appeasing = self._can_play_appeasing_hand_cards(hand_owner)
         choosing_weapon = self._can_choose_hand_weapon()
         title_rect = self._get_active_hand_title_rect(rects)
         self._render_stone_panel(surface, title_rect, dim_alpha=26, shadow_alpha=56)
@@ -2392,12 +2439,14 @@ class GameScreen(Screen):
             prompt = "Pick a weapon from hand"
         elif can_play_appeasing:
             prompt = "Click a card to play"
+        elif self._is_simultaneous_appeasing_card_selection() and self.game.has_player_played_appeasing_card(hand_owner):
+            prompt = "Waiting for foe"
         else:
             prompt = "Active Hand"
         self._render_carved_text(
             surface,
             self.popup_small_font,
-            f"{self._get_player_name(self.game.current_player)} {prompt}",
+            f"{self._get_player_name(hand_owner)} {prompt}",
             (70, 62, 50),
             title_rect.center,
             anchor="center",
@@ -2417,9 +2466,15 @@ class GameScreen(Screen):
                 suit_role_render.get(card.suit),
                 rect,
                 self.game.phase,
-                dimmed=choosing_weapon and not self.game.can_use_weapon(self.game.current_player, card),
+                dimmed=(
+                    (choosing_weapon and not self.game.can_use_weapon(hand_owner, card))
+                    or (
+                        self._is_simultaneous_appeasing_card_selection()
+                        and self.game.has_player_played_appeasing_card(hand_owner)
+                    )
+                ),
             )
-            usable = self._can_use_hand_card_now(card)
+            usable = self._can_use_hand_card_now(card, hand_owner)
             border = (252, 222, 104) if usable else (110, 116, 130)
             pygame.draw.rect(surface, border, rect, self.scale(3 if usable else 2, 1), border_radius=self.scale(8, 5))
 

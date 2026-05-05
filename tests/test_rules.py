@@ -13,7 +13,7 @@ import pygame_gui
 import pytest
 from engine import (
     Card, CardRank, CardSuit, GameState, GamePhase,
-    MoveAction, PickupCurrentCardAction, Position, SuitRole, ChooseCombatCardAction,
+    MoveAction, PickupCurrentCardAction, PlayCardAction, Position, SuitRole, ChooseCombatCardAction,
     ChooseRequestAction, RequestType, ResolveBallistaShotAction, SelectDamageCardAction,
     SelectRestructureSuitAction, SelectPlaneShiftDirectionAction, ResolvePlaneShiftAction,
     CancelRequestSelectionAction, PlaceCardsAction
@@ -513,6 +513,42 @@ def test_room_store_rejects_stale_action_revision():
         )
 
     assert room.game.board.get_player_position(active_player) == starting_position
+
+
+def test_room_store_accepts_simultaneous_appeasing_cards_from_stale_snapshots():
+    """Both room clients may submit Appeasing cards without waiting for a turn refresh."""
+    store = RoomStore()
+    room, _ = store.create_room("Host")
+    room.players[1] = "Guest"
+    room.ready_players = {0, 1}
+    room.stage = "game"
+    room.game = create_quick_match_game()
+    room.game.phase = GamePhase.APPEASING
+    room.game.current_player = 0
+    room.game.current_request_winner = None
+    room.game.phase_started_cards = []
+
+    card0 = room.game.get_player_hand(0)[0]
+    card1 = room.game.get_player_hand(1)[0]
+    stale_revision = room.revision
+
+    store.submit_action(
+        room.code,
+        1,
+        PlayCardAction(1, card1),
+        expected_revision=stale_revision,
+    )
+    assert room.revision > stale_revision
+
+    store.submit_action(
+        room.code,
+        0,
+        PlayCardAction(0, card0),
+        expected_revision=stale_revision,
+    )
+
+    assert room.game.current_request_winner in {0, 1}
+    assert len(room.game.phase_started_cards) == 2
 
 
 def test_browser_room_client_uses_javascript_bridge(monkeypatch, game_setup):
@@ -1335,6 +1371,49 @@ def test_multiplayer_back_submits_cancel_request_action(game_setup):
     assert game.current_player == 0
 
 
+def test_multiplayer_appeasing_card_selection_uses_local_player_hand(game_setup):
+    """During simultaneous Appeasing selection, each client should play from their own hand."""
+    game = game_setup
+    game.phase = GamePhase.APPEASING
+    game.current_player = 0
+    game.current_request_winner = None
+    game.phase_started_cards = []
+
+    class Session:
+        player_id = 1
+        room_code = "1000"
+        players = {0: "Host", 1: "Guest"}
+        ready = True
+        last_error = None
+
+        def __init__(self, active_game):
+            self.game = active_game
+            self.submitted = []
+
+        def submit_action(self, action):
+            self.submitted.append(action)
+            return self.game.apply_action(action)
+
+        def update(self, time_delta: float) -> bool:
+            return False
+
+    window = SmokeWindow(width=1200, height=900)
+    session = Session(game)
+    window.multiplayer_session = session
+    screen = GameScreen(window, game)
+
+    assert not screen._is_multiplayer_input_locked()
+    assert screen._get_hand_owner_player_id() == 1
+    hand_rects = screen._get_hand_card_rects()
+    assert hand_rects
+    first_guest_card = game.get_player_hand(1)[hand_rects[0][0]]
+
+    assert screen._handle_hand_card_click(hand_rects[0][1].center)
+    assert isinstance(session.submitted[-1], PlayCardAction)
+    assert session.submitted[-1].player_id == 1
+    assert (1, first_guest_card) in game.phase_started_cards
+
+
 def test_appeasing_stronger_color_beats_higher_rank(game_setup):
     """A lower card in a stronger trump suit should beat a higher card in a weaker suit."""
     game = game_setup
@@ -1348,6 +1427,26 @@ def test_appeasing_stronger_color_beats_higher_rank(game_setup):
     game._resolve_appeasing_phase()
 
     assert game.current_request_winner == 0
+
+
+def test_appeasing_cards_can_be_submitted_in_either_order(game_setup):
+    """Appeasing Pan card selection should not be gated by current_player turns."""
+    game = game_setup
+    game.phase = GamePhase.APPEASING
+    game.current_player = 0
+    game.current_request_winner = None
+    game.phase_started_cards = []
+    card0 = game.get_player_hand(0)[0]
+    card1 = game.get_player_hand(1)[0]
+
+    assert game.apply_action(PlayCardAction(1, card1))
+    assert game.has_player_played_appeasing_card(1)
+    assert not game.has_player_played_appeasing_card(0)
+    assert game.current_request_winner is None
+
+    assert game.apply_action(PlayCardAction(0, card0))
+    assert game.current_request_winner in {0, 1}
+    assert len(game.phase_started_cards) == 2
 
 
 def test_appeasing_hierarchy_runs_walls_to_weapons(game_setup):
@@ -1897,6 +1996,27 @@ def test_suit_role_legend_is_right_side_single_column_strength_order(game_setup)
     assert len({rect.x for rect in label_rects}) == 1
     assert len({rect.y for rect in label_rects}) == 4
     assert label_rects == sorted(label_rects, key=lambda rect: rect.y)
+
+
+@pytest.mark.parametrize("width,height", [(560, 660), (1200, 900)])
+def test_request_side_buttons_sit_under_right_legend(game_setup, width, height):
+    """Back and Return to Requests should be anchored below the right-side Omen legend."""
+    window = SmokeWindow(width=width, height=height)
+    game = game_setup
+    game.phase = GamePhase.APPEASING
+    screen = GameScreen(window, game)
+
+    legend_rect = screen._get_suit_role_legend_panel_rect()
+    return_rect = screen._get_request_labyrinth_return_rect()
+    back_rect = screen._get_pending_request_back_button_rect()
+
+    assert legend_rect is not None
+    for rect in (return_rect, back_rect):
+        assert rect.top >= legend_rect.bottom
+        assert rect.colliderect(
+            pygame.Rect(legend_rect.x, rect.y, legend_rect.width, rect.height)
+        )
+        assert rect.right <= window.WINDOW_WIDTH
 
 
 def test_player_markers_are_larger_than_legacy_buttons():

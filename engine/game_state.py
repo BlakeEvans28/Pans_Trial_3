@@ -331,6 +331,28 @@ class GameState:
         """Check if player can play card."""
         return card in self.hands[player_id].cards
 
+    def has_player_played_appeasing_card(self, player_id: int) -> bool:
+        """Return True when the player already locked an Appeasing Pan card."""
+        return any(played_player == player_id for played_player, _ in self.phase_started_cards)
+
+    def can_submit_appeasing_card(self, player_id: int, card: Card | None = None) -> bool:
+        """Return True while this player may submit their simultaneous Appeasing card."""
+        if player_id not in [0, 1]:
+            return False
+        if self.phase != GamePhase.APPEASING:
+            return False
+        if self.pending_placement_player is not None:
+            return False
+        if self.current_request_winner is not None:
+            return False
+        if self.pending_request_resolution is not None:
+            return False
+        if self.has_player_played_appeasing_card(player_id):
+            return False
+        if card is not None and not self.can_play_card(player_id, card):
+            return False
+        return True
+
     def can_run_appeasing_phase(self) -> bool:
         """Return True when both players still have a normal hand card for Phase 2."""
         return bool(self.hands[0].cards) and bool(self.hands[1].cards)
@@ -611,19 +633,7 @@ class GameState:
 
     def _handle_play_card(self, action: PlayCardAction) -> bool:
         """Handle card play in Appeasing Pan phase."""
-        if self.phase != GamePhase.APPEASING:
-            return False
-
-        if self.pending_placement_player is not None:
-            return False
-
-        if self.current_request_winner is not None:
-            return False
-
-        if action.player_id != self.current_player:
-            return False
-        
-        if not self.can_play_card(action.player_id, action.card):
+        if not self.can_submit_appeasing_card(action.player_id, action.card):
             return False
         
         # Add card to phase cards
@@ -634,7 +644,13 @@ class GameState:
         if len(self.phase_started_cards) == 2:
             self._resolve_appeasing_phase()
         else:
-            self.current_player = 1 - action.player_id
+            unplayed_players = [
+                player_id
+                for player_id in [0, 1]
+                if not self.has_player_played_appeasing_card(player_id)
+            ]
+            if unplayed_players:
+                self.current_player = unplayed_players[0]
         
         return True
 

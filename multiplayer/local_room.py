@@ -19,7 +19,7 @@ from urllib import request
 from urllib.parse import unquote, urlparse
 
 from deck_utils import create_6x6_labyrinth, draft_hands, get_jack_suit_order, setup_game_deck, setup_pregame_cards
-from engine import Action, Card, CardRank, GameState, Position
+from engine import Action, ActionType, Card, CardRank, GameState, Position
 from .serialization import (
     decode_action,
     decode_game_state,
@@ -310,11 +310,19 @@ class RoomStore:
                 raise ValueError("Game has not started yet")
             if player_id not in room.players:
                 raise ValueError("Player is not in this room")
-            if expected_revision is not None and expected_revision != room.revision:
-                raise ValueError("Room state changed; refresh and try again")
             if action.player_id != player_id:
                 raise ValueError("Submitted action does not belong to this player")
-            if room.game.current_player != player_id:
+            simultaneous_appeasing_card = (
+                getattr(action, "type", None) == ActionType.PLAY_CARD
+                and room.game.can_submit_appeasing_card(player_id, getattr(action, "card", None))
+            )
+            if (
+                expected_revision is not None
+                and expected_revision != room.revision
+                and not simultaneous_appeasing_card
+            ):
+                raise ValueError("Room state changed; refresh and try again")
+            if room.game.current_player != player_id and not simultaneous_appeasing_card:
                 raise ValueError("It is not this player's turn")
 
             if not room.game.apply_action(action):
