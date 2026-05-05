@@ -811,6 +811,8 @@ class LocalRoomClient:
         self.rematch_declined = False
         self.rematch_declined_by: int | None = None
         self.rematch_declined_name = ""
+        self.opponent_departed = False
+        self.opponent_departed_name = ""
         self.last_error: str | None = None
         self._poll_elapsed = 0.0
 
@@ -917,6 +919,7 @@ class LocalRoomClient:
 
     def _apply_snapshot(self, snapshot: dict[str, Any]) -> bool:
         previous_revision = self.revision
+        previous_players = dict(self.players)
         self.players = {int(key): value for key, value in snapshot.get("players", {}).items()}
         self.ready = bool(snapshot.get("ready"))
         self.ready_players = {int(player_id) for player_id in snapshot.get("ready_players", [])}
@@ -933,6 +936,14 @@ class LocalRoomClient:
             self.game = decode_game_state(snapshot["state"])
         else:
             self.game = None
+        previous_opponent = previous_players.get(1 - self.player_id, "")
+        current_has_opponent = (1 - self.player_id) in self.players
+        if previous_opponent and not current_has_opponent and self.stage in {"coin_flip", "draft", "game"}:
+            self.opponent_departed = True
+            self.opponent_departed_name = previous_opponent
+        elif current_has_opponent:
+            self.opponent_departed = False
+            self.opponent_departed_name = ""
         self.last_error = None
         return self.revision != previous_revision
 

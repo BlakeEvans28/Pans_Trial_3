@@ -121,6 +121,8 @@ class GameScreen(Screen):
         self._last_tutorial_phase = self.game.phase
         self.notice_text = None
         self.notice_timer = 0.0
+        self.pause_menu_open = False
+        self.ai_action_elapsed = 0.0
         self.plane_shift_preview_elapsed = 0.0
         self.frame_rate_overlay_visible = False
         self._phase_banner_base = self._load_phase_banners()
@@ -713,6 +715,10 @@ class GameScreen(Screen):
             self.frame_rate_overlay_visible = not self.frame_rate_overlay_visible
             return True
 
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE and self.pause_menu_open:
+            self.pause_menu_open = False
+            return True
+
         if self._is_multiplayer_input_locked():
             self._cancel_locked_multiplayer_input()
             locked_events = (
@@ -724,6 +730,42 @@ class GameScreen(Screen):
                 pygame_gui.UI_BUTTON_PRESSED,
             )
             if event.type in locked_events:
+                return True
+
+        if self._is_match_exit_prompt_active():
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                return self._handle_game_menu_click(event.pos)
+            if event.type in (
+                pygame.MOUSEBUTTONUP,
+                pygame.MOUSEMOTION,
+                pygame.KEYDOWN,
+                pygame.KEYUP,
+                pygame_gui.UI_BUTTON_PRESSED,
+            ):
+                return True
+
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            menu_result = self._handle_game_menu_click(event.pos)
+            if menu_result:
+                return menu_result
+        elif self.pause_menu_open and event.type in (
+            pygame.MOUSEBUTTONUP,
+            pygame.MOUSEMOTION,
+            pygame.KEYDOWN,
+            pygame.KEYUP,
+            pygame_gui.UI_BUTTON_PRESSED,
+        ):
+            return True
+
+        if self._is_single_player_ai_turn():
+            if event.type in (
+                pygame.MOUSEBUTTONDOWN,
+                pygame.MOUSEBUTTONUP,
+                pygame.MOUSEMOTION,
+                pygame.KEYDOWN,
+                pygame.KEYUP,
+                pygame_gui.UI_BUTTON_PRESSED,
+            ):
                 return True
 
         if event.type == pygame.KEYDOWN and self.game.phase == GamePhase.SETUP:
@@ -886,6 +928,24 @@ class GameScreen(Screen):
         """Return the active local room session, if this game is networked."""
         return getattr(self.window, "multiplayer_session", None)
 
+    def _get_single_player_ai(self):
+        """Return the local single-player AI controller when this is not a room game."""
+        if self._get_multiplayer_session() is not None:
+            return None
+        return getattr(self.window, "single_player_ai", None)
+
+    def _is_single_player_ai_turn(self) -> bool:
+        """Return True when the AI owns the next local decision."""
+        controller = self._get_single_player_ai()
+        return controller is not None and controller.is_my_turn(self.game)
+
+    def _is_match_exit_prompt_active(self) -> bool:
+        """Return True when multiplayer should offer a forced Return Home prompt."""
+        session = self._get_multiplayer_session()
+        if session is None:
+            return False
+        return bool(getattr(session, "last_error", None) or getattr(session, "opponent_departed", False))
+
     def _get_player_names(self) -> dict[int, str]:
         """Return display names for player markers."""
         return super()._get_player_names()
@@ -894,6 +954,8 @@ class GameScreen(Screen):
         """Return True when this client should only watch the room state."""
         session = self._get_multiplayer_session()
         if session is None:
+            return False
+        if self._is_match_exit_prompt_active():
             return False
         if session.last_error or not session.ready:
             return True
@@ -920,6 +982,8 @@ class GameScreen(Screen):
         """Show local room status and block remote-turn input visually."""
         session = self._get_multiplayer_session()
         if session is None:
+            return
+        if self._is_match_exit_prompt_active():
             return
 
         if session.last_error:
@@ -1021,6 +1085,8 @@ class GameScreen(Screen):
             session.update(time_delta)
             if session.game is not None and session.game is not self.game:
                 self.game = session.game
+            if self._is_match_exit_prompt_active():
+                self.pause_menu_open = False
 
         self._update_tutorial_cycle_state()
         if getattr(self.window, "audio", None) is not None:
@@ -1031,6 +1097,18 @@ class GameScreen(Screen):
             for _ in range(6):
                 if not self.game.advance_forced_traversing():
                     break
+
+        ai_controller = self._get_single_player_ai()
+        if ai_controller is not None and not self.pause_menu_open and not self._is_match_exit_prompt_active():
+            if ai_controller.is_my_turn(self.game):
+                self.ai_action_elapsed += time_delta
+                if self.ai_action_elapsed >= getattr(ai_controller, "action_delay", 0.45):
+                    action = ai_controller.choose_action(self.game)
+                    if action is not None:
+                        self._apply_action(action)
+                    self.ai_action_elapsed = 0.0
+            else:
+                self.ai_action_elapsed = 0.0
 
         if self.notice_timer > 0:
             self.notice_timer = max(0.0, self.notice_timer - time_delta)
@@ -1249,11 +1327,14 @@ class GameScreen(Screen):
         self._render_tutorial_overlay(surface)
         self._render_multiplayer_overlay(surface)
         self._render_frame_rate_overlay(surface)
+        self._render_game_menu_overlay(surface)
     
     def on_enter(self) -> None:
         """Activate game screen."""
         if getattr(self.window, "audio", None) is not None:
             self.window.audio.play_phase_music()
+        self.pause_menu_open = False
+        self.ai_action_elapsed = 0.0
         self.status_label.hide()
         self.info_label.hide()
         for _, btn in self.move_buttons:
@@ -1306,6 +1387,8 @@ class GameScreen(Screen):
                 btn.hide()
         self.damage_popup_player = None
         self.request_popup_labyrinth_view = False
+        self.pause_menu_open = False
+        self.ai_action_elapsed = 0.0
 
     def _get_frame_rate_overlay_rect(self) -> pygame.Rect:
         """Return the right-side FPS popup rect, centered about two-thirds up the page."""
@@ -1478,6 +1561,337 @@ class GameScreen(Screen):
         """Show a short gameplay notice banner."""
         self.notice_text = text
         self.notice_timer = seconds
+
+    def _should_render_active_hand(self, player_id: int | None = None) -> bool:
+        """Return True when this client should visibly see the active hand cards."""
+        player_id = self._get_hand_owner_player_id() if player_id is None else player_id
+        session = self._get_multiplayer_session()
+        if session is not None and not self._is_simultaneous_appeasing_card_selection():
+            return player_id == session.player_id
+        ai_controller = self._get_single_player_ai()
+        if ai_controller is not None and player_id == getattr(ai_controller, "player_id", None):
+            return False
+        return True
+
+    def _should_render_game_menu_button(self) -> bool:
+        """Return True when the floating Menu button should stay visible."""
+        return not (
+            self.pause_menu_open
+            or self._is_match_exit_prompt_active()
+            or self._has_center_popup()
+            or self.damage_popup_player is not None
+            or self._is_request_labyrinth_view_active()
+        )
+
+    def _get_game_menu_avoid_rects(self) -> list[pygame.Rect]:
+        """Return the key gameplay UI rects the floating Menu button should avoid."""
+        avoid_rects = self._get_tutorial_avoid_rects(pygame.Rect(0, 0, 0, 0))
+        if self._is_board_side_request_back_active():
+            avoid_rects.append(self._get_pending_request_back_button_rect())
+        if self._is_request_labyrinth_view_active():
+            avoid_rects.append(self._get_request_labyrinth_return_rect())
+        if self.tutorial_panel_rect is not None:
+            avoid_rects.append(self.tutorial_panel_rect.copy())
+        if self.tutorial_toggle_rect is not None:
+            avoid_rects.append(self.tutorial_toggle_rect.copy())
+        return [rect.copy() for rect in avoid_rects if rect.width > 0 and rect.height > 0]
+
+    def _get_game_menu_button_rect(self) -> pygame.Rect:
+        """Return a Menu button rect that stays clear of gameplay controls."""
+        layout_mode = self.window.get_layout_mode()
+        if layout_mode == "compact":
+            preferred_width = self.scale_x(138, 108)
+        elif layout_mode == "medium":
+            preferred_width = self.scale_x(154, 116)
+        else:
+            preferred_width = self.scale_x(178, 124)
+
+        margin = self.scale(18, 10)
+        gap = self.scale(12, 8)
+        width = min(preferred_width, max(self.scale_x(116, 96), self.window.WINDOW_WIDTH - 2 * margin))
+        min_width = min(width, self.scale_x(116, 96))
+        board_rect = self.renderer.get_board_rect()
+        top_band_bottom = margin
+        phase_banner_rect = self._get_phase_banner_box()
+        if phase_banner_rect is not None:
+            top_band_bottom = max(top_band_bottom, phase_banner_rect.bottom)
+        damage_rects = self._get_damage_summary_rects()
+        if damage_rects:
+            top_band_bottom = max(top_band_bottom, max(rect.bottom for rect in damage_rects.values()))
+        legend_rect = self._get_suit_role_legend_panel_rect()
+        legend_bottom = legend_rect.bottom if legend_rect is not None else top_band_bottom
+        hand_title_rect = self._get_active_hand_title_rect()
+
+        while True:
+            height = self._get_wood_icon_height_for_width(width)
+            candidates = [
+                pygame.Rect(margin, margin, width, height),
+                pygame.Rect(margin, top_band_bottom + gap, width, height),
+                pygame.Rect(self.window.WINDOW_WIDTH - margin - width, margin, width, height),
+                pygame.Rect(self.window.WINDOW_WIDTH - margin - width, legend_bottom + gap, width, height),
+                pygame.Rect(board_rect.left - gap - width, board_rect.top, width, height),
+                pygame.Rect(board_rect.left - gap - width, board_rect.centery - height // 2, width, height),
+                pygame.Rect(board_rect.right + gap, board_rect.top, width, height),
+                pygame.Rect(board_rect.right + gap, board_rect.centery - height // 2, width, height),
+                pygame.Rect(margin, self.window.WINDOW_HEIGHT - margin - height, width, height),
+                pygame.Rect(self.window.WINDOW_WIDTH - margin - width, self.window.WINDOW_HEIGHT - margin - height, width, height),
+                pygame.Rect((self.window.WINDOW_WIDTH - width) // 2, margin, width, height),
+            ]
+            if hand_title_rect is not None:
+                candidates.extend([
+                    pygame.Rect(margin, hand_title_rect.top - gap - height, width, height),
+                    pygame.Rect(self.window.WINDOW_WIDTH - margin - width, hand_title_rect.top - gap - height, width, height),
+                ])
+
+            scored_candidates = []
+            for index, candidate in enumerate(candidates):
+                clamped = self._clamp_panel_rect(candidate.copy(), margin)
+                overlap = sum(
+                    self._overlap_area(clamped, protected)
+                    for protected in self._get_game_menu_avoid_rects()
+                )
+                top_left_distance = abs(clamped.x - margin) + abs(clamped.y - margin)
+                scored_candidates.append((overlap, top_left_distance, index, clamped))
+
+            best_overlap, _, _, best_rect = min(
+                scored_candidates,
+                key=lambda item: (item[0], item[1], item[2]),
+            )
+            if best_overlap == 0 or width <= min_width:
+                return best_rect
+
+            next_width = max(min_width, width - self.scale_x(14, 8))
+            if next_width == width:
+                return best_rect
+            width = next_width
+
+    def _get_pause_menu_panel_rect(self) -> pygame.Rect:
+        """Return a centered pause-menu stone panel sized to fit all buttons cleanly."""
+        button_count = 3
+        max_width = self.window.WINDOW_WIDTH - 2 * self.scale_x(28, 16)
+        max_height = self.window.WINDOW_HEIGHT - 2 * self.scale_y(24, 14)
+        side_padding = self.scale_x(54, 30) if not self.is_compact_layout() else self.scale_x(34, 20)
+        top_padding = self.scale_y(28, 18)
+        bottom_padding = self.scale_y(24, 16)
+        title_block_height = max(
+            self.popup_title_font.get_height() + self.scale_y(18, 12),
+            self.scale_y(56, 38),
+        )
+        preferred_gap = self.scale_y(12, 8)
+        preferred_button_width = min(self.scale_x(288, 188), max(1, max_width - 2 * side_padding))
+        min_button_width = min(preferred_button_width, self.scale_x(164, 124))
+        button_width = preferred_button_width
+
+        while True:
+            button_height = self._get_wood_icon_height_for_width(button_width)
+            fixed_height = top_padding + bottom_padding + title_block_height + button_count * button_height
+            available_gap_space = max_height - fixed_height
+            if available_gap_space >= 0 or button_width <= min_button_width:
+                break
+            next_width = max(min_button_width, button_width - self.scale_x(16, 10))
+            if next_width == button_width:
+                break
+            button_width = next_width
+
+        button_height = self._get_wood_icon_height_for_width(button_width)
+        available_gap_space = max(0, max_height - (top_padding + bottom_padding + title_block_height + button_count * button_height))
+        gap = min(preferred_gap, available_gap_space // max(1, button_count - 1))
+        width = min(max_width, max(button_width + 2 * side_padding, self.scale_x(330, 240)))
+        height = min(
+            max_height,
+            max(
+                top_padding + bottom_padding + title_block_height + button_count * button_height + (button_count - 1) * gap,
+                self.scale_y(276, 198),
+            ),
+        )
+        return pygame.Rect(
+            (self.window.WINDOW_WIDTH - width) // 2,
+            (self.window.WINDOW_HEIGHT - height) // 2,
+            width,
+            height,
+        )
+
+    def _get_pause_menu_button_rects(self, panel_rect: pygame.Rect) -> dict[str, pygame.Rect]:
+        """Return centered Resume, Settings, and Return Home button rects inside the stone panel."""
+        content_rect = self._get_stone_content_rect(panel_rect, extra_x=self.scale_x(8, 4))
+        button_width = min(self.scale_x(288, 188), content_rect.width)
+        button_width = min(content_rect.width, max(self.scale_x(164, 124), button_width))
+        button_height = self._get_wood_icon_height_for_width(button_width)
+        title_block_height = max(
+            self.popup_title_font.get_height() + self.scale_y(18, 12),
+            self.scale_y(56, 38),
+        )
+        available_gap_space = max(0, content_rect.height - title_block_height - 3 * button_height)
+        gap = min(self.scale_y(12, 8), available_gap_space // 2 if available_gap_space > 0 else 0)
+        start_y = content_rect.y + title_block_height
+        start_x = content_rect.centerx - button_width // 2
+        return {
+            "resume": pygame.Rect(start_x, start_y, button_width, button_height),
+            "settings": pygame.Rect(start_x, start_y + button_height + gap, button_width, button_height),
+            "home": pygame.Rect(start_x, start_y + 2 * (button_height + gap), button_width, button_height),
+        }
+
+    def _get_disconnect_home_button_rect(self, panel_rect: pygame.Rect | None = None) -> pygame.Rect:
+        """Return the Return Home button rect inside the disconnect prompt."""
+        if panel_rect is None:
+            panel_rect = self._get_disconnect_prompt_panel_rect()
+        content_rect = self._get_stone_content_rect(
+            panel_rect,
+            extra_x=self.scale_x(8, 4),
+            extra_bottom=self.scale_y(6, 4),
+        )
+        button_width = min(self.scale_x(250, 180), content_rect.width)
+        button_height = self._get_wood_icon_height_for_width(button_width)
+        return pygame.Rect(
+            content_rect.centerx - button_width // 2,
+            panel_rect.bottom - button_height - self.scale_y(18, 12),
+            button_width,
+            button_height,
+        )
+
+    def _get_disconnect_prompt_panel_rect(self) -> pygame.Rect:
+        """Return the blocking stone panel shown after a room disconnect."""
+        width = min(self.scale_x(560, 340), self.window.WINDOW_WIDTH - 2 * self.scale_x(28, 16))
+        height = min(self.scale_y(250, 190), self.window.WINDOW_HEIGHT - 2 * self.scale_y(34, 20))
+        return pygame.Rect(
+            (self.window.WINDOW_WIDTH - width) // 2,
+            (self.window.WINDOW_HEIGHT - height) // 2,
+            width,
+            height,
+        )
+
+    def _get_match_exit_prompt_text(self) -> str:
+        """Return the message shown when the opponent leaves or the room dies."""
+        session = self._get_multiplayer_session()
+        if session is None:
+            return ""
+        if getattr(session, "last_error", None):
+            return f"Room connection lost: {session.last_error}. Return Home to leave this match."
+        opponent_name = getattr(session, "opponent_departed_name", "") or "The other player"
+        return f"{opponent_name} left or disconnected. Return Home to go back to the main menu."
+
+    def _handle_game_menu_click(self, pos: tuple[int, int]):
+        """Handle Menu-button, pause-menu, and disconnect-prompt clicks."""
+        if self._is_match_exit_prompt_active():
+            if self._is_wood_button_hit(self._get_disconnect_home_button_rect(), pos):
+                self.pause_menu_open = False
+                return "LEAVE_GAME"
+            return True
+
+        if self.pause_menu_open:
+            panel_rect = self._get_pause_menu_panel_rect()
+            button_rects = self._get_pause_menu_button_rects(panel_rect)
+            if self._is_wood_button_hit(button_rects["resume"], pos):
+                self.pause_menu_open = False
+                return True
+            if self._is_wood_button_hit(button_rects["settings"], pos):
+                self.pause_menu_open = False
+                return "SETTINGS"
+            if self._is_wood_button_hit(button_rects["home"], pos):
+                self.pause_menu_open = False
+                return "LEAVE_GAME"
+            if not panel_rect.collidepoint(pos):
+                self.pause_menu_open = False
+            return True
+
+        if self._should_render_game_menu_button() and self._is_wood_button_hit(self._get_game_menu_button_rect(), pos):
+            self.pause_menu_open = True
+            self.damage_popup_player = None
+            self.inspected_hand_card_index = None
+            return True
+        return False
+
+    def _render_game_menu_overlay(self, surface: pygame.Surface) -> None:
+        """Render the in-match Menu button plus pause/disconnect overlays."""
+        if self._is_match_exit_prompt_active():
+            self._render_popup_backdrop(surface, 146)
+            panel_rect = self._get_disconnect_prompt_panel_rect()
+            self._render_stone_panel(surface, panel_rect, dim_alpha=28, shadow_alpha=64)
+            content_rect = self._get_stone_content_rect(
+                panel_rect,
+                extra_x=self.scale_x(8, 4),
+                extra_top=self.scale_y(10, 6),
+                extra_bottom=self.scale_y(72, 54),
+            )
+            self._render_carved_text(
+                surface,
+                self.popup_title_font,
+                "Match Interrupted",
+                (82, 72, 58),
+                (content_rect.centerx, content_rect.y),
+                anchor="midtop",
+            )
+            body_rect = pygame.Rect(
+                content_rect.x,
+                content_rect.y + self.scale_y(44, 30),
+                content_rect.width,
+                max(1, content_rect.height - self.scale_y(44, 30)),
+            )
+            self._draw_wrapped_carved_text(
+                surface,
+                self._get_match_exit_prompt_text(),
+                self.popup_small_font,
+                (76, 68, 56),
+                body_rect,
+                self.scale_y(23, 17),
+                4,
+                align="center",
+            )
+            self._render_game_wood_button(
+                surface,
+                self._get_disconnect_home_button_rect(panel_rect),
+                "Return Home",
+                preferred_font_size=self.font_size(22, 15),
+            )
+            return
+
+        if self.pause_menu_open:
+            self._render_popup_backdrop(surface, 138)
+            panel_rect = self._get_pause_menu_panel_rect()
+            self._render_stone_panel(surface, panel_rect, dim_alpha=28, shadow_alpha=64)
+            content_rect = self._get_stone_content_rect(
+                panel_rect,
+                extra_x=self.scale_x(8, 4),
+                extra_top=self.scale_y(8, 4),
+            )
+            self._render_carved_text(
+                surface,
+                self.popup_title_font,
+                "Menu",
+                (82, 72, 58),
+                (content_rect.centerx, content_rect.y),
+                anchor="midtop",
+            )
+            button_rects = self._get_pause_menu_button_rects(panel_rect)
+            self._render_game_wood_button(
+                surface,
+                button_rects["resume"],
+                "Resume",
+                preferred_font_size=self.font_size(24, 16),
+            )
+            self._render_game_wood_button(
+                surface,
+                button_rects["settings"],
+                "Settings",
+                preferred_font_size=self.font_size(24, 16),
+            )
+            self._render_game_wood_button(
+                surface,
+                button_rects["home"],
+                "Return Home",
+                preferred_font_size=self.font_size(24, 16),
+            )
+            return
+
+        if not self._should_render_game_menu_button():
+            return
+
+        self._render_game_wood_button(
+            surface,
+            self._get_game_menu_button_rect(),
+            "Menu",
+            preferred_font_size=self.font_size(22, 15),
+        )
 
     def _is_request_selection_active(self) -> bool:
         """Return True while Appeasing Pan is waiting for a player to choose a request."""
@@ -2506,12 +2920,8 @@ class GameScreen(Screen):
 
     def _render_hand_cards(self, surface: pygame.Surface) -> None:
         """Render the active player's hand as same-size labyrinth tiles."""
-        session = self._get_multiplayer_session()
-        if (
-            session is not None
-            and self.game.current_player != session.player_id
-            and not self._is_simultaneous_appeasing_card_selection()
-        ):
+        hand_owner = self._get_hand_owner_player_id()
+        if not self._should_render_active_hand(hand_owner):
             self.hand_card_rects = []
             return
 
@@ -2520,11 +2930,12 @@ class GameScreen(Screen):
         if not rects:
             return
 
-        hand_owner = self._get_hand_owner_player_id()
         cards = self.game.get_player_hand(hand_owner)
         can_play_appeasing = self._can_play_appeasing_hand_cards(hand_owner)
         choosing_weapon = self._can_choose_hand_weapon()
         title_rect = self._get_active_hand_title_rect(rects)
+        if title_rect is None:
+            return
         self._render_stone_panel(surface, title_rect, dim_alpha=26, shadow_alpha=56)
         if choosing_weapon:
             prompt = "Pick a weapon from hand"
@@ -2571,6 +2982,8 @@ class GameScreen(Screen):
 
     def _get_active_hand_title_rect(self, rects: list[tuple[int, pygame.Rect]] | None = None) -> pygame.Rect | None:
         """Return the plaque rect used for the active-hand label above the hand cards."""
+        if not self._should_render_active_hand():
+            return None
         rects = rects if rects is not None else self._get_hand_card_rects()
         if not rects:
             return None
@@ -2884,7 +3297,7 @@ class GameScreen(Screen):
         if phase_banner_box is not None:
             avoid_rects.append(phase_banner_box)
         avoid_rects.extend(self._get_damage_summary_rects().values())
-        hand_rects = self._get_hand_card_rects()
+        hand_rects = self._get_hand_card_rects() if self._should_render_active_hand() else []
         avoid_rects.extend(rect for _, rect in hand_rects)
         hand_title_rect = self._get_active_hand_title_rect(hand_rects)
         if hand_title_rect is not None:

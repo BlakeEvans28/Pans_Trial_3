@@ -623,7 +623,7 @@ def test_browser_room_import_does_not_need_desktop_http_server():
 
 
 def test_multiplayer_lobby_screen_lays_out_room_controls():
-    """The room screen exposes code-only create/join controls."""
+    """The room screen keeps fields, notice text, and buttons separated across sizes."""
     window = SmokeWindow(width=1200, height=900)
     screen = MultiplayerLobbyScreen(window)
 
@@ -637,16 +637,36 @@ def test_multiplayer_lobby_screen_lays_out_room_controls():
     assert not screen.server_entry.visible
     screen.server_entry.set_text("127.0.0.1:8765")
     assert screen.get_server_url() == MultiplayerLobbyScreen.DEFAULT_SERVER_URL
-    button_height = screen.button_rects["create"].height
-    assert screen.button_rects["create"].y - screen.room_entry.relative_rect.bottom == int(button_height * 0.5)
-    assert screen.button_rects["ready"].y - screen.button_rects["create"].bottom == int(button_height * 0.25) - button_height // 2
     screen.set_status("Room created.", room_code="1001")
-    notice_rect = screen._get_room_code_notice_rect()
-    assert notice_rect.y == screen.room_entry.relative_rect.y - screen.scale_y(64, 48) + screen.scale_y(20, 15)
-    assert not notice_rect.colliderect(screen.room_entry.relative_rect)
 
-    surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
-    screen.render(surface)
+    for width, height in [(390, 620), (1200, 900), (1570, 820), (2048, 1280)]:
+        window.WINDOW_WIDTH = width
+        window.WINDOW_HEIGHT = height
+        screen.on_resize()
+
+        create_rect = screen.button_rects["create"]
+        join_rect = screen.button_rects["join"]
+        ready_rect = screen.button_rects["ready"]
+        back_rect = screen.button_rects["back"]
+        notice_rect = screen._get_room_code_notice_rect()
+
+        assert create_rect.y == join_rect.y
+        assert ready_rect.y == back_rect.y
+        assert ready_rect.y > create_rect.bottom
+        assert not notice_rect.colliderect(screen.room_entry.relative_rect)
+        assert notice_rect.bottom <= create_rect.y
+
+        protected_rects = [
+            screen.name_entry.relative_rect,
+            screen.room_entry.relative_rect,
+            notice_rect,
+        ]
+        for button_rect in [create_rect, join_rect, ready_rect, back_rect]:
+            assert screen.panel_rect.contains(button_rect)
+            assert all(not button_rect.colliderect(rect) for rect in protected_rects)
+
+        surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
+        screen.render(surface)
 
 
 def test_multiplayer_lobby_code_only_flow_keeps_server_url_internal():

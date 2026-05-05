@@ -471,23 +471,18 @@ class Screen:
         position: tuple[int, int],
         anchor: str = "topleft",
     ) -> pygame.Rect:
-        """Render dark beveled lettering that reads like an engraving in stone."""
-        mid_tone = color if sum(color) <= 240 else self._shift_color(color, -128)
-        face_color = self._shift_color(mid_tone, -44)
-        edge_light = self._shift_color(mid_tone, 34)
-        edge_dark = self._shift_color(mid_tone, -86)
-        main = font.render(text, True, face_color)
-        light = font.render(text, True, edge_light)
-        dark = font.render(text, True, edge_dark)
-        rect = main.get_rect()
-        setattr(rect, anchor, position)
-        offset = self.scale(1, 1)
-        for dx, dy in [(-offset, 0), (0, -offset), (-offset, -offset)]:
-            surface.blit(light, rect.move(dx, dy))
-        for dx, dy in [(offset, 0), (0, offset), (offset, offset)]:
-            surface.blit(dark, rect.move(dx, dy))
-        surface.blit(main, rect)
-        return rect
+        """Render high-contrast plaque text that stays readable on dark stone art."""
+        del color  # Stone-plaque copy now uses one shared high-contrast treatment.
+        return self._render_outlined_text(
+            surface,
+            font,
+            text,
+            (248, 246, 242),
+            (10, 10, 12),
+            position,
+            anchor=anchor,
+            outline_width=self.scale(1, 1),
+        )
 
     def _render_outlined_text(
         self,
@@ -662,7 +657,7 @@ class StartScreen(Screen):
     ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets"
     BUILD_BADGE = "Prototype build 2026-05-04"
     MENU_ACTIONS = [
-        ("PLAY", "Start Game"),
+        ("PLAY", "Single Player"),
         ("MULTIPLAYER", "Two Player"),
         ("HOW_TO_PLAY", "How To Play"),
         ("SETTINGS", "Settings"),
@@ -1254,6 +1249,9 @@ class MultiplayerLobbyScreen(Screen):
         self.hovered_button = None
         self.button_rects: dict[str, pygame.Rect] = {}
         self.panel_rect = pygame.Rect(0, 0, 1, 1)
+        self.content_rect = pygame.Rect(0, 0, 1, 1)
+        self.status_rect = pygame.Rect(0, 0, 1, 1)
+        self.notice_rect = pygame.Rect(0, 0, 1, 1)
         self.status_text = "Create Room makes a code automatically. To join, type only that room code."
         self.room_code_text = ""
         self.server_url_text = self._get_default_server_url()
@@ -1307,69 +1305,138 @@ class MultiplayerLobbyScreen(Screen):
             extra_top=self.scale_y(10, 6),
             extra_bottom=self.scale_y(10, 6),
         )
-        field_height = self.scale_y(42, 34)
-        field_width = min(content.width, self.scale_x(520, 280))
-        field_x = content.centerx - field_width // 2
-        first_field_y = content.y + self.scale_y(112, 78)
+        self.content_rect = content
 
-        self._set_entry_rect(self.name_entry, pygame.Rect(field_x, first_field_y, field_width, field_height))
-        self._set_entry_rect(
-            self.room_entry,
-            pygame.Rect(field_x, first_field_y + self.scale_y(92, 72), field_width, field_height),
+        title_top_padding = self.scale_y(10, 6)
+        title_height = self.title_font.get_height()
+        status_gap = self.scale_y(14, 10)
+        section_gap = self.scale_y(18, 12)
+        label_height = self.small_font.get_height()
+        label_gap = self.scale_y(6, 4)
+        inter_field_gap = self.scale_y(18, 12)
+        notice_gap = self.scale_y(14, 10)
+        button_gap_x = self.scale_x(18, 10)
+        button_gap_y = self.scale_y(18, 10)
+        bottom_padding = self.scale_y(6, 4)
+        status_line_height = max(self.scale_y(20, 15), self.small_font.get_linesize())
+        status_height = status_line_height * 2
+        notice_height = status_line_height * 2
+        top_fixed_height = (
+            title_top_padding
+            + title_height
+            + status_gap
+            + status_height
+            + section_gap
+            + 2 * (label_height + label_gap)
+            + inter_field_gap
+            + notice_gap * 2
+            + notice_height
+            + bottom_padding
         )
+
+        min_field_height = self.scale_y(34, 28)
+        preferred_field_height = self.scale_y(42, 34)
+        min_button_width = self.scale_x(132, 104)
+        min_button_height = self._get_wood_icon_height_for_width(min_button_width)
+        can_fit_two_columns = content.width >= 2 * min_button_width + button_gap_x
+        button_columns = 2 if can_fit_two_columns else 1
+        button_rows = 2 if button_columns == 2 else 4
+        min_button_area_height = (
+            button_rows * min_button_height
+            + (button_rows - 1) * button_gap_y
+        )
+        available_for_fields_and_buttons = max(1, content.height - top_fixed_height)
+        max_field_height = max(
+            min_field_height,
+            (available_for_fields_and_buttons - min_button_area_height) // 2,
+        )
+        field_height = max(min_field_height, min(preferred_field_height, max_field_height))
+
+        field_side_padding = self.scale_x(16, 10)
+        field_width = min(content.width, self.scale_x(620, 300)) - 2 * field_side_padding
+        field_width = max(self.scale_x(220, 180), field_width)
+        field_width = min(field_width, content.width)
+        field_x = content.centerx - field_width // 2
+
+        name_entry_y = (
+            content.y
+            + title_top_padding
+            + title_height
+            + status_gap
+            + status_height
+            + section_gap
+            + label_height
+            + label_gap
+        )
+        room_entry_y = name_entry_y + field_height + inter_field_gap + label_height + label_gap
+
+        self.status_rect = pygame.Rect(
+            content.x,
+            content.y + title_top_padding + title_height + status_gap,
+            content.width,
+            status_height,
+        )
+        self._set_entry_rect(self.name_entry, pygame.Rect(field_x, name_entry_y, field_width, field_height))
+        self._set_entry_rect(self.room_entry, pygame.Rect(field_x, room_entry_y, field_width, field_height))
         self._set_entry_rect(
             self.server_entry,
             pygame.Rect(-self.scale_x(240, 120), -self.scale_y(80, 40), 1, 1),
         )
 
-        button_gap = self.scale_x(18, 10)
-        button_width = min(self.scale_x(250, 150), max(1, (content.width - button_gap) // 2))
-        button_height = self._get_wood_icon_height_for_width(button_width)
-        room_entry_bottom = self.room_entry.relative_rect.bottom
-        button_y = room_entry_bottom + int(button_height * 0.5)
-        lower_button_lift = button_height // 2
-        lower_button_y = button_y + button_height + int(button_height * 0.25) - lower_button_lift
-        max_lower_y = self.panel_rect.bottom - button_height - self.scale_y(18, 12)
-        if lower_button_y > max_lower_y:
-            lower_button_y = max_lower_y
-            button_y = lower_button_y - button_height - int(button_height * 0.25)
-        self.button_rects = {
-            "create": pygame.Rect(content.centerx - button_width - button_gap // 2, button_y, button_width, button_height),
-            "join": pygame.Rect(content.centerx + button_gap // 2, button_y, button_width, button_height),
-        }
-        self.button_rects["ready"] = pygame.Rect(
-            content.centerx - button_width - button_gap // 2,
-            lower_button_y,
-            button_width,
-            button_height,
-        )
-        self.button_rects["back"] = pygame.Rect(
-            content.centerx + button_gap // 2,
-            lower_button_y,
-            button_width,
-            button_height,
-        )
-
-    def _get_room_code_notice_rect(self) -> pygame.Rect:
-        """Return the notice rect that confirms the shareable room code."""
-        content = self._get_stone_content_rect(
-            self.panel_rect,
-            extra_x=self.scale_x(10, 4),
-            extra_top=self.scale_y(10, 6),
-            extra_bottom=self.scale_y(10, 6),
-        )
-        notice_height = self.scale_y(34, 26)
-        notice_y = (
-            self.room_entry.relative_rect.y
-            - self.scale_y(64, 48)
-            + self.scale_y(20, 15)
-        )
-        return pygame.Rect(
+        self.notice_rect = pygame.Rect(
             content.x,
-            notice_y,
+            self.room_entry.relative_rect.bottom + notice_gap,
             content.width,
             notice_height,
         )
+        button_area_top = self.notice_rect.bottom + notice_gap
+        button_area_height = max(1, content.bottom - bottom_padding - button_area_top)
+        button_width_cap = max(
+            1,
+            (content.width - (button_columns - 1) * button_gap_x) // button_columns,
+        )
+        preferred_button_width = min(self.scale_x(250, 150), button_width_cap)
+        button_height_cap = max(
+            1,
+            (button_area_height - (button_rows - 1) * button_gap_y) // button_rows,
+        )
+        width_from_height = self._get_wood_icon_width_for_height(button_height_cap)
+        button_width = max(
+            self.scale_x(96, 78),
+            min(button_width_cap, preferred_button_width, width_from_height),
+        )
+        button_height = self._get_wood_icon_height_for_width(button_width)
+        button_grid_height = (
+            button_rows * button_height
+            + (button_rows - 1) * button_gap_y
+        )
+        button_start_y = button_area_top + max(0, (button_area_height - button_grid_height) // 2)
+
+        if button_columns == 2:
+            total_width = 2 * button_width + button_gap_x
+            left_x = content.centerx - total_width // 2
+            right_x = left_x + button_width + button_gap_x
+            upper_y = button_start_y
+            lower_y = button_start_y + button_height + button_gap_y
+            self.button_rects = {
+                "create": pygame.Rect(left_x, upper_y, button_width, button_height),
+                "join": pygame.Rect(right_x, upper_y, button_width, button_height),
+                "ready": pygame.Rect(left_x, lower_y, button_width, button_height),
+                "back": pygame.Rect(right_x, lower_y, button_width, button_height),
+            }
+            return
+
+        button_x = content.centerx - button_width // 2
+        self.button_rects = {
+            "create": pygame.Rect(button_x, button_start_y, button_width, button_height),
+            "join": pygame.Rect(button_x, button_start_y + (button_height + button_gap_y), button_width, button_height),
+            "ready": pygame.Rect(button_x, button_start_y + 2 * (button_height + button_gap_y), button_width, button_height),
+            "back": pygame.Rect(button_x, button_start_y + 3 * (button_height + button_gap_y), button_width, button_height),
+        }
+
+    def _get_room_code_notice_rect(self) -> pygame.Rect:
+        """Return the notice rect that confirms the shareable room code."""
+        return self.notice_rect.copy()
 
     def _set_entry_rect(self, entry, rect: pygame.Rect) -> None:
         entry.set_relative_position((rect.x, rect.y))
@@ -1458,12 +1525,7 @@ class MultiplayerLobbyScreen(Screen):
     def render(self, surface: pygame.Surface) -> None:
         self._render_screen_background(surface, (14, 18, 28))
         self._render_stone_panel(surface, self.panel_rect, dim_alpha=28, shadow_alpha=64)
-        content = self._get_stone_content_rect(
-            self.panel_rect,
-            extra_x=self.scale_x(10, 4),
-            extra_top=self.scale_y(10, 6),
-            extra_bottom=self.scale_y(10, 6),
-        )
+        content = self.content_rect
 
         self._render_carved_text(
             surface,
@@ -1478,12 +1540,13 @@ class MultiplayerLobbyScreen(Screen):
             self.status_text,
             self.small_font,
             (74, 66, 54),
-            pygame.Rect(content.x, content.y + self.scale_y(72, 50), content.width, self.scale_y(50, 38)),
-            self.scale_y(20, 15),
+            self.status_rect,
+            max(self.scale_y(20, 15), self.small_font.get_linesize()),
             2,
             align="center",
         )
 
+        label_offset = self.small_font.get_height() + self.scale_y(6, 4)
         labels = [
             ("Your Name", self.name_entry.relative_rect),
             ("Room Code", self.room_entry.relative_rect),
@@ -1494,7 +1557,7 @@ class MultiplayerLobbyScreen(Screen):
                 self.small_font,
                 label,
                 (74, 66, 54),
-                (rect.x, rect.y - self.scale_y(24, 18)),
+                (rect.x, rect.y - label_offset),
             )
 
         for key, label in [
@@ -1519,7 +1582,7 @@ class MultiplayerLobbyScreen(Screen):
                 self.small_font,
                 (74, 66, 54),
                 self._get_room_code_notice_rect(),
-                self.scale_y(20, 15),
+                max(self.scale_y(20, 15), self.small_font.get_linesize()),
                 2,
                 align="center",
             )
@@ -1777,7 +1840,7 @@ class SettingsScreen(Screen):
     def _activate_setting_key(self, key: str):
         """Apply one Settings control action."""
         if key == "back":
-            return "MENU"
+            return "BACK"
         if key == "fullscreen":
             self.window.toggle_fullscreen()
             self.on_resize()
@@ -2217,6 +2280,8 @@ class DraftScreen(Screen):
         self.draft_grid_bottom = 0
         self.tutorial_toggle_rect = None
         self.draft_tutorial_panel_rect = None
+        self.finished = False
+        self.ai_pick_elapsed = 0.0
         self._refresh_fonts()
         self._create_ui()
         self.on_resize()
@@ -2272,12 +2337,18 @@ class DraftScreen(Screen):
         self.current_player = starting_player
         self.kings_drafted = 0
         self.player_cards = []
+        self.finished = False
+        self.ai_pick_elapsed = 0.0
         self._update_buttons()
 
     def handle_events(self, event: pygame.event.Event) -> bool:
         """Handle draft card picks."""
         if event.type != pygame.MOUSEBUTTONDOWN:
             return False
+
+        ai_controller = getattr(self.window, "single_player_ai", None)
+        if ai_controller is not None and self.current_player == ai_controller.player_id:
+            return True
 
         if (
             self.window.tutorial_enabled
@@ -2317,6 +2388,7 @@ class DraftScreen(Screen):
 
         if total_picks >= 10:
             self.player_cards = [card for card in self.available_cards if card is not None]
+            self.finished = True
             return "DRAFT_COMPLETE"
 
         self.current_player = 1 - self.current_player
@@ -2360,6 +2432,24 @@ class DraftScreen(Screen):
 
     def update(self, time_delta: float) -> None:
         """Update draft button state."""
+        ai_controller = getattr(self.window, "single_player_ai", None)
+        if (
+            ai_controller is not None
+            and not self.finished
+            and getattr(self.window, "multiplayer_session", None) is None
+            and self.current_player == ai_controller.player_id
+        ):
+            self.ai_pick_elapsed += time_delta
+            if self.ai_pick_elapsed >= getattr(ai_controller, "draft_delay", 0.55):
+                draft_index = ai_controller.choose_draft_index(
+                    self.available_cards,
+                    self.player_hands[self.current_player],
+                    self.player_hands[1 - self.current_player],
+                    self.kings_drafted,
+                )
+                if draft_index is not None:
+                    self._pick_card(draft_index)
+                self.ai_pick_elapsed = 0.0
         self._update_buttons()
 
     def render(self, surface: pygame.Surface) -> None:

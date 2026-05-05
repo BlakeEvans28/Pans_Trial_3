@@ -33,7 +33,10 @@ def normalize_player_names(players: Mapping[int, Any] | None = None) -> dict[int
 def get_window_player_names(window) -> dict[int, str]:
     """Return display names from the active multiplayer session, or defaults."""
     session = getattr(window, "multiplayer_session", None)
-    return normalize_player_names(getattr(session, "players", None))
+    if session is not None:
+        return normalize_player_names(getattr(session, "players", None))
+    local_names = getattr(window, "local_player_names", None)
+    return normalize_player_names(local_names)
 
 
 def get_player_name(window, player_id: int) -> str:

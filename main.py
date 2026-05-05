@@ -120,6 +120,7 @@ async def main():
 
         _set_web_status("Importing game engine...")
         from engine import GamePhase
+        from engine.ai import SmartPanAI
 
         _set_web_status("Importing deck setup...")
         from deck_utils import setup_pregame_cards
@@ -158,6 +159,17 @@ async def main():
         local_room_server = None
         multiplayer_client = None
         screens = {}
+
+        def clear_local_match_context() -> None:
+            """Clear local single-player names, AI, and Settings return targets."""
+            window.single_player_ai = None
+            window.local_player_names = None
+            window.settings_return_screen = ScreenType.START
+
+        def enable_single_player_match() -> None:
+            """Configure the next local match as human versus the built-in AI."""
+            window.single_player_ai = SmartPanAI(player_id=1)
+            window.local_player_names = {0: "Player 1", 1: "Pan AI"}
 
         def leave_multiplayer_room(stop_server: bool = False) -> None:
             """Clear the current local room session and optionally stop a hosted room."""
@@ -228,7 +240,7 @@ async def main():
         print("=" * 60)
         print("PAN'S TRIAL - PART 2: INTERACTIVE GAMEPLAY")
         print("=" * 60)
-        print("Click 'Start Game' to begin the draft")
+        print("Click 'Single Player' to begin the draft")
         print("Draft Satyrs, Oracles, and 2 Heroes before the labyrinth begins")
         print("The Omen reveal runs automatically before gameplay starts")
         print("=" * 60)
@@ -258,6 +270,7 @@ async def main():
                         multiplayer_client.request_rematch()
                     else:
                         leave_multiplayer_room(stop_server=True)
+                        enable_single_player_match()
                         labyrinth_cards, draft_cards, jack_cards = setup_pregame_cards()
                         pregame_setup = {
                             "labyrinth_cards": labyrinth_cards,
@@ -277,14 +290,21 @@ async def main():
                     screen_manager.set_screen(ScreenType.HOW_TO_PLAY)
 
                 elif result == "MULTIPLAYER":
+                    clear_local_match_context()
                     ensure_screen(ScreenType.MULTIPLAYER)
                     screen_manager.set_screen(ScreenType.MULTIPLAYER)
 
                 elif result == "SETTINGS":
+                    window.settings_return_screen = screen_manager.current_screen
                     ensure_screen(ScreenType.SETTINGS)
                     screen_manager.set_screen(ScreenType.SETTINGS)
 
+                elif result == "BACK":
+                    target_screen = getattr(window, "settings_return_screen", ScreenType.START) or ScreenType.START
+                    screen_manager.set_screen(target_screen)
+
                 elif result == "CREATE_ROOM":
+                    clear_local_match_context()
                     lobby_screen = ensure_screen(ScreenType.MULTIPLAYER)
                     try:
                         server_url = lobby_screen.get_server_url()
@@ -309,6 +329,7 @@ async def main():
                         lobby_screen.set_status(f"Could not create room: {exc}", clear_room_details=True)
 
                 elif result == "JOIN_ROOM":
+                    clear_local_match_context()
                     lobby_screen = ensure_screen(ScreenType.MULTIPLAYER)
                     try:
                         room_code = lobby_screen.get_room_code()
@@ -370,10 +391,17 @@ async def main():
                         leave_multiplayer_room(stop_server=False)
                     elif screen_manager.current_screen == ScreenType.MULTIPLAYER:
                         leave_multiplayer_room(stop_server=True)
+                    clear_local_match_context()
+                    screen_manager.set_screen(ScreenType.START)
+
+                elif result == "LEAVE_GAME":
+                    leave_multiplayer_room(stop_server=True)
+                    clear_local_match_context()
                     screen_manager.set_screen(ScreenType.START)
 
                 elif result == "QUIT":
                     leave_multiplayer_room(stop_server=True)
+                    clear_local_match_context()
                     _close_web_tab()
                     running = False
             
@@ -437,6 +465,16 @@ async def main():
                         multiplayer_client.player_cards,
                         jack_order=multiplayer_client.jack_order,
                     )
+                    screen_manager.set_screen(ScreenType.JACK_REVEAL)
+
+            elif screen_manager.current_screen == ScreenType.DRAFT and multiplayer_client is None:
+                draft_screen = screens.get(ScreenType.DRAFT)
+                if draft_screen is not None and draft_screen.finished and pregame_setup is not None:
+                    p0_hand, p1_hand, player_cards = draft_screen.get_draft_result()
+                    pregame_setup["hands"] = (p0_hand, p1_hand)
+                    pregame_setup["player_cards"] = player_cards
+                    jack_reveal_screen = ensure_screen(ScreenType.JACK_REVEAL)
+                    jack_reveal_screen.start_reveal(pregame_setup["jack_cards"], player_cards)
                     screen_manager.set_screen(ScreenType.JACK_REVEAL)
 
             elif screen_manager.current_screen == ScreenType.MULTIPLAYER and multiplayer_client is not None:
