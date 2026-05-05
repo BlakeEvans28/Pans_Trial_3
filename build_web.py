@@ -28,6 +28,8 @@ PROJECT_FILES = (
     "main.py",
     "deck_utils.py",
     "pan_theme.py",
+    "ARCHITECTURE_FOR_AI.py",
+    "balance_testing.py",
 )
 PROJECT_DIRS = (
     "engine",
