@@ -437,9 +437,23 @@ def install_deploy_site(build_web_dir: Path, deploy_dir: Path) -> None:
     """Refresh the static site folder used by hosted room-server deployments."""
     deploy_dir.mkdir(parents=True, exist_ok=True)
     # OneDrive can mark the local CDN cache as a reparse point, which makes
-    # rmtree fail even with normal write permissions. Overlay the generated
-    # site instead; index.html points at the current bundle, so stale ignored
-    # files do not affect the deployable build.
+    # rmtree fail even with normal write permissions. Prune regular stale
+    # files first, then overlay the generated site so the folder mirrors the
+    # zip without relying on removing the whole directory tree.
+    expected_files = {
+        file_path.relative_to(build_web_dir)
+        for file_path in build_web_dir.rglob("*")
+        if file_path.is_file()
+    }
+    for file_path in sorted(deploy_dir.rglob("*"), reverse=True):
+        relative_path = file_path.relative_to(deploy_dir)
+        if file_path.is_file() and relative_path not in expected_files:
+            file_path.unlink()
+        elif file_path.is_dir():
+            try:
+                file_path.rmdir()
+            except OSError:
+                pass
     shutil.copytree(build_web_dir, deploy_dir, dirs_exist_ok=True)
 
 

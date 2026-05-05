@@ -1998,6 +1998,59 @@ def test_suit_role_legend_is_right_side_single_column_strength_order(game_setup)
     assert label_rects == sorted(label_rects, key=lambda rect: rect.y)
 
 
+def test_suit_role_legend_shows_strength_arrow_only_during_appeasing(game_setup):
+    """Appeasing Pan should add a strongest-to-weakest guide to the Omen legend."""
+    window = SmokeWindow(width=1200, height=900)
+    game = game_setup
+    screen = GameScreen(window, game)
+    surface = pygame.Surface((window.WINDOW_WIDTH, window.WINDOW_HEIGHT))
+    guide_labels = []
+    arrow_rows = []
+
+    def collect_strength_label(surface, text, rect, preferred_size, minimum_size):
+        guide_labels.append((text, rect.copy()))
+
+    def collect_strength_arrow(surface, panel_rect, row_rects):
+        arrow_rows.append([rect.copy() for rect in row_rects])
+
+    screen._render_legend_strength_label = collect_strength_label
+    screen._render_legend_strength_arrow = collect_strength_arrow
+
+    game.phase = GamePhase.TRAVERSING
+    screen._render_suit_role_legend(surface)
+    assert guide_labels == []
+    assert arrow_rows == []
+
+    game.phase = GamePhase.APPEASING
+    screen._render_suit_role_legend(surface)
+    assert [text for text, _ in guide_labels] == ["Strongest", "Weakest"]
+    assert len(arrow_rows) == 1
+    assert len(arrow_rows[0]) == 4
+    assert arrow_rows[0][0].centery < arrow_rows[0][-1].centery
+
+
+def test_frame_rate_overlay_toggles_with_f_and_sits_right_side(game_setup):
+    """The gameplay FPS popup should be toggled by F and anchored on the right side."""
+    window = SmokeWindow(width=1200, height=900)
+    game = game_setup
+    screen = GameScreen(window, game)
+
+    assert not screen.frame_rate_overlay_visible
+    assert screen.handle_events(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_f))
+    assert screen.frame_rate_overlay_visible
+
+    rect = screen._get_frame_rate_overlay_rect()
+    assert rect.right <= window.WINDOW_WIDTH - screen.scale(18, 12)
+    assert rect.left > window.WINDOW_WIDTH // 2
+    assert abs(rect.centery - window.WINDOW_HEIGHT // 3) <= screen.scale_y(3, 2)
+
+    labels = [label for label, _ in screen._get_frame_rate_lines()]
+    assert {"FPS", "Frame", "Work", "Sleep", "Budget", "Headroom", "Over", "Speed"} <= set(labels)
+
+    assert screen.handle_events(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_f))
+    assert not screen.frame_rate_overlay_visible
+
+
 @pytest.mark.parametrize("width,height", [(560, 660), (1200, 900)])
 def test_request_side_buttons_sit_under_right_legend(game_setup, width, height):
     """Back and Return to Requests should be anchored below the right-side Omen legend."""

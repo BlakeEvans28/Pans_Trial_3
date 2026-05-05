@@ -122,6 +122,7 @@ class GameScreen(Screen):
         self.notice_text = None
         self.notice_timer = 0.0
         self.plane_shift_preview_elapsed = 0.0
+        self.frame_rate_overlay_visible = False
         self._phase_banner_base = self._load_phase_banners()
         self._phase_banner_cache: dict[tuple[GamePhase, int, int], pygame.Surface] = {}
         self._phase_banner_phase = self._get_phase_banner_phase(self.game.phase)
@@ -708,6 +709,10 @@ class GameScreen(Screen):
     
     def handle_events(self, event: pygame.event.Event) -> bool:
         """Handle events."""
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_f:
+            self.frame_rate_overlay_visible = not self.frame_rate_overlay_visible
+            return True
+
         if self._is_multiplayer_input_locked():
             self._cancel_locked_multiplayer_input()
             locked_events = (
@@ -1243,6 +1248,7 @@ class GameScreen(Screen):
         self._render_notice_banner(surface)
         self._render_tutorial_overlay(surface)
         self._render_multiplayer_overlay(surface)
+        self._render_frame_rate_overlay(surface)
     
     def on_enter(self) -> None:
         """Activate game screen."""
@@ -1300,6 +1306,91 @@ class GameScreen(Screen):
                 btn.hide()
         self.damage_popup_player = None
         self.request_popup_labyrinth_view = False
+
+    def _get_frame_rate_overlay_rect(self) -> pygame.Rect:
+        """Return the right-side FPS popup rect, centered about two-thirds up the page."""
+        margin = self.scale(18, 12)
+        width = min(self.scale_x(260, 190), self.window.WINDOW_WIDTH - 2 * margin)
+        line_height = self.font_size(18, 13) + self.scale_y(5, 3)
+        title_height = self.font_size(22, 16) + self.scale_y(8, 5)
+        rows = 8
+        height = title_height + rows * line_height + self.scale_y(28, 18)
+        height = min(height, self.window.WINDOW_HEIGHT - 2 * margin)
+        x = self.window.WINDOW_WIDTH - margin - width
+        center_y = self.window.WINDOW_HEIGHT // 3
+        y = center_y - height // 2
+        y = max(margin, min(y, self.window.WINDOW_HEIGHT - margin - height))
+        return pygame.Rect(x, y, width, height)
+
+    def _get_frame_rate_lines(self) -> list[tuple[str, str]]:
+        """Return live frame timing values for the debug popup."""
+        fps_target = max(1, int(getattr(self.window, "FPS", 60)))
+        target_ms = 1000.0 / fps_target
+        clock = getattr(self.window, "clock", None)
+        if clock is None:
+            fps = 0.0
+            frame_ms = float(getattr(self.window, "time_delta", 0.0) or 0.0) * 1000.0
+            raw_ms = frame_ms
+        else:
+            fps = float(clock.get_fps())
+            frame_ms = float(clock.get_time())
+            raw_ms = float(clock.get_rawtime())
+
+        sleep_ms = max(0.0, frame_ms - raw_ms)
+        over_budget_ms = max(0.0, raw_ms - target_ms)
+        headroom_ms = max(0.0, target_ms - raw_ms)
+        return [
+            ("FPS", f"{fps:5.1f} / {fps_target}"),
+            ("Frame", f"{frame_ms:5.1f} ms"),
+            ("Work", f"{raw_ms:5.1f} ms"),
+            ("Sleep", f"{sleep_ms:5.1f} ms"),
+            ("Budget", f"{target_ms:5.1f} ms"),
+            ("Headroom", f"{headroom_ms:5.1f} ms"),
+            ("Over", f"{over_budget_ms:5.1f} ms"),
+            ("Speed", f"{self.window.animation_speed:4.2f}x"),
+        ]
+
+    def _render_frame_rate_overlay(self, surface: pygame.Surface) -> None:
+        """Render a toggled frame-rate diagnostic popup."""
+        if not self.frame_rate_overlay_visible:
+            return
+
+        panel_rect = self._get_frame_rate_overlay_rect()
+        self._render_stone_panel(surface, panel_rect, dim_alpha=34, shadow_alpha=72)
+        content_rect = self._get_stone_content_rect(panel_rect)
+        title_font = self._get_title_style_font(self.font_size(22, 16))
+        body_font = self._get_game_font(self.font_size(18, 13))
+
+        title = "Frame Rate"
+        title_shadow = title_font.render(title, True, (18, 10, 6))
+        title_text = title_font.render(title, True, (250, 240, 206))
+        title_rect = title_text.get_rect(midtop=(content_rect.centerx, content_rect.y))
+        surface.blit(title_shadow, title_rect.move(self.scale(2, 1), self.scale(2, 1)))
+        surface.blit(title_text, title_rect)
+
+        y = title_rect.bottom + self.scale_y(8, 5)
+        label_color = (246, 238, 208)
+        value_color = (252, 222, 104)
+        shadow_color = (18, 10, 6)
+        row_height = body_font.get_height() + self.scale_y(5, 3)
+        value_x = content_rect.right
+        for label, value in self._get_frame_rate_lines():
+            label_surface = body_font.render(f"{label}:", True, label_color)
+            value_surface = body_font.render(value, True, value_color)
+            label_rect = label_surface.get_rect(topleft=(content_rect.x, y))
+            value_rect = value_surface.get_rect(topright=(value_x, y))
+            surface.blit(body_font.render(f"{label}:", True, shadow_color), label_rect.move(self.scale(1, 1), self.scale(1, 1)))
+            surface.blit(body_font.render(value, True, shadow_color), value_rect.move(self.scale(1, 1), self.scale(1, 1)))
+            surface.blit(label_surface, label_rect)
+            surface.blit(value_surface, value_rect)
+            y += row_height
+
+        hint = "F hides"
+        hint_font = self._get_game_font(self.font_size(14, 10))
+        hint_surface = hint_font.render(hint, True, (210, 202, 176))
+        hint_rect = hint_surface.get_rect(bottomright=(content_rect.right, content_rect.bottom))
+        surface.blit(hint_font.render(hint, True, shadow_color), hint_rect.move(self.scale(1, 1), self.scale(1, 1)))
+        surface.blit(hint_surface, hint_rect)
 
     def _format_card_label(self, card) -> str:
         """Render a compact label for a hand or damage card."""
@@ -3619,6 +3710,9 @@ class GameScreen(Screen):
         right_pad = self.scale_x(26, 16)
         top_pad = self.scale_y(16, 10)
         bottom_pad = self.scale_y(18, 12)
+        guide_height = 0
+        if self._show_phase_two_legend_guide():
+            guide_height = 2 * self.scale_y(15, 11) + 2 * self.scale_y(5, 3)
         icon_diameter = self.scale(28, 18)
         text_gap = self.scale_x(12, 8)
         desired_width = icon_diameter + text_gap + max_text_width + left_pad + right_pad
@@ -3637,8 +3731,83 @@ class GameScreen(Screen):
             start_x,
             start_y,
             panel_width,
-            4 * row_height + 3 * row_gap + top_pad + bottom_pad,
+            4 * row_height + 3 * row_gap + top_pad + bottom_pad + guide_height,
         )
+
+    def _render_legend_strength_label(
+        self,
+        surface: pygame.Surface,
+        label: str,
+        text_rect: pygame.Rect,
+        preferred_size: int,
+        min_size: int,
+    ) -> None:
+        """Render a fitted strength endpoint label inside the Appeasing legend."""
+        size = max(preferred_size, min_size)
+        font = self._get_title_style_font(size)
+        while size > min_size and font.size(label)[0] > text_rect.width:
+            size -= 1
+            font = self._get_title_style_font(size)
+
+        shadow = font.render(label, True, (18, 10, 6))
+        text = font.render(label, True, (252, 222, 104))
+        label_rect = text.get_rect(center=text_rect.center)
+        if label_rect.left < text_rect.left:
+            label_rect.left = text_rect.left
+        if label_rect.right > text_rect.right:
+            label_rect.right = text_rect.right
+        surface.blit(shadow, label_rect.move(self.scale(1, 1), self.scale(1, 1)))
+        surface.blit(text, label_rect)
+
+    def _render_legend_strength_arrow(
+        self,
+        surface: pygame.Surface,
+        panel_rect: pygame.Rect,
+        row_rects: list[pygame.Rect],
+    ) -> None:
+        """Draw a downward strength arrow beside the Appeasing legend rows."""
+        if len(row_rects) < 2:
+            return
+
+        head_size = self.scale(7, 5)
+        shaft_width = self.scale(3, 2)
+        x = panel_rect.right - max(head_size + self.scale_x(8, 5), self.scale_x(14, 9))
+        top = row_rects[0].top + self.scale_y(4, 3)
+        bottom = row_rects[-1].bottom - head_size - self.scale_y(4, 3)
+        if bottom <= top:
+            return
+
+        shadow_color = (18, 10, 6)
+        arrow_color = (252, 222, 104)
+        shadow_offset = (self.scale(1, 1), self.scale(1, 1))
+        pygame.draw.line(
+            surface,
+            shadow_color,
+            (x + shadow_offset[0], top + shadow_offset[1]),
+            (x + shadow_offset[0], bottom + shadow_offset[1]),
+            shaft_width,
+        )
+        pygame.draw.circle(
+            surface,
+            shadow_color,
+            (x + shadow_offset[0], top + shadow_offset[1]),
+            max(2, shaft_width),
+        )
+        shadow_head = [
+            (x + shadow_offset[0], bottom + head_size + shadow_offset[1]),
+            (x - head_size + shadow_offset[0], bottom - head_size // 2 + shadow_offset[1]),
+            (x + head_size + shadow_offset[0], bottom - head_size // 2 + shadow_offset[1]),
+        ]
+        pygame.draw.polygon(surface, shadow_color, shadow_head)
+
+        pygame.draw.line(surface, arrow_color, (x, top), (x, bottom), shaft_width)
+        pygame.draw.circle(surface, arrow_color, (x, top), max(2, shaft_width))
+        arrow_head = [
+            (x, bottom + head_size),
+            (x - head_size, bottom - head_size // 2),
+            (x + head_size, bottom - head_size // 2),
+        ]
+        pygame.draw.polygon(surface, arrow_color, arrow_head)
 
     def _render_suit_role_legend(self, surface: pygame.Surface) -> None:
         """Render suit-role mappings with drawn icons instead of font glyphs."""
@@ -3654,20 +3823,60 @@ class GameScreen(Screen):
             max(1, panel_rect.height - self.scale_y(34, 22)),
         )
         row_gap = self.scale_y(8, 5)
-        row_height = max(1, (content_rect.height - 3 * row_gap) // 4)
+        guide_active = self._show_phase_two_legend_guide()
+        row_area_rect = content_rect.copy()
+        if guide_active:
+            guide_label_height = self.scale_y(15, 11)
+            guide_gap = self.scale_y(5, 3)
+            top_label_rect = pygame.Rect(
+                content_rect.x,
+                content_rect.y,
+                content_rect.width,
+                guide_label_height,
+            )
+            bottom_label_rect = pygame.Rect(
+                content_rect.x,
+                content_rect.bottom - guide_label_height,
+                content_rect.width,
+                guide_label_height,
+            )
+            self._render_legend_strength_label(
+                surface,
+                "Strongest",
+                top_label_rect,
+                self.font_size(15, 11),
+                self.font_size(9, 8),
+            )
+            self._render_legend_strength_label(
+                surface,
+                "Weakest",
+                bottom_label_rect,
+                self.font_size(15, 11),
+                self.font_size(9, 8),
+            )
+            row_area_rect = pygame.Rect(
+                content_rect.x,
+                top_label_rect.bottom + guide_gap,
+                content_rect.width,
+                max(1, bottom_label_rect.top - guide_gap - (top_label_rect.bottom + guide_gap)),
+            )
+
+        row_height = max(1, (row_area_rect.height - 3 * row_gap) // 4)
         icon_size = self.scale(10, 6)
         icon_radius = icon_size + self.scale(4, 2)
         icon_x_pad = self.scale_x(6, 4)
         text_gap = self.scale_x(12, 8)
+        row_rects = []
 
         for index, suit in enumerate(self._get_suit_role_legend_suits()):
             role = self.game.suit_roles.get(suit)
             row_rect = pygame.Rect(
-                content_rect.x,
-                content_rect.y + index * (row_height + row_gap),
-                content_rect.width,
+                row_area_rect.x,
+                row_area_rect.y + index * (row_height + row_gap),
+                row_area_rect.width,
                 row_height,
             )
+            row_rects.append(row_rect)
             icon_center = (row_rect.x + icon_radius + icon_x_pad, row_rect.centery)
             pygame.draw.circle(surface, (250, 240, 206), icon_center, icon_radius)
             draw_suit_icon(surface, suit, icon_center, size=icon_size)
@@ -3683,6 +3892,9 @@ class GameScreen(Screen):
                 self.font_size(22, 15),
                 self.font_size(10, 9),
             )
+
+        if guide_active:
+            self._render_legend_strength_arrow(surface, panel_rect, row_rects)
 
     def _render_color_hierarchy_strip(self, surface: pygame.Surface) -> None:
         """Show the user-facing Phase 2 color strip across the top."""

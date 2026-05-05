@@ -1,137 +1,149 @@
-# Project 2
+# Pan's Trial
 
-## Pan's Trial
+Pan's Trial is a two-player digital strategy game built for ECE 348. Two challengers enter a shifting 6x6 labyrinth, draft powerful cards, reveal Omens that assign each suit a board role, race through the maze, fight with weapon cards, and use the Appeasing Pan phase to reshape the board or alter health totals.
 
-Pan's Trial is a two-player digital strategy game built for ECE 348. Two challengers enter a shifting labyrinth and compete to become Pan's next champion. Players draft their starting cards, traverse a 6x6 toroidal labyrinth, collect useful cards, fight when they land on the same tile, and use the Appeasing Pan phase to reshape the board or change damage totals.
+## Current Status
 
-## GitHub Submission Layout
+- The full game loop is implemented: draft, coin flip, Omen reveal, Traversing the Labyrinth, Appeasing Pan, Pan requests, post-Appeasing hole placement, game over, match summary, and Play Again.
+- The game can be played from the Windows executable, from source with `main.py`, or in a browser through the `pygbag` web build.
+- The main menu includes `Start Game`, `Two Player`, `How To Play`, `Settings`, and `Quit`.
+- `Two Player` uses room codes, a Ready gate, synchronized coin flip/draft/Omen reveal/gameplay, reconnect-friendly snapshots, and shared rematch consent.
+- The current gameplay HUD shows health remaining out of 25 on the left, the phase banner at the top, and the Omen role legend on the right.
+- During Appeasing Pan, the Omen legend lists roles from strongest to weakest and shows an explicit `Strongest` to `Weakest` arrow.
+- The latest rule/UI regression suite is `tests/test_rules.py`, currently 100 tests.
 
-- `Pans_Trial.exe` - single-file Windows executable for playing the game.
-- gameplay video file - recorded example of the game being played.
-- `README.md` - this guide.
+## Repository Layout
 
-The full project source code, assets, tests, and supporting files are packaged in the release zip named `PansTrial_v1.0` on the right side of the GitHub repository page under Releases. Download that release asset if you want the complete project files instead of only the attached executable/video/README set.
-
-## How to Play the Executable
-
-1. Download `Pans_Trial.exe` from the repository files.
-2. Place it in any folder on your Windows machine.
-3. Double-click `Pans_Trial.exe`.
-4. Use the on-screen controls to start the draft and play the game.
-
-If Windows shows a security warning, choose the option to run the app anyway. This can happen for student-built executables that are not code-signed.
-
-## Download the Full Project
-
-1. Open the GitHub repository page.
-2. Find the Releases section on the right side.
-3. Open the release named `PansTrial_v1.0`.
-4. Download the attached zip file and extract it.
-
-That release zip contains the complete Python project, including `main.py`, the `engine/` and `ui/` folders, tests, assets, and supporting project documents.
+- `main.py` - desktop and browser game entry point.
+- `room_server.py` - room server and static web host for hosted or LAN Two Player games.
+- `build_web.py` - stages and packages the browser build.
+- `engine/` - core rules, game state, cards, board, and actions.
+- `ui/` - pygame screens, board rendering, input handling, audio, and visual helpers.
+- `multiplayer/` - local/browser room clients, server store, and serialization helpers.
+- `assets/` and `audio/` - checked-in visual and sound assets used by desktop and web builds.
+- `tests/test_rules.py` - rule, multiplayer, and UI smoke/regression tests.
+- `WEB_BUILD/site` - generated browser site after running `build_web.py`.
 
 ## Controls
 
 - `Arrow Keys` or `WASD`: move through the labyrinth.
-- `Mouse`: click cards, requests, Ballista targets, Plane Shift rows/columns, Restructure colors, and Appeasing Pan placement holes.
-- `Pick Up`: spend a movement turn to collect the card under the current player, except walls.
+- `Mouse`: choose draft cards, move with board clicks, pick cards, select hand cards, choose requests, target Ballista shots, choose Plane Shift lines, pick Restructure colors, and place Appeasing cards into holes.
+- `Pick Up`: spend a movement turn to collect the card under the active player, except walls.
 
 ## Rules Summary
 
-The game starts with an initial draft. Players alternate choosing high-rank cards, and the remaining player cards are used as the player identities. The Omens then assign the four color families to the current labyrinth roles: Walls, Traps, Ballista, and Weapons.
+Each game starts with a draft from high-rank cards. The remaining player cards become the player identities, and the Omens assign the four suit families to the current board roles: Walls, Traps, Ballista, and Weapons.
 
-During Traversing the Labyrinth, players alternate movement turns. The board wraps toroidally, so leaving one edge enters from the opposite edge. Walls block movement. Traps become damage for the player who triggers them. Ballista tiles let the player choose a reachable tile in a straight line until a wall blocks the path. Weapon-color cards are kept in the normal hand and may be used only during head-to-head combat.
+During Traversing the Labyrinth, players alternate movement turns. The board wraps at the edges. Walls block movement. Traps reduce the triggering player's health. Ballista tiles let the player move in a straight line until a wall blocks the path. Weapon-role hand cards are kept for combat and can be used when both players meet on the same tile.
 
-During Appeasing Pan, both players play one normal hand card if possible. The reversed Omen color order determines trump strength, and same-color cards are decided by card rank. The winner chooses a request first, then the loser chooses unless Ignore Us ends the phase. Requests include Restructure, Steal Life, Ignore Us, and Plane Shift. At the end of the phase, the loser places the two played cards into labyrinth holes when possible; if there are not enough holes, the remaining played cards return to the loser's hand.
+During Appeasing Pan, both players play one normal hand card if possible. Appeasing uses the reversed Omen hierarchy for trump strength, with rank breaking ties only when both cards share the same suit. The winner chooses a Pan request first, then the loser chooses unless `Ignore Us` ends the request sequence. Requests include `Restructure`, `Steal Life`, `Ignore Us`, and `Plane Shift`.
 
-The game ends immediately when a player reaches 25 or more damage. The other player becomes Pan's champion.
+After requests resolve, the Appeasing loser places the two played cards into open labyrinth holes when possible. If holes run out, the remaining cards return to that loser's hand. A player loses when their lost-health total reaches 25 or more, and the other player becomes Pan's champion.
 
 ## Run From Source
 
-If you download and extract the `PansTrial_v1.0` release zip, you can run the game from source. This project was developed with Python 3.13 on Windows.
+Use a fresh Python environment from the project folder. Python 3.12 or 3.13 works for desktop play; Python 3.12 is required for the browser build.
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\activate
-python -m pip install pygame-ce pygame_gui pandas pytest
-python main.py
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install pygame-ce pygame_gui pandas pytest
+.\.venv\Scripts\python.exe main.py
 ```
-
-## Local Two-Player Quick Match
-
-The source and web builds include a room mode for two clients that can reach the same room server. This works on one machine, across a LAN, or across networks if the host exposes the room-server port.
-
-Start the room server on the host machine:
-
-```powershell
-python room_server.py
-```
-
-Then open one of the printed game URLs, such as `http://192.168.1.25:8765`, in both browsers:
-
-1. In the first client, choose `Two Player`, enter a name, then choose `Create Room`.
-2. Share only the room code with the other player.
-3. In the second client, choose `Two Player`, enter a name and the room code, then choose `Join Room`.
-4. Both players choose `Ready`; the shared coin flip, draft, omen reveal, and labyrinth game begin from the same room state.
-
-For web clients, serve the web build over HTTP when connecting to an HTTP room server. Many browsers block an HTTPS page from contacting a plain HTTP room server. To host the room server over HTTPS, provide a TLS certificate and key:
-
-```powershell
-python room_server.py --certfile path\to\cert.pem --keyfile path\to\key.pem
-```
-
-When HTTPS is enabled, use the printed `https://` room URL in the `Two Player` screen. Self-signed certificates may need to be accepted in the browser before the game can contact the room server.
-
-For same-machine desktop testing, you can skip `room_server.py`: choose `Two Player` in the first desktop client and choose `Create Room`. That client will start a private localhost server automatically, and the second same-machine client can join with the room code.
 
 ## Run Tests
 
-If you download the full project release, the included rule tests can be run with:
-
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests\test_rules.py -q
+.\.venv\Scripts\python.exe -m pytest tests\test_rules.py
 ```
 
-## Build the Web Version
+The web-build environment can also run the tests:
 
-The browser build script uses the pygame-web Python 3.12 runtime. From the full project folder, create a fresh Python 3.12 environment and install the web build requirements:
+```powershell
+.\.venv-web\Scripts\python.exe -m pytest tests\test_rules.py
+```
+
+## Build The Web Version
+
+The web build uses Python 3.12 and the pygame-web runtime. From the project folder:
 
 ```powershell
 py -3.12 -m venv .venv-web
-.\.venv-web\Scripts\activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements-web.txt
-python build_web.py --build-only
+.\.venv-web\Scripts\python.exe -m pip install --upgrade pip
+.\.venv-web\Scripts\python.exe -m pip install -r requirements-web.txt
+.\.venv-web\Scripts\python.exe build_web.py --build-only
 ```
 
-The build output is written to `WEB_BUILD\pans_trial_web.zip`. To build and serve it locally in one command, omit `--build-only`:
+The build writes a deployable site to:
+
+```text
+WEB_BUILD\site
+```
+
+It also writes a local deployment zip:
+
+```text
+WEB_BUILD\pans_trial_web.zip
+```
+
+The zip is intentionally ignored by git because it is large and generated.
+
+## Run The Web Game Locally
+
+For the most accurate local web test, run the room server. It serves both the web game and the `/rooms` multiplayer API from the same origin:
 
 ```powershell
-python build_web.py --port 8000
+.\.venv-web\Scripts\python.exe room_server.py --host 127.0.0.1 --port 8000
 ```
 
-Then open `http://localhost:8000` in a browser while the command is still running.
+Open:
 
-For a single hosted URL with multiplayer included, build the web site and run the room server from the same origin:
+```text
+http://127.0.0.1:8000
+```
+
+For testing from another computer or phone on the same Wi-Fi, bind to all interfaces:
 
 ```powershell
-python build_web.py --build-only
-python room_server.py --host 0.0.0.0
+.\.venv-web\Scripts\python.exe room_server.py --host 0.0.0.0 --port 8000
 ```
 
-That serves the generated `WEB_BUILD\site` folder and the `/rooms` API together. On cloud hosts that support a `Procfile` or `render.yaml`, the included config runs those commands for you during deployment, so the service starts when the URL is opened instead of needing a server on your computer.
+Then open the printed `LAN Game URL` on each device. The same URL is used for `Two Player`; the first client creates a room code, and the second client joins with that code.
 
-Hosted room servers also expose `/health` for uptime checks. Production limits can be tuned with `PAN_TRIAL_MAX_ROOMS` and `PAN_TRIAL_ROOM_TIMEOUT_SECONDS`, or with the matching `room_server.py` command-line flags.
+For static single-browser testing only, you can also build and serve in one command:
 
-## Build the Executable
+```powershell
+.\.venv-web\Scripts\python.exe build_web.py --port 8000
+```
 
-If you download the full project release, the submitted executable can be rebuilt with PyInstaller and the included slim spec file. The spec removes unused large pygame_gui CJK font bundles so the single executable stays below the 25 MB upload limit.
+After rebuilding the web version, hard-refresh the browser with `Ctrl+F5` if it still shows an older bundle.
+
+## Hosted Web Deployment
+
+For one hosted URL that supports both the game and multiplayer rooms:
+
+```powershell
+.\.venv-web\Scripts\python.exe build_web.py --build-only
+.\.venv-web\Scripts\python.exe room_server.py --host 0.0.0.0
+```
+
+The included `Procfile` and `render.yaml` are set up for hosts that can run the room server and serve `WEB_BUILD/site`. Hosted room servers expose `/health` for uptime checks. Room limits can be tuned with `PAN_TRIAL_MAX_ROOMS`, `PAN_TRIAL_ROOM_TIMEOUT_SECONDS`, or the matching `room_server.py` flags.
+
+If the page is served over HTTPS, the room API should also be HTTPS. Browsers often block an HTTPS page from contacting a plain HTTP room server. To run the room server with TLS:
+
+```powershell
+.\.venv-web\Scripts\python.exe room_server.py --certfile path\to\cert.pem --keyfile path\to\key.pem
+```
+
+## Build The Windows Executable
+
+The current checked-in executable is `Pans_Trial.exe`. To rebuild it from source with the included PyInstaller spec:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install pyinstaller
 .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath . --workpath build\pyinstaller_slim Pans_Trial_slim.spec
 ```
 
-## Notes for GitHub
+## Submission Notes
 
-The repository file list is intentionally small for submission purposes. The playable `.exe`, the gameplay video, and this README are attached directly, while the complete project is provided through the `PansTrial_v1.0` release zip.
+For a lightweight GitHub submission, the executable, gameplay video, and README can be attached directly, while the full source project can be distributed as a release zip. The active development workspace contains the full source, assets, tests, web build tooling, room server, and supporting reports.

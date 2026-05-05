@@ -13,6 +13,18 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-05-05 - Codex
+Commit: `pending` - Updated Appeasing legend, web package, and project docs
+Summary:
+- Added a Phase 2-only `Strongest` to `Weakest` guide with a downward arrow on the right-side Appeasing Pan Omen legend.
+- Added regression coverage so the strength guide appears during Appeasing Pan and stays hidden during Traversing.
+- Rebuilt the local web package so `WEB_BUILD/site` points at the fresh `pans_trial_web_20260505_124613` bundle.
+- Refreshed `README.md` to describe the current playable game status, controls, rules, source setup, tests, browser build, local room-server flow, hosted deployment, and executable build steps.
+- Rewrote `latex_apr_12_report.txt` as a current publication and engineering report covering the web/app business case, monetization paths, deployment plan, feature-extension workflow, and experimental evidence.
+- Added an `F`-key gameplay frame-rate popup on the right side of the screen with FPS, frame time, work time, sleep time, timing budget, headroom, over-budget time, and animation speed; rebuilt the web package after the change.
+- Tightened `build_web.py` so `WEB_BUILD/site` prunes stale generated bundles before copying the new web build, leaving the deploy folder and zip with only the current package files.
+- Created `WEB_BUILD/pans_trial_backend_site.zip` as a Python-hosting handoff package that serves both the browser game and the `/rooms` multiplayer backend from one website URL.
+
 ## 2026-05-04 - Codex
 Commit: `pending` - Restored the older gameplay HUD direction and added deploy hardening
 Summary:
