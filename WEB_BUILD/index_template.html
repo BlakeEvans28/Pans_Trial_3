@@ -298,14 +298,23 @@ asyncio.run(custom_site())
           }, 120);
       };
       window.panTrialConfiguredRoomServerUrl = __ROOM_SERVER_URL__;
+      window.panTrialNormalizeRoomServerUrl = function(url) {
+          var text = String(url || "").trim().replace(/\/+$/, "");
+          if (!text) { return ""; }
+          try {
+              return new URL(text, window.location.href).href.replace(/\/+$/, "");
+          } catch (_) {
+              return text;
+          }
+      };
       window.panTrialResolveRoomServerUrl = function() {
           var params = new URLSearchParams(window.location.search || "");
           var queryUrl = params.get("roomServer") || params.get("server");
           if (queryUrl) {
-              return String(queryUrl).trim().replace(/\/+$/, "");
+              return window.panTrialNormalizeRoomServerUrl(queryUrl);
           }
           if (window.panTrialConfiguredRoomServerUrl) {
-              return String(window.panTrialConfiguredRoomServerUrl).trim().replace(/\/+$/, "");
+              return window.panTrialNormalizeRoomServerUrl(window.panTrialConfiguredRoomServerUrl);
           }
           var protocol = window.location.protocol;
           var hostname = window.location.hostname;
@@ -317,6 +326,18 @@ asyncio.run(custom_site())
               return window.location.origin.replace(/\/+$/, "");
           }
           return "http://127.0.0.1:8765";
+      };
+      window.panTrialBuildRoomApiUrl = function(baseUrl, parts) {
+          var base = String(baseUrl || "").replace(/\/+$/, "");
+          var encoded = (parts || []).map(function(part) {
+              return encodeURIComponent(String(part || ""));
+          }).join("/");
+          var path = "/" + encoded;
+          var pathOnly = base.split("?")[0].toLowerCase();
+          if (pathOnly.slice(-4) === ".php") {
+              return base + (base.indexOf("?") === -1 ? "?" : "&") + "path=" + encodeURIComponent(path);
+          }
+          return base + path;
       };
       window.panTrialClipboard = {
           lastText: "",
@@ -367,8 +388,8 @@ asyncio.run(custom_site())
               return;
           }
           window.panTrialActiveRoom = null;
-          var url = room.baseUrl.replace(/\/+$/, "") + "/rooms/" + encodeURIComponent(room.roomCode) + "/leave";
-          var payload = JSON.stringify({player_id: room.playerId});
+          var url = window.panTrialBuildRoomApiUrl(room.baseUrl, ["rooms", room.roomCode, "leave"]);
+          var payload = JSON.stringify({player_id: room.playerId, player_token: room.playerToken || ""});
           if (navigator.sendBeacon) {
               try {
                   var blob = new Blob([payload], {type: "application/json"});
@@ -391,7 +412,8 @@ asyncio.run(custom_site())
               window.panTrialActiveRoom = {
                   baseUrl: String(baseUrl || "").replace(/\/+$/, ""),
                   roomCode: String(roomCode || ""),
-                  playerId: Number(playerId)
+                  playerId: Number(playerId),
+                  playerToken: String(arguments.length >= 4 ? arguments[3] || "" : "")
               };
           },
           clearRoom: function(roomCode, playerId) {

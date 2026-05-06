@@ -10,13 +10,14 @@ Pan's Trial is a two-player digital strategy game built for ECE 348. Two challen
 - `Two Player` uses room codes, a Ready gate, synchronized coin flip/draft/Omen reveal/gameplay, reconnect-friendly snapshots, and shared rematch consent.
 - The current gameplay HUD shows health remaining out of 25 on the left, the phase banner at the top, and the Omen role legend on the right.
 - During Appeasing Pan, the Omen legend lists roles from strongest to weakest and shows an explicit `Strongest` to `Weakest` arrow.
-- The latest rule/UI regression suite is `tests/test_rules.py`, currently 111 tests.
+- The latest rule/UI regression suite is `tests/test_rules.py`, currently 114 tests.
 
 ## Repository Layout
 
 - `main.py` - desktop and browser game entry point.
 - `room_server.py` - room server and static web host for hosted or LAN Two Player games.
 - `build_web.py` - stages and packages the browser build.
+- `WEB_BUILD/room_server.php` - optional shared-hosting room relay for sites that can run PHP but not Python.
 - `engine/` - core rules, game state, cards, board, and actions.
 - `ui/` - pygame screens, board rendering, input handling, audio, and visual helpers.
 - `multiplayer/` - local/browser room clients, server store, and serialization helpers.
@@ -128,6 +129,18 @@ For one hosted URL that supports both the game and multiplayer rooms:
 ```
 
 The included `Procfile` and `render.yaml` are set up for hosts that can run the room server and serve `WEB_BUILD/site`. Hosted room servers expose `/health` for uptime checks. Room limits can be tuned with `PAN_TRIAL_MAX_ROOMS`, `PAN_TRIAL_ROOM_TIMEOUT_SECONDS`, or the matching `room_server.py` flags.
+
+### Shared Hosting With PHP
+
+If your website cannot run a long-lived Python backend but can run PHP, build the site in PHP relay mode:
+
+```powershell
+.\.venv-web\Scripts\python.exe build_web.py --build-only --php-room-server
+```
+
+Upload the contents of `WEB_BUILD\site` to your website. The generated `index.html` will point Two Player rooms at `room_server.php`, and the PHP file will store room snapshots in a `pan_trial_room_data` folder beside it. Your host must allow PHP file writes in that folder.
+
+This mode is a hardened lightweight room relay: the PHP file issues per-player secret tokens, rejects mismatched player requests, enforces room revisions, limits payload sizes, and only accepts snapshot updates on the expected room-stage endpoints. The browser game still runs the rules engine, so `room_server.py` remains the stricter authoritative option for production competition, but the PHP path now blocks room-code hijacking and casual forged requests.
 
 If the page is served over HTTPS, the room API should also be HTTPS. Browsers often block an HTTPS page from contacting a plain HTTP room server. To run the room server with TLS:
 

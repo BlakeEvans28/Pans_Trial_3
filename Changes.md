@@ -13,6 +13,15 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-05-06 - Codex
+Commit: `pending` - Added hardened PHP shared-hosting room relay
+Summary:
+- Added `WEB_BUILD/room_server.php`, a lightweight room-code relay for hosts that support PHP file writes but cannot run the Python room server.
+- Updated the browser room client so `.php` room URLs use query-routed endpoints, per-player secret tokens, and authenticated draft/gameplay/rematch/leave requests.
+- Hardened the PHP relay with token checks, revision checks, stage-specific snapshot gates, base64/payload-size validation, and token-aware tab-close cleanup.
+- Added `build_web.py --php-room-server`, copied the PHP relay into generated web builds, rebuilt `WEB_BUILD/site`, and documented the shared-hosting deployment path.
+- Added relay regression coverage, verified the suite at `114` tests, and linted both PHP relay copies with PHP 8.4.
+
 ## 2026-05-05 - Codex
 Commit: `pending` - Restored AI/menu updates and tightened browser room layouts
 Summary:

@@ -7,7 +7,7 @@ import html
 import json
 import mimetypes
 from pathlib import Path, PurePosixPath
-from random import choice, shuffle
+from random import choice
 import socket
 import ssl
 import time
@@ -18,8 +18,9 @@ from urllib import error as urlerror
 from urllib import request
 from urllib.parse import unquote, urlparse
 
-from deck_utils import create_6x6_labyrinth, draft_hands, get_jack_suit_order, setup_game_deck, setup_pregame_cards
-from engine import Action, ActionType, Card, CardRank, GameState, Position
+from deck_utils import get_jack_suit_order, setup_pregame_cards
+from engine import Action, ActionType, Card, CardRank, GameState
+from .game_setup import create_game_from_pregame, create_quick_match_game
 from .serialization import (
     decode_action,
     decode_game_state,
@@ -49,48 +50,6 @@ def _get_unique_player_name(player_name: str, player_id: int, existing_names) ->
         suffix += 1
         candidate = f"{name}{suffix}"
     return candidate
-
-
-def create_game_from_pregame(
-    labyrinth_cards: list[Card],
-    player0_hand: list[Card],
-    player1_hand: list[Card],
-    jack_order: list,
-    starting_player: int = 1,
-) -> GameState:
-    """Create a traversing game from completed shared pregame setup."""
-    from engine import GamePhase
-
-    game = GameState()
-    game.setup_suit_roles(jack_order)
-    available_labyrinth_cards = list(labyrinth_cards)
-
-    for _ in range(100):
-        grid = create_6x6_labyrinth(available_labyrinth_cards)
-        game.setup_board(grid)
-        game.place_player(0, Position(5, 3))
-        game.place_player(1, Position(0, 2))
-        if game.get_legal_moves(0) and game.get_legal_moves(1):
-            break
-        shuffle(available_labyrinth_cards)
-
-    for card in player0_hand:
-        game.add_card_to_hand(0, card)
-    for card in player1_hand:
-        game.add_card_to_hand(1, card)
-
-    game.current_player = starting_player
-    game.traversing_resume_player = starting_player
-    game.phase = GamePhase.TRAVERSING
-    return game
-
-
-def create_quick_match_game() -> GameState:
-    """Create a direct-to-labyrinth two-player game for localhost rooms."""
-    labyrinth_cards, player0_deck, player1_deck, jack_cards = setup_game_deck()
-    player0_hand, player1_hand, starting_player = draft_hands(player0_deck, player1_deck)
-    jack_order = get_jack_suit_order(jack_cards)
-    return create_game_from_pregame(labyrinth_cards, player0_hand, player1_hand, jack_order, starting_player)
 
 
 @dataclass
@@ -141,6 +100,7 @@ class Room:
             "rematch_declined_by": self.rematch_declined_by,
             "rematch_declined_name": self.rematch_declined_name,
             "pregame": {
+                "labyrinth_cards": encode_room_payload(self.labyrinth_cards),
                 "draft_cards": encode_room_payload(self.draft_cards),
                 "available_cards": encode_room_payload(self.available_cards),
                 "jack_cards": encode_room_payload(self.jack_cards),
@@ -798,6 +758,7 @@ class LocalRoomClient:
         self.revision = -1
         self.message = ""
         self.game: GameState | None = None
+        self.labyrinth_cards: list[Card] = []
         self.draft_cards: list[Card] = []
         self.available_cards: list[Card | None] = []
         self.jack_cards: list[Card] = []
@@ -950,6 +911,8 @@ class LocalRoomClient:
     def _apply_pregame_snapshot(self, pregame: dict[str, Any]) -> None:
         if not pregame:
             return
+        if pregame.get("labyrinth_cards"):
+            self.labyrinth_cards = list(decode_room_payload(pregame["labyrinth_cards"]))
         if pregame.get("draft_cards"):
             self.draft_cards = list(decode_room_payload(pregame["draft_cards"]))
         if pregame.get("available_cards"):

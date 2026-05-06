@@ -585,6 +585,137 @@ def test_browser_room_client_uses_javascript_bridge(monkeypatch, game_setup):
     assert bridge.calls[0][1] == "http://192.168.1.10:8765/rooms"
 
 
+def test_browser_room_client_uses_php_relay_query_urls(monkeypatch):
+    """Shared-hosting PHP room URLs should use query routing instead of PATH_INFO."""
+    import platform
+
+    class Bridge:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def request(self, method: str, url: str, body: str) -> str:
+            self.calls.append((method, url, json.loads(body or "{}")))
+            request_body = json.loads(body or "{}")
+            return json.dumps(
+                {
+                    "room_code": "4321",
+                    "player_id": 0,
+                    "players": {"0": "Host"},
+                    "ready": False,
+                    "revision": 0,
+                    "message": "Waiting",
+                    "pregame": request_body["pregame"],
+                    "player_token": "host-secret",
+                    "server_mode": "php_relay",
+                }
+            )
+
+    bridge = Bridge()
+    monkeypatch.setattr(platform, "window", type("Window", (), {"panTrialRoomBridge": bridge})(), raising=False)
+
+    client = BrowserRoomClient.create("Host", "https://pans.example/room_server.php")
+
+    assert client.relay_mode
+    assert client.room_code == "4321"
+    assert bridge.calls[0][0] == "POST"
+    assert bridge.calls[0][1] == "https://pans.example/room_server.php?path=/rooms"
+    assert "labyrinth_cards" in bridge.calls[0][2]["pregame"]
+    assert client.player_token == "host-secret"
+
+
+def test_browser_php_relay_draft_pick_posts_snapshot(monkeypatch):
+    """In PHP relay mode the browser mutates draft state and posts the full room snapshot."""
+    import platform
+
+    class Bridge:
+        def __init__(self) -> None:
+            self.calls = []
+            self.pregame = None
+
+        def request(self, method: str, url: str, body: str) -> str:
+            request_body = json.loads(body or "{}")
+            self.calls.append((method, url, request_body))
+            if url.endswith("?path=/rooms"):
+                self.pregame = request_body["pregame"]
+                return json.dumps(
+                    {
+                        "room_code": "4321",
+                        "player_id": 0,
+                        "players": {"0": "Host", "1": "Guest"},
+                        "ready": True,
+                        "ready_players": [0, 1],
+                        "stage": "coin_flip",
+                        "revision": 7,
+                        "message": "Both players are ready.",
+                        "pregame": self.pregame,
+                        "player_token": "host-secret",
+                        "server_mode": "php_relay",
+                    }
+                )
+            if url.endswith("?path=/rooms/4321/draft"):
+                snapshot = dict(request_body["snapshot"])
+                snapshot["revision"] = 8
+                snapshot["server_mode"] = "php_relay"
+                return json.dumps(snapshot)
+            raise AssertionError(url)
+
+    bridge = Bridge()
+    monkeypatch.setattr(platform, "window", type("Window", (), {"panTrialRoomBridge": bridge})(), raising=False)
+
+    client = BrowserRoomClient.create("Host", "https://pans.example/room_server.php")
+    client.current_drafter = client.player_id
+    picked = client.submit_draft_pick(0)
+
+    assert picked
+    assert bridge.calls[-1][1] == "https://pans.example/room_server.php?path=/rooms/4321/draft"
+    assert bridge.calls[-1][2]["revision"] == 7
+    assert bridge.calls[-1][2]["player_token"] == "host-secret"
+    assert bridge.calls[-1][2]["card_index"] == 0
+    assert bridge.calls[-1][2]["snapshot"]["stage"] == "draft"
+    assert client.revision == 8
+    assert len(client.draft_hands[0]) == 1
+
+
+def test_browser_php_relay_action_posts_authoritative_state(monkeypatch, game_setup):
+    """Gameplay actions in PHP relay mode should upload the browser-computed game state."""
+    import platform
+
+    class Bridge:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def request(self, method: str, url: str, body: str) -> str:
+            request_body = json.loads(body or "{}")
+            self.calls.append((method, url, request_body))
+            snapshot = dict(request_body["snapshot"])
+            snapshot["revision"] = 12
+            snapshot["server_mode"] = "php_relay"
+            return json.dumps(snapshot)
+
+    bridge = Bridge()
+    monkeypatch.setattr(platform, "window", type("Window", (), {"panTrialRoomBridge": bridge})(), raising=False)
+    client = BrowserRoomClient("https://pans.example/room_server.php", "4321", game_setup.current_player, "Host")
+    client.players = {0: "Host", 1: "Guest"}
+    client.ready = True
+    client.ready_players = {0, 1}
+    client.stage = "game"
+    client.revision = 11
+    client.game = game_setup
+    client.player_token = "host-secret"
+
+    action = MoveAction(game_setup.current_player, game_setup.get_legal_moves(game_setup.current_player)[0])
+    submitted = client.submit_action(action)
+
+    assert submitted
+    assert bridge.calls[0][1] == "https://pans.example/room_server.php?path=/rooms/4321/actions"
+    assert bridge.calls[0][2]["revision"] == 11
+    assert bridge.calls[0][2]["player_token"] == "host-secret"
+    assert bridge.calls[0][2]["action_player_id"] == client.player_id
+    assert bridge.calls[0][2]["action_type"] == "move"
+    assert bridge.calls[0][2]["snapshot"]["state"]
+    assert client.revision == 12
+
+
 def test_browser_room_client_tracks_active_room_for_tab_close(monkeypatch):
     """Browser rooms should register and clear a best-effort leave target."""
     import platform
@@ -595,8 +726,8 @@ def test_browser_room_client_tracks_active_room_for_tab_close(monkeypatch):
             self.cleared = []
             self.calls = []
 
-        def rememberRoom(self, base_url: str, room_code: str, player_id: int) -> None:
-            self.remembered.append((base_url, room_code, player_id))
+        def rememberRoom(self, base_url: str, room_code: str, player_id: int, player_token: str = "") -> None:
+            self.remembered.append((base_url, room_code, player_id, player_token))
 
         def clearRoom(self, room_code: str, player_id: int) -> None:
             self.cleared.append((room_code, player_id))
@@ -611,6 +742,7 @@ def test_browser_room_client_tracks_active_room_for_tab_close(monkeypatch):
                         "players": {"0": "Host"},
                         "ready": False,
                         "revision": 0,
+                        "player_token": "host-secret",
                     }
                 )
             if url.endswith("/rooms/1000/leave"):
@@ -621,10 +753,11 @@ def test_browser_room_client_tracks_active_room_for_tab_close(monkeypatch):
     monkeypatch.setattr(platform, "window", type("Window", (), {"panTrialRoomBridge": bridge})(), raising=False)
 
     client = BrowserRoomClient.create("Host", "http://rooms.example/")
-    assert bridge.remembered == [("http://rooms.example", "1000", 0)]
+    assert bridge.remembered == [("http://rooms.example", "1000", 0, "host-secret")]
 
     client.leave()
     assert bridge.cleared == [("1000", 0)]
+    assert json.loads(bridge.calls[-1][2])["player_token"] == "host-secret"
 
 
 def test_browser_room_client_summarizes_html_room_server_errors(monkeypatch):

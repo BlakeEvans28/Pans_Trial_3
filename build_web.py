@@ -40,6 +40,7 @@ FRAMEBUFFER_WIDTH = 1200
 FRAMEBUFFER_HEIGHT = 900
 ZIP_NAME = "pans_trial_web.zip"
 SITE_DIR_NAME = "site"
+PHP_ROOM_SERVER_FILE = "room_server.php"
 DEPENDENCY_INSTALL_HINT = "Install web build dependencies with: python -m pip install -r requirements-web.txt"
 WEB_AUDIO_FILES = (
     "Pan_Intro_Updated.mp3",
@@ -142,6 +143,11 @@ def parse_args() -> argparse.Namespace:
             "Default multiplayer room server URL baked into index.html. "
             "Leave blank to use the hosted page origin in production."
         ),
+    )
+    parser.add_argument(
+        "--php-room-server",
+        action="store_true",
+        help="Bake the generated page to use room_server.php for shared-hosting multiplayer rooms.",
     )
     return parser.parse_args()
 
@@ -409,6 +415,14 @@ def install_index_html(
     (build_web_dir / "index.html").write_text(html, encoding="utf-8")
 
 
+def install_php_room_server(project_root: Path, build_web_dir: Path) -> None:
+    """Copy the optional shared-hosting PHP room relay beside the browser game."""
+    source_path = project_root / "WEB_BUILD" / PHP_ROOM_SERVER_FILE
+    if not source_path.exists():
+        raise SystemExit(f"Required PHP room server file is missing: {source_path}")
+    shutil.copy2(source_path, build_web_dir / PHP_ROOM_SERVER_FILE)
+
+
 def install_favicon(project_root: Path, build_web_dir: Path) -> None:
     favicon_src = project_root / "assets" / "Pan_Icon.png"
     favicon_dst = build_web_dir / "favicon.png"
@@ -493,7 +507,11 @@ def main() -> None:
 
     original_asset_bytes, staged_asset_bytes = stage_project(project_root, staging_root)
     create_bundle_archives(staging_root, build_web_dir, staging_root.name)
-    install_index_html(project_root, build_web_dir, staging_root.name, args.room_server_url)
+    room_server_url = args.room_server_url
+    if args.php_room_server and not room_server_url:
+        room_server_url = PHP_ROOM_SERVER_FILE
+    install_index_html(project_root, build_web_dir, staging_root.name, room_server_url)
+    install_php_room_server(project_root, build_web_dir)
     install_favicon(project_root, build_web_dir)
     browser_audio_bytes = install_browser_audio(project_root, build_web_dir)
     local_cdn_bytes = install_local_pygbag_cdn(project_root, build_web_dir)
