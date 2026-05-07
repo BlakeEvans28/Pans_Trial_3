@@ -48,8 +48,8 @@
 {\Large A Web-Ready Tactical Card-and-Labyrinth Game}\\[0.6in]
 
 {\large Prepared for ECE 348}\\
-{\large Blake Evans and the Pan's Trial Development Team}\\
-{\large May 5, 2026}
+{\large Blake Evans, Brandt Homan, and Walker West}\\
+{\large May 15, 2026}
 
 \vspace*{\fill}
 \end{titlepage}
@@ -62,6 +62,8 @@
 
 \textit{Pan's Trial} began as a tabletop design with a strong central idea: combine card hierarchy, a shifting maze, and direct two-player conflict into one compact contest [1][2]. The digital version exists because of that foundation. The team also benefited from repeated informal testing, course feedback, and implementation reviews that helped turn unclear tabletop steps into visible digital actions.
 
+We thank Robert Russell for the original music featured in \textit{Pan's Trial}. His compositions contribute substantially to the game's atmosphere and identity. His work can be found at \url{https://robertrussellmusic.net/} [12].
+
 We acknowledge the work represented in the current source tree: the rules engine, Pygame interface, themed assets, audio, web build script, room server, balance harness, and regression tests [3][4][5]. Those artifacts make this report more than a design proposal. They make it a publication and engineering argument for a playable product that can continue moving forward.
 
 % LETTER OF TRANSMITTAL
@@ -70,7 +72,7 @@ We acknowledge the work represented in the current source tree: the rules engine
 
 This report presents the current state and publication case for \textit{Pan's Trial}. It was prepared to help instructors, engineers, and potential publishing partners understand what the game is, why the game is commercially promising, how the software is built, and what evidence supports further development.
 
-The work period covered by this report runs from the original March--April 2026 implementation into the May 2026 web and multiplayer hardening pass. The current build now includes the full gameplay loop: draft, coin flip, Omen reveal, Traversing the Labyrinth, Appeasing Pan, all four Pan requests, post-Appeasing card placement, victory resolution, match summary, and Play Again. It also includes a browser build, a hosted room-server path, LAN-ready room-code multiplayer, a How To Play screen, Settings, health-left HUD, themed board art, and an Appeasing Pan legend that explicitly marks strongest-to-weakest role order [3][4][5].
+The work period covered by this report runs from the original March--May 2026 implementation into the May 2026 web and multiplayer hardening pass. The current build now includes the full gameplay loop: draft, coin flip, Omen reveal, Traversing the Labyrinth, Appeasing Pan, all four Pan requests, post-Appeasing card placement, victory resolution, match summary, and Play Again. It also includes a browser build, a hosted room-server path, LAN-ready room-code multiplayer, a How To Play screen, Settings, health-left HUD, themed board art, and an Appeasing Pan legend that explicitly marks strongest-to-weakest role order [3][4][5].
 
 The result is a publishable prototype, not merely a class exercise. The rules are complete, the interface is playable, the browser package is deployable, and the current regression suite reports 100 passing rule, multiplayer, and UI tests. The strongest experimental result is fairness: in a 100-game headless balance run, Player 1 won 52 games and Player 2 won 48, while stronger AI profiles defeated weaker profiles at high rates [6]. The strongest business result is reach: the game can become a one-link browser experience, then expand into Steam, itch.io, and mobile/tablet releases with the same core rules engine.
 
@@ -237,65 +239,225 @@ Future feature work & The engine/UI split lets engineers add rules with focused 
 
 \section*{Rules of Play}
 
-Each match begins with a draft. The Ace-through-9 cards fill the 6x6 labyrinth. The high cards form the draft pool, and the Jacks become Omens. After the draft, the Omen reveal maps suit families to Walls, Traps, Ballista, and Weapons.
+\begin{enumerate}
+\item \textbf{Setup and draft.} Each match begins with a shuffled 6x6 labyrinth made from the Ace-through-9 cards. The four Jacks are set aside as Omens, and the draft pool is the 12 face cards made from the four Satyrs (10), four Oracles (Queen), and four Heroes (King). A coin flip decides who drafts first. Players alternate ten picks total. All Satyrs and Oracles are drafted, but only two Heroes may be taken; the two Heroes left in the pool become the player identity cards.
 
-During Traversing, players move through the labyrinth. They may use keyboard input or mouse clicks. Walls block travel. Traps reduce health and leave holes. Ballista cards let the player choose reachable straight-line movement until a wall blocks the path. Weapon-role cards enter the player's hand and can be used in combat when the players share a tile.
+\item \textbf{Omen assignment.} After the draft, the four Omens are revealed in order. That order assigns one suit to each board role: Walls, Traps, Ballista, and Weapons. A card keeps its suit for the entire match, but its effect depends on the current Omen mapping. Because of that design, the same suit can block movement in one match, become combat material in another, and later change again if a Pan request restructures the roles.
 
-After a movement cycle, the game enters Appeasing Pan if both players have playable hand cards. Both players submit one card. The reversed Omen order determines role strength, and rank breaks ties within the same suit. The winner chooses a request first. Restructure swaps two role assignments. Steal Life swaps damage cards between health piles. Ignore Us ends the request sequence. Plane Shift moves a row or column by one tile. After requests, the Appeasing loser places the two played cards into board holes when possible.
+\item \textbf{Traversing the Labyrinth.} Traversing is the main board state and begins with Player 2 in the current implementation. One Traversing cycle contains six total turns, three per player, with the active player alternating after each move, pickup, or forced pass. On a turn, a player may move one space up, down, left, or right, or spend that turn interacting with the card on the tile they already occupy. The board is toroidal, so leaving one edge wraps to the opposite edge. A move into a Wall is illegal. Landing on or picking up a Trap adds that card to the player's lost-health pile and leaves an empty hole. Landing on or picking up a Weapon adds that card to the player's hand. Landing on a Ballista opens a targeting state where the player chooses any reachable tile in a straight line until a Wall blocks the path. The resulting Ballista launch moves the player without triggering the destination tile's effect. The primary gameplay interface during Traversing is shown in Figure~\ref{fig:board}, including the toroidal board, health display, and Omen legend.
+
+\item \textbf{Combat.} Combat is a temporary substate inside Traversing. It begins whenever both players occupy the same tile, whether that happens through normal movement or a Ballista launch. Each player who has at least one card whose current suit role is Weapons may play one such card from the normal hand. The moving player chooses first, then the opponent. Each played weapon card is added to the opposing player's lost-health pile, so both players can deal damage in the same collision if both have usable weapons. A player loses immediately when the total value of cards in that lost-health pile reaches 25 or more.
+
+\item \textbf{Appeasing Pan.} After six Traversing turns, the game checks whether both players still have at least one hand card. If both do, the match enters Appeasing Pan; if either player has no hand cards left, Appeasing Pan is skipped and the game returns directly to another Traversing cycle. During Appeasing Pan, both players submit one hand card. Winner determination uses the phase hierarchy Walls $>$ Traps $>$ Ballista $>$ Weapons. Rank matters only when both played cards share the same suit. The winner gains first request priority. The Appeasing Pan resolution interface is shown in Figure~\ref{fig:appeasing}, and the request chooser is shown in Figure~\ref{fig:requestchoice}.
+
+\item \textbf{Pan requests.} The Appeasing winner chooses one request first, and the loser chooses a different request second unless the winner uses Ignore Us, which ends the request sequence immediately. Restructure selects two suits and swaps their assigned roles for all matching cards on the board and in players' hands; the interface is shown in Figure~\ref{fig:restructure}. Steal Life exchanges one lost-health card from the chooser with one from the opponent; the resolution screen is shown in Figure~\ref{fig:steallife}. Ignore Us ends the request state with no second request. Plane Shift chooses a row or column and wraps it by one tile, moving cards and any player standing on that line with it; the interaction screen is shown in Figure~\ref{fig:planeshift}.
+
+\item \textbf{Hole placement and reset.} After requests resolve, the Appeasing loser places the two played Appeasing cards into open holes when possible. A legal hole is an empty board space that is not currently occupied by a player. If fewer than two valid holes remain, any unplaced cards return to that loser's hand. If a request leaves a player with no legal movement because Walls now trap them, that player is forced to pass the next three Traversing turns. After hole placement or card return, the game resets to Traversing and the next movement cycle begins.
+\end{enumerate}
 
 \section*{Screens and User Flow}
 
-The current build includes the following screen flow:
+The current build progresses through the following screens in order:
+
 
 \begin{enumerate}
-\item Start screen with Start Game, Two Player, How To Play, Settings, and Quit.
-\item Coin flip and draft setup.
-\item Draft screen with visible pool and player hands.
-\item Omen reveal screen.
+\item The initial interface shown to players is the main menu, illustrated in Figure~\ref{fig:mainmenu}, which provides access to gameplay, multiplayer, tutorials, settings, and exit controls.
+\item The coin flip interface used to establish draft order is shown in Figure~\ref{fig:coinflip}.
+\item Figure~\ref{fig:draft} shows the draft interface with the shared high-card pool and each player's developing hand.
+\item The Omen assignment screen is illustrated in Figure~\ref{fig:omen}.
 \item Gameplay screen with board, health, hand cards, phase banner, Omen legend, and popups.
-\item Game-over screen with winner, match summary, Play Again, and Main Menu.
+\item Appeasing Pan screen with request selection and individual request resolution screens.
+\item The final results interface, including replay controls and match summary information, is shown in Figure~\ref{fig:gameover}.
 \end{enumerate}
 
-Figures~\ref{fig:draft} through \ref{fig:web} identify the screenshots that should be inserted into the final formatted report.
-
+% -----------------------------------------------------------------------
+% PICTURE INSTRUCTION — Figure: fig:mainmenu
+% Filename: Pan's_Trial_Main_Menu.png
+% What to capture: The main menu screen as it appears when the game is
+% first launched. The frame should show all five options — Start Game,
+% Two Player, How To Play, Settings, and Quit — along with the game
+% title and any background artwork or theme elements. This is the first
+% thing a new player sees, so the full branded layout should be visible.
+% -----------------------------------------------------------------------
 \begin{figure}[H]
 \centering
-\safeincludegraphics[width=0.6\linewidth]{image.png}
+\safeincludegraphics[width=0.6\linewidth]{Pan's_Trial_Main_Menu.png}
+\caption{Main menu showing navigation options and the game's branded title screen.}
+\label{fig:mainmenu}
+\end{figure}
+
+% -----------------------------------------------------------------------
+% PICTURE INSTRUCTION — Figure: fig:coinflip
+% Filename: Pan's_Trial_Coin_Flip.png
+% What to capture: The coin flip screen that determines draft order.
+% The frame should show the coin or flip animation in progress or
+% resolved, the result (which player goes first), and any associated
+% text prompt. Capture this at the moment the result is displayed so
+% the reader can see how draft order is established before the
+% draft pool appears.
+% -----------------------------------------------------------------------
+\begin{figure}[H]
+\centering
+\safeincludegraphics[width=0.6\linewidth]{Pan's_Trial_Coin_Flip.png}
+\caption{Coin flip screen that determines which player drafts first.}
+\label{fig:coinflip}
+\end{figure}
+
+% -----------------------------------------------------------------------
+% PICTURE INSTRUCTION — Figure: fig:draft
+% Filename: Pan's_Trial_Draft_Screen.png
+% What to capture: The pregame draft screen with the public 12-card
+% pool visible and both players' trial hands building on either side.
+% Capture this mid-draft so both the remaining pool options and each
+% player's partial hand are simultaneously visible.
+% -----------------------------------------------------------------------
+\begin{figure}[H]
+\centering
+\safeincludegraphics[width=0.6\linewidth]{Pan's_Trial_Draft_Screen.png}
 \caption{Draft interface showing the public high-card pool and both players' trial hands.}
 \label{fig:draft}
 \end{figure}
 
+% -----------------------------------------------------------------------
+% PICTURE INSTRUCTION — Figure: fig:omen
+% Filename: Pan's_Trial_Omen_Screen.png
+% What to capture: The Omen reveal screen with all four Jacks displayed
+% in reveal order alongside the role label each one assigns (e.g.,
+% Hearts → Walls). Capture this at the moment all four assignments
+% are fully visible, before the transition to the gameplay board.
+% -----------------------------------------------------------------------
 \begin{figure}[H]
 \centering
-\safeincludegraphics[width=0.6\linewidth]{Omen.png}
+\safeincludegraphics[width=0.6\linewidth]{Pan's_Trial_Omen_Screen.png}
 \caption{Omen reveal screen that assigns suit families to Walls, Traps, Ballista, and Weapons.}
 \label{fig:omen}
 \end{figure}
 
+% -----------------------------------------------------------------------
+% PICTURE INSTRUCTION — Figure: fig:board
+% Filename: Pan's_Trial_Moving.png
+% What to capture: The main gameplay board during the Traversing phase.
+% The frame should show both player tokens on the 6x6 grid, the
+% health-left HUD, the right-side Omen legend, movement controls, and
+% ideally several already-triggered holes so the toroidal board and
+% card-removal mechanic are both visible.
+% -----------------------------------------------------------------------
 \begin{figure}[H]
 \centering
-\safeincludegraphics[width=0.6\linewidth]{main_s.png}
+\safeincludegraphics[width=0.6\linewidth]{Pan's_Trial_Moving.png}
 \caption{Main gameplay board during Traversing, with health-left HUD and right-side Omen legend.}
 \label{fig:board}
 \end{figure}
 
+% -----------------------------------------------------------------------
+% PICTURE INSTRUCTION — Figure: fig:appeasing
+% Filename: Pan's_Trial_Appeasing_Pan.png
+% What to capture: The Appeasing Pan card-play screen showing both
+% players' submitted cards, the reversed Omen hierarchy, and the
+% strongest-to-weakest role arrow. Capture this at the moment when
+% both cards have been played and the winner is determined, before
+% the request selection step begins.
+% -----------------------------------------------------------------------
 \begin{figure}[H]
 \centering
-\safeincludegraphics[width=0.6\linewidth]{Phase2.png}
-\caption{Appeasing Pan screen showing request resolution and strongest-to-weakest role guidance.}
+\safeincludegraphics[width=0.6\linewidth]{Pan's_Trial_Appeasing_Pan.png}
+\caption{Appeasing Pan screen showing card submission and strongest-to-weakest role guidance.}
 \label{fig:appeasing}
 \end{figure}
 
+% -----------------------------------------------------------------------
+% PICTURE INSTRUCTION — Figure: fig:requestchoice
+% Filename: Pan's_Trial_Request_Choice.png
+% What to capture: The request selection screen that appears after
+% Appeasing Pan resolves and the winner is announced. The frame should
+% show all four request options — Restructure, Steal Life, Ignore Us,
+% and Plane Shift — clearly labeled and selectable, along with any
+% prompt identifying whose turn it is to choose. This confirms to the
+% reader that the four requests are presented as a distinct UI step.
+% -----------------------------------------------------------------------
 \begin{figure}[H]
 \centering
-\safeincludegraphics[width=0.6\linewidth]{end.png}
+\safeincludegraphics[width=0.6\linewidth]{Pan's_Trial_Pan_Requests.png}
+\caption{Pan's Request selection screen where the Appeasing winner chooses from the four available requests.}
+\label{fig:requestchoice}
+\end{figure}
+
+% -----------------------------------------------------------------------
+% PICTURE INSTRUCTION — Figure: fig:planeshift
+% Filename: Pan's_Trial_Plane_Shift.png
+% What to capture: The Plane Shift request resolution screen. The
+% frame should show the board with a highlighted row or column ready
+% to be shifted, the shift direction indicator, and any prompt asking
+% the player to confirm or select the target row/column. Capture this
+% at the moment the player must make the selection so the interactive
+% nature of the request is visible.
+% -----------------------------------------------------------------------
+\begin{figure}[H]
+\centering
+\safeincludegraphics[width=0.6\linewidth]{Pan's_Trial_Plane_Shift.png}
+\caption{Plane Shift request resolution showing the row or column selection and shift direction prompt.}
+\label{fig:planeshift}
+\end{figure}
+
+% -----------------------------------------------------------------------
+% PICTURE INSTRUCTION — Figure: fig:restructure
+% Filename: Pan's_Trial_Restructure.png
+% What to capture: The Restructure request resolution screen. The
+% frame should show the two suit families being selected for role swap,
+% with any highlights or labels indicating which roles are about to
+% change. Capture this at the moment when both families have been
+% chosen but before the swap is confirmed, so the selection state
+% is clearly visible.
+% -----------------------------------------------------------------------
+\begin{figure}[H]
+\centering
+\safeincludegraphics[width=0.6\linewidth]{Pan's_Trial_Restructure.png}
+\caption{Restructure request resolution showing the two suit families selected for a role swap.}
+\label{fig:restructure}
+\end{figure}
+
+% -----------------------------------------------------------------------
+% PICTURE INSTRUCTION — Figure: fig:steallife
+% Filename: Pan's_Trial_Steal_Life.png
+% What to capture: The Steal Life request resolution screen. The frame
+% should show both players' damage piles with one card from each
+% highlighted or selected for the swap. Capture this at the moment
+% the player has selected the target cards but before the swap
+% executes, so the selection prompt and both damage piles are
+% simultaneously visible.
+% -----------------------------------------------------------------------
+\begin{figure}[H]
+\centering
+\safeincludegraphics[width=0.6\linewidth]{Pan's_Trial_Steal_Life.png}
+\caption{Steal Life request resolution showing the selected damage cards from each pile being swapped.}
+\label{fig:steallife}
+\end{figure}
+
+% -----------------------------------------------------------------------
+% PICTURE INSTRUCTION — Figure: fig:gameover
+% Filename: Pan's_Trial_Victory.png
+% What to capture: The game-over results screen. The frame should
+% clearly show the winner announcement, final health totals for both
+% players, the match summary, and the Play Again and Main Menu controls.
+% -----------------------------------------------------------------------
+\begin{figure}[H]
+\centering
+\safeincludegraphics[width=0.6\linewidth]{Pan's_Trial_Victory.png}
 \caption{Game-over screen showing the winner, match summary, and replay controls.}
 \label{fig:gameover}
 \end{figure}
 
+% -----------------------------------------------------------------------
+% PICTURE INSTRUCTION — Figure: fig:web
+% Filename: Pan's_Trial_Two_Player.png
+% What to capture: The Two Player room flow or an active browser
+% match using the room-code server. The ideal frame shows the room
+% code entry or display alongside at least one player connected, so
+% the reader can see how the LAN/browser multiplayer entry point works.
+% -----------------------------------------------------------------------
 \begin{figure}[H]
 \centering
-\safeincludegraphics[width=0.6\linewidth]{multiplayer.png}
+\safeincludegraphics[width=0.6\linewidth]{Pan's_Trial_Two_Player.png}
 \caption{Two Player room flow or active browser match using the room-code server.}
 \label{fig:web}
 \end{figure}
@@ -577,6 +739,13 @@ With those steps, \textit{Pan's Trial} can move from course project to commercia
 \hangafter=1
 [11] itch.io. \textit{About itch.io: Open Revenue Sharing}. \url{https://itch.io/docs/general/about}
 
+\bigskip
+
+\noindent
+\hangindent=0.5in
+\hangafter=1
+[12] Russell, Robert. \textit{Robert Russell Music}. \url{https://robertrussellmusic.net/}
+
 % APPENDICES
 \appendix
 \chapter{Engineering Handoff Checklist}
@@ -590,44 +759,5 @@ With those steps, \textit{Pan's Trial} can move from course project to commercia
 \item When testing multiplayer, use the room server so the static site and room API share one origin.
 \item For public hosting, use HTTPS for both the page and the room API.
 \end{itemize}
-
-\chapter{Screenshot Placement Guide}
-
-\begin{table}[H]
-\centering
-\caption{Screenshot Placement Guide}
-\small
-\renewcommand{\arraystretch}{1.2}
-\begin{tabular}{|p{0.5in}|p{1.2in}|p{1.4in}|p{3.2in}|}
-\hline
-\textbf{Figure} & \textbf{Label} & \textbf{Filename} & \textbf{Capture Guidance} \\
-\hline
-1 & \texttt{fig:draft} & \texttt{image.png} & Draft screen with the pool and both player hands visible. \\
-\hline
-2 & \texttt{fig:omen} & \texttt{Omen.png} & Omen reveal with all four role assignments visible. \\
-\hline
-3 & \texttt{fig:board} & \texttt{main\_s.png} & Traversing board with health-left HUD and Omen legend. \\
-\hline
-4 & \texttt{fig:appeasing} & \texttt{Phase2.png} & Appeasing Pan screen showing the strength arrow and a request or card-play prompt. \\
-\hline
-5 & \texttt{fig:gameover} & \texttt{end.png} & Winner screen with match summary and replay controls. \\
-\hline
-6 & \texttt{fig:web} & \texttt{multiplayer.png} & Browser room creation/join flow or active two-player web match. \\
-\hline
-\end{tabular}
-\normalsize
-\renewcommand{\arraystretch}{1.0}
-\end{table}
-
-\chapter{Future Product Roadmap}
-
-\begin{enumerate}
-\item \textbf{Public web launch}: deploy one URL that hosts both the web bundle and room API.
-\item \textbf{First-run tutorial}: guide the first draft, first move, first pickup, first combat, and first Appeasing Pan turn.
-\item \textbf{Solo Tutorial}: add a simple AI opponent so a reviewer can play without a second person.
-\item \textbf{Match pacing}: tune Plane Shift, movement cycles, damage pressure, and request balance.
-\item \textbf{Store readiness}: prepare trailer, screenshots, capsule art, privacy policy, and support email.
-\item \textbf{Commercial release}: test itch.io first, then Steam, then mobile/tablet if touch testing is strong.
-\end{enumerate}
 
 \end{document}
