@@ -153,6 +153,21 @@ function ready_room(string $dataDir, string $code, array $body): array
     }
 
     $readyPlayers = normalized_int_list($room['ready_players'] ?? []);
+    if (in_array($playerId, $readyPlayers, true)) {
+        $readyPlayers = array_values(array_filter(
+            $readyPlayers,
+            function (int $readyPlayerId) use ($playerId): bool {
+                return $readyPlayerId !== $playerId;
+            }
+        ));
+        $room['ready_players'] = $readyPlayers;
+        $room['ready'] = true;
+        $room['message'] = ($players[(string)$playerId] ?? 'Player') . ' is no longer ready.';
+        $room['revision'] = intval($room['revision'] ?? 0) + 1;
+        save_room($dataDir, $room);
+        return ok(room_response($room, $playerId));
+    }
+
     if (!in_array($playerId, $readyPlayers, true)) {
         $readyPlayers[] = $playerId;
         sort($readyPlayers);

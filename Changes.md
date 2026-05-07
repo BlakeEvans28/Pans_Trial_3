@@ -13,6 +13,17 @@ Use this file to track the most recent committed changes in reverse chronologica
 7. Keep the summary focused on meaningful code, content, or behavior changes.
 8. Do not delete or rewrite older entries unless the user explicitly asks for it.
 
+## 2026-05-07 - Codex
+Commit: `pending` - Completed gameplay clarity future improvements
+Summary:
+- Made the Two Player lobby Ready button toggle to Unready for players who have already readied, with matching Python and PHP room-server behavior.
+- Added a gameplay Turn Log panel under the Omen legend that shows the current instruction plus recent moves, trap damage, combat, requests, Ballista launches, and placement outcomes.
+- Kept Appeasing Pan card submissions hidden in the Turn Log while still summarizing who won the resolution.
+- Added hover help for draft cards, board movement targets, Ballista targets, and placement holes so small screens still explain card values and tile effects.
+- Slowed local AI pacing by staging draft/gameplay choices with a visible highlight before the AI commits the move, without adding action-description prompts.
+- Rebuilt `WEB_BUILD/site`, `WEB_BUILD/pans_trial_web.zip`, and the professor-style `PANS_TRIAL` PHP upload package with the fresh `pans_trial_web_20260507_151719` bundle.
+- Added regression coverage for ready toggling, the lobby label, and the action log; verified the suite at `118` tests.
+
 ## 2026-05-06 - Codex
 Commit: `pending` - Added hardened PHP shared-hosting room relay
 Summary:

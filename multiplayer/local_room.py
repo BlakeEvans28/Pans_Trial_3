@@ -183,7 +183,7 @@ class RoomStore:
             self._advance_automation_locked(room)
             return room
 
-    def set_player_ready(self, code: str, player_id: int) -> Room:
+    def toggle_player_ready(self, code: str, player_id: int) -> Room:
         with self._lock:
             room = self._get_room_locked(code)
             self._touch_room_locked(room)
@@ -194,6 +194,12 @@ class RoomStore:
             if room.stage != "lobby":
                 return room
 
+            if player_id in room.ready_players:
+                room.ready_players.remove(player_id)
+                room.message = f"{room.players[player_id]} is no longer ready."
+                room.revision += 1
+                return room
+
             room.ready_players.add(player_id)
             if room.all_players_ready:
                 room.stage = "coin_flip"
@@ -202,6 +208,10 @@ class RoomStore:
                 room.message = f"{room.players[player_id]} is ready. Waiting for the other player."
             room.revision += 1
             return room
+
+    def set_player_ready(self, code: str, player_id: int) -> Room:
+        """Backward-compatible name for the lobby ready/unready toggle."""
+        return self.toggle_player_ready(code, player_id)
 
     def submit_draft_pick(
         self,
@@ -600,7 +610,7 @@ def make_room_handler(store: RoomStore, scheme: str = "http", web_root: Path | s
 
                 if len(parts) == 3 and parts[0] == "rooms" and parts[2] == "ready":
                     player_id = int(body.get("player_id"))
-                    room = store.set_player_ready(parts[1], player_id)
+                    room = store.toggle_player_ready(parts[1], player_id)
                     _json_response(self, 200, room.snapshot(player_id))
                     return
 

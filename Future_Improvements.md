@@ -4,10 +4,10 @@
 
 
 # For AI
-- for the multiplayer menu, ready needs to toggle `ready` and `unready` depending on players ready state
+- Completed 2026-05-07: for the multiplayer menu, ready now toggles `ready` and `unready` depending on players ready state. It says Unready if the player is currently ready.
 
-- I would have a logging window that shows how things resolved and what happened (as in moves, why I lost life, etc.).  This could also say who is currently playing and what they need to do - as in "Place the cards on the side of the board".
+- Completed 2026-05-07: added a logging window that shows how things resolved and what happened, including moves, lost health, combat, requests, Ballista launches, and placement outcomes. It also shows who is currently playing and what they need to do.
 
-- In drafting I don't know the difference between Satyr and Oracle versus Hero.  Maybe have a hover over card so that it tells me what?  Similarly, when I'm supposed to move a hover over the location telling me what happens would be useful. This is because the legend doesn't show on smaller screens
+- Completed 2026-05-07: added hover help for draft cards so Satyr, Oracle, and Hero values are visible, plus hover help for move targets and other board targets.
 
-- When the AI makes moves or decisions in vs AI mode, the decisions and moviements it makes needs to be slower (they are currently too fast and hard to understand to the normal player). Do not use text prompts that say what is does, just visually make their decisions slower and more understandable.
+- Completed 2026-05-07: slowed AI drafting and gameplay decisions and added visual preview highlights before the AI commits board choices.

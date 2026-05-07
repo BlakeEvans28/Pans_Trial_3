@@ -1543,6 +1543,15 @@ class MultiplayerLobbyScreen(Screen):
             self.server_url_text = server_url
             self.server_entry.set_text(server_url)
 
+    def _get_ready_button_label(self) -> str:
+        """Return Ready or Unready based on this player's lobby state."""
+        session = getattr(self.window, "multiplayer_session", None)
+        if session is None or getattr(session, "stage", "lobby") != "lobby":
+            return "Ready"
+        player_id = getattr(session, "player_id", None)
+        ready_players = getattr(session, "ready_players", set())
+        return "Unready" if player_id in ready_players else "Ready"
+
     def handle_events(self, event: pygame.event.Event) -> bool:
         if event.type == pygame.MOUSEMOTION:
             self.hovered_button = self._button_at(event.pos)
@@ -1609,7 +1618,7 @@ class MultiplayerLobbyScreen(Screen):
         for key, label in [
             ("create", "Create Room"),
             ("join", "Join Room"),
-            ("ready", "Ready"),
+            ("ready", self._get_ready_button_label()),
             ("back", "Back"),
         ]:
             self._render_wood_button(
@@ -2328,6 +2337,8 @@ class DraftScreen(Screen):
         self.draft_tutorial_panel_rect = None
         self.finished = False
         self.ai_pick_elapsed = 0.0
+        self.ai_pending_draft_index = None
+        self.ai_pending_draft_elapsed = 0.0
         self._refresh_fonts()
         self._create_ui()
         self.on_resize()
@@ -2385,6 +2396,8 @@ class DraftScreen(Screen):
         self.player_cards = []
         self.finished = False
         self.ai_pick_elapsed = 0.0
+        self.ai_pending_draft_index = None
+        self.ai_pending_draft_elapsed = 0.0
         self._update_buttons()
 
     def handle_events(self, event: pygame.event.Event) -> bool:
@@ -2405,6 +2418,8 @@ class DraftScreen(Screen):
             self.tutorial_toggle_rect = None
             return True
 
+        self.ai_pending_draft_index = None
+        self.ai_pending_draft_elapsed = 0.0
         for index, rect in enumerate(self.card_rects):
             if rect.collidepoint(event.pos):
                 return self._pick_card(index)
@@ -2466,6 +2481,8 @@ class DraftScreen(Screen):
         self.current_player = int(getattr(session, "current_drafter", self.current_player))
         self.kings_drafted = int(getattr(session, "kings_drafted", self.kings_drafted))
         self.player_cards = list(getattr(session, "player_cards", self.player_cards))
+        self.ai_pending_draft_index = None
+        self.ai_pending_draft_elapsed = 0.0
         self._update_buttons()
 
     def _can_pick_card(self, card) -> bool:
@@ -2485,14 +2502,28 @@ class DraftScreen(Screen):
             and getattr(self.window, "multiplayer_session", None) is None
             and self.current_player == ai_controller.player_id
         ):
-            self.ai_pick_elapsed += time_delta
-            if self.ai_pick_elapsed >= getattr(ai_controller, "draft_delay", 0.55):
-                self.pick_ai_card()
-                self.ai_pick_elapsed = 0.0
+            if self.ai_pending_draft_index is None:
+                self.ai_pick_elapsed += time_delta
+                if self.ai_pick_elapsed >= getattr(ai_controller, "draft_delay", 0.95):
+                    self.ai_pending_draft_index = self.choose_ai_draft_index()
+                    self.ai_pending_draft_elapsed = 0.0
+                    if self.ai_pending_draft_index is None:
+                        self.ai_pick_elapsed = 0.0
+            else:
+                self.ai_pending_draft_elapsed += time_delta
+                if self.ai_pending_draft_elapsed >= getattr(ai_controller, "draft_preview_delay", 0.70):
+                    self.pick_ai_card(self.ai_pending_draft_index)
+                    self.ai_pending_draft_index = None
+                    self.ai_pending_draft_elapsed = 0.0
+                    self.ai_pick_elapsed = 0.0
+        else:
+            self.ai_pick_elapsed = 0.0
+            self.ai_pending_draft_index = None
+            self.ai_pending_draft_elapsed = 0.0
         self._update_buttons()
 
-    def pick_ai_card(self) -> bool:
-        """Let the single-player AI choose and take one draft card."""
+    def choose_ai_draft_index(self) -> int | None:
+        """Return the single-player AI's next draft pick without taking it yet."""
         ai_controller = getattr(self.window, "single_player_ai", None)
         if (
             ai_controller is None
@@ -2500,18 +2531,30 @@ class DraftScreen(Screen):
             or getattr(self.window, "multiplayer_session", None) is not None
             or self.current_player != ai_controller.player_id
         ):
-            return False
+            return None
 
-        draft_index = ai_controller.choose_draft_index(
+        return ai_controller.choose_draft_index(
             self.available_cards,
             self.player_hands[self.current_player],
             self.player_hands[1 - self.current_player],
             self.kings_drafted,
         )
+
+    def pick_ai_card(self, draft_index: int | None = None) -> bool:
+        """Let the single-player AI choose and take one draft card."""
+        if draft_index is None:
+            draft_index = self.choose_ai_draft_index()
         if draft_index is None:
             return False
-        self._pick_card(draft_index)
-        return True
+        return bool(self._pick_card(draft_index))
+
+    def _get_hovered_draft_card_index(self) -> int | None:
+        """Return the draft card currently under the cursor."""
+        mouse_pos = pygame.mouse.get_pos()
+        for index, rect in enumerate(self.card_rects):
+            if rect.collidepoint(mouse_pos):
+                return index
+        return None
 
     def render(self, surface: pygame.Surface) -> None:
         """Render draft instructions and current picks."""
@@ -2678,9 +2721,18 @@ class DraftScreen(Screen):
             anchor="center",
         )
 
+        hovered_draft_index = self._get_hovered_draft_card_index()
+        hovered_draft_card = None
+        hovered_draft_rect = None
         for index, rect in enumerate(self.card_rects):
             card = self.available_cards[index] if index < len(self.available_cards) else None
-            self._render_draft_card(surface, rect, card)
+            if index == hovered_draft_index:
+                hovered_draft_card = card
+                hovered_draft_rect = rect
+            self._render_draft_card(surface, rect, card, previewed=index == self.ai_pending_draft_index)
+
+        if hovered_draft_card is not None and hovered_draft_rect is not None:
+            self._render_draft_hover_help(surface, hovered_draft_rect, hovered_draft_card)
 
         margin = self.scale_x(70, 20)
         panel_gap = self.scale_x(60, 12)
@@ -2823,7 +2875,14 @@ class DraftScreen(Screen):
         amount = 0.58 if enabled else 0.72
         return tuple(int(channel * (1 - amount) + target[index] * amount) for index, channel in enumerate(base))
 
-    def _render_draft_card(self, surface: pygame.Surface, rect: pygame.Rect, card) -> None:
+    def _render_draft_card(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        card,
+        *,
+        previewed: bool = False,
+    ) -> None:
         """Draw one draft card with a vector suit icon."""
         if card is None:
             radius = self.scale(10, 6)
@@ -2835,12 +2894,12 @@ class DraftScreen(Screen):
 
         enabled = self._can_pick_card(card)
         fill = self._muted_family_color(card.suit, enabled)
-        border = get_family_color(card.suit) if enabled else (95, 95, 95)
+        border = (252, 222, 104) if previewed else (get_family_color(card.suit) if enabled else (95, 95, 95))
         text_color = (35, 35, 35) if enabled else (92, 92, 98)
 
         radius = self.scale(12, 8)
         pygame.draw.rect(surface, fill, rect, border_radius=radius)
-        pygame.draw.rect(surface, border, rect, 3, border_radius=radius)
+        pygame.draw.rect(surface, border, rect, self.scale(4 if previewed else 3, 2), border_radius=radius)
 
         rank = self.card_font.render(get_rank_name(card.rank), True, text_color)
         rank_rect = rank.get_rect(center=(rect.centerx, rect.y + self.scale(28, 18)))
@@ -2849,6 +2908,44 @@ class DraftScreen(Screen):
         suit_name = self.small_font.render(get_family_name(card.suit), True, text_color)
         suit_rect = suit_name.get_rect(center=(rect.centerx, rect.centery + self.scale(10, 6)))
         surface.blit(suit_name, suit_rect)
+
+    def _render_draft_hover_help(self, surface: pygame.Surface, source_rect: pygame.Rect, card) -> None:
+        """Show the value and draft meaning for the hovered high-rank card."""
+        value_text = get_rank_name_with_value(card.rank)
+        if card.rank == CardRank.KING:
+            role_text = "Hero value 12. Draft only two; the two left become player cards."
+        elif card.rank == CardRank.QUEEN:
+            role_text = "Oracle value 11. Draft all Oracles into trial hands."
+        else:
+            role_text = "Satyr value 10. Draft all Satyrs into trial hands."
+        family_text = f"{get_family_name(card.suit)} color family."
+        text = f"{value_text}: {family_text} {role_text}"
+
+        width = min(self.scale_x(430, 260), self.window.WINDOW_WIDTH - 2 * self.scale_x(14, 10))
+        height = self.scale_y(74, 58)
+        x = source_rect.centerx - width // 2
+        y = source_rect.bottom + self.scale_y(8, 5)
+        if y + height > self.window.WINDOW_HEIGHT - self.scale_y(12, 8):
+            y = source_rect.y - height - self.scale_y(8, 5)
+        panel_rect = self._clamp_panel_rect(pygame.Rect(x, y, width, height), self.scale(10, 6))
+        self._render_stone_panel(surface, panel_rect, dim_alpha=24, shadow_alpha=58)
+        text_rect = self._get_stone_content_rect(panel_rect, extra_x=self.scale_x(4, 2))
+        font = self._get_fitted_game_font(
+            text,
+            self.font_size(20, 14),
+            text_rect,
+            3,
+            self.font_size(13, 10),
+        )
+        self._draw_wrapped_carved_text(
+            surface,
+            text,
+            font,
+            (74, 66, 54),
+            text_rect,
+            max(self.scale_y(18, 13), font.get_linesize()),
+            3,
+        )
 
     def _render_hand_panel(
         self,

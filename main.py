@@ -229,6 +229,7 @@ async def main():
                 screen_manager.add_screen(ScreenType.GAME, game_screen)
             else:
                 game_screen.game = game
+                game_screen.reset_action_log()
             window.multiplayer_session = multiplayer_client
             screen_manager.set_screen(ScreenType.GAME)
 
@@ -360,8 +361,14 @@ async def main():
                             server_url=multiplayer_client.base_url,
                         )
                     elif multiplayer_client.mark_ready():
+                        if multiplayer_client.stage != "lobby":
+                            ready_message = "Both players are ready. Starting the coin flip."
+                        elif multiplayer_client.player_id in multiplayer_client.ready_players:
+                            ready_message = "You are ready. Waiting for the other player."
+                        else:
+                            ready_message = "You are unready. Press Ready when you are set."
                         lobby_screen.set_status(
-                            "You are ready. Waiting for the other player.",
+                            ready_message,
                             room_code=multiplayer_client.room_code,
                             server_url=multiplayer_client.base_url,
                         )
@@ -434,6 +441,7 @@ async def main():
                         screen_manager.add_screen(ScreenType.GAME, game_screen)
                     else:
                         game_screen.game = game
+                        game_screen.reset_action_log()
                     screen_manager.set_screen(ScreenType.GAME)
 
             elif screen_manager.current_screen == ScreenType.COIN_FLIP:

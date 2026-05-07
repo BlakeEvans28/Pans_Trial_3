@@ -39,8 +39,10 @@ class SmartPanAI:
 
     player_id: int = 1
     search_depth: int = 3
-    action_delay: float = 0.45
-    draft_delay: float = 0.55
+    action_delay: float = 0.95
+    action_preview_delay: float = 0.65
+    draft_delay: float = 0.95
+    draft_preview_delay: float = 0.70
     max_branching: int = 8
 
     def is_my_turn(self, game: GameState) -> bool:

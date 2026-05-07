@@ -23,7 +23,7 @@ from .input_handler import InputHandler
 from .suit_icons import draw_suit_icon
 from engine import (
     Action, CardRank, GameState, GamePhase, MoveAction, Position,
-    ChooseRequestAction, RequestType, PlayCardAction, ChooseCombatCardAction,
+    PickupCurrentCardAction, ChooseRequestAction, RequestType, PlayCardAction, ChooseCombatCardAction,
     SelectDamageCardAction, SelectRestructureSuitAction, SelectPlaneShiftDirectionAction,
     ResolvePlaneShiftAction, ResolveBallistaShotAction, CancelRequestSelectionAction, PlaceCardsAction,
     direction_to_movement,
@@ -121,8 +121,15 @@ class GameScreen(Screen):
         self._last_tutorial_phase = self.game.phase
         self.notice_text = None
         self.notice_timer = 0.0
+        self.action_log: list[str] = []
+        self.current_status_text = ""
+        self._seen_major_event_count = len(self.game.major_events)
+        self._seen_request_history_count = len(self.game.request_history)
+        self._seen_appeasing_history_count = len(self.game.appeasing_history)
         self.pause_menu_open = False
         self.ai_action_elapsed = 0.0
+        self.ai_pending_action = None
+        self.ai_pending_action_elapsed = 0.0
         self.plane_shift_preview_elapsed = 0.0
         self.frame_rate_overlay_visible = False
         self._phase_banner_base = self._load_phase_banners()
@@ -896,6 +903,7 @@ class GameScreen(Screen):
     def _apply_action(self, action: Action) -> bool:
         """Apply a game action and trigger matching UI-side sounds."""
         had_combat = self.game.has_pending_combat()
+        action_context = self._capture_action_log_context(action)
 
         session = self._get_multiplayer_session()
         if session is not None:
@@ -916,6 +924,8 @@ class GameScreen(Screen):
         if not applied:
             return False
 
+        self._log_applied_action(action, action_context)
+
         audio = getattr(self.window, "audio", None)
         if audio is None:
             return True
@@ -923,6 +933,212 @@ class GameScreen(Screen):
         if not had_combat and self.game.has_pending_combat():
             audio.play_clash()
         return True
+
+    def _capture_action_log_context(self, action: Action) -> dict:
+        """Capture pre-action details needed for readable log lines."""
+        context = {
+            "major_len": len(self.game.major_events),
+            "request_len": len(self.game.request_history),
+            "appeasing_len": len(self.game.appeasing_history),
+            "damage": {
+                0: self.game.get_damage_total(0),
+                1: self.game.get_damage_total(1),
+            },
+        }
+
+        if isinstance(action, MoveAction):
+            current_pos = self.game.board.get_player_position(action.player_id)
+            if current_pos is not None:
+                dr, dc = direction_to_movement(action.direction)
+                target = Position((current_pos.row + dr) % 6, (current_pos.col + dc) % 6)
+                context["target"] = target
+                context["target_card"] = self.game.board.get_card(target)
+                context["target_role"] = self.game.suit_roles.get(context["target_card"].suit) if context["target_card"] else None
+                context["target_player"] = self.game.board.get_player_at(target)
+
+        elif isinstance(action, PickupCurrentCardAction):
+            current_pos = self.game.board.get_player_position(action.player_id)
+            if current_pos is not None:
+                context["target"] = current_pos
+                context["target_card"] = self.game.board.get_card(current_pos)
+                context["target_role"] = self.game.suit_roles.get(context["target_card"].suit) if context["target_card"] else None
+
+        elif isinstance(action, ResolvePlaneShiftAction):
+            context["plane_shift_direction"] = self.game.get_pending_plane_shift_direction()
+
+        elif isinstance(action, PlaceCardsAction):
+            pending_cards = self.game.get_pending_placement_cards()
+            if action.card_indices is None:
+                card_indices = list(range(len(action.positions)))
+            else:
+                card_indices = list(action.card_indices)
+            context["placed_cards"] = [
+                pending_cards[index]
+                for index in card_indices
+                if 0 <= index < len(pending_cards)
+            ]
+
+        elif isinstance(action, SelectDamageCardAction):
+            context["selected_own"] = self.game.get_pending_steal_life_card()
+
+        return context
+
+    def _log_applied_action(self, action: Action, context: dict) -> None:
+        """Append action and engine-resolution details to the turn log."""
+        line = self._describe_applied_action(action, context)
+        if line:
+            self._append_action_log(line)
+
+        for text in self.game.appeasing_history[context.get("appeasing_len", 0):]:
+            self._append_action_log(self._format_appeasing_history_for_log(text))
+        for text in self.game.request_history[context.get("request_len", 0):]:
+            self._append_action_log(self._replace_player_tokens(text))
+        for text in self.game.major_events[context.get("major_len", 0):]:
+            self._append_action_log(self._replace_player_tokens(text))
+
+        self._seen_appeasing_history_count = len(self.game.appeasing_history)
+        self._seen_request_history_count = len(self.game.request_history)
+        self._seen_major_event_count = len(self.game.major_events)
+
+    def _describe_applied_action(self, action: Action, context: dict) -> str:
+        """Return one concise human-facing line for a completed action."""
+        player = self._get_player_name(action.player_id)
+
+        if isinstance(action, MoveAction):
+            target = context.get("target")
+            destination = self._format_board_position(target) if target is not None else "a new space"
+            target_player = context.get("target_player")
+            if target_player is not None and target_player != action.player_id:
+                return f"{player} moved {action.direction} to {destination}, starting combat with {self._get_player_name(target_player)}."
+            card = context.get("target_card")
+            role = context.get("target_role")
+            if card is not None:
+                effect = self._describe_card_effect_for_log(card, role)
+                return f"{player} moved {action.direction} to {destination}: {effect}"
+            return f"{player} moved {action.direction} to {destination}."
+
+        if isinstance(action, PickupCurrentCardAction):
+            card = context.get("target_card")
+            role = context.get("target_role")
+            if card is None:
+                return f"{player} used the current tile."
+            return f"{player} used the current tile: {self._describe_card_effect_for_log(card, role)}"
+
+        if isinstance(action, ChooseCombatCardAction):
+            opponent = 1 - action.player_id
+            return f"{player} used {self._format_card_label(action.card)} as a weapon; {self._get_player_name(opponent)} lost {action.card.combat_value()} health."
+
+        if isinstance(action, PlayCardAction):
+            return f"{player} submitted a hidden Appeasing Pan card."
+
+        if isinstance(action, ChooseRequestAction):
+            request_name = action.request_type.value.replace("_", " ").title()
+            return f"{player} chose {request_name}."
+
+        if isinstance(action, SelectDamageCardAction):
+            pile_owner = self._get_player_name(action.pile_owner)
+            if context.get("selected_own") is None and action.pile_owner == action.player_id:
+                return f"{player} selected {self._format_card_label(action.card)} from their lost-health pile."
+            return f"{player} selected {self._format_card_label(action.card)} from {pile_owner}'s lost-health pile."
+
+        if isinstance(action, SelectRestructureSuitAction):
+            return f"{player} selected {get_family_name(action.suit)} for Restructure."
+
+        if isinstance(action, SelectPlaneShiftDirectionAction):
+            return f"{player} chose Plane Shift direction {action.direction}."
+
+        if isinstance(action, ResolvePlaneShiftAction):
+            direction = context.get("plane_shift_direction") or "selected direction"
+            axis = "row" if direction in {"left", "right"} else "column"
+            return f"{player} shifted {axis} {action.index + 1} {direction}."
+
+        if isinstance(action, ResolveBallistaShotAction):
+            return f"{player} launched by Ballista to row {action.row + 1}, column {action.col + 1}."
+
+        if isinstance(action, PlaceCardsAction):
+            cards = context.get("placed_cards") or []
+            card_text = ", ".join(self._format_card_label(card) for card in cards) if cards else f"{len(action.positions)} card(s)"
+            return f"{player} placed {card_text} into open holes."
+
+        if isinstance(action, CancelRequestSelectionAction):
+            return f"{player} backed out of the current request choice."
+
+        return ""
+
+    def _format_appeasing_history_for_log(self, text: str) -> str:
+        """Summarize Appeasing Pan resolution without revealing submitted cards."""
+        clean = self._replace_player_tokens(text)
+        matchup = clean.split(":", 1)[0].strip()
+        if " beat " in matchup:
+            return f"Appeasing Pan resolved: {matchup}."
+        return "Appeasing Pan resolved."
+
+    def _describe_card_effect_for_log(self, card, role) -> str:
+        """Explain the gameplay effect of a tile/card in the log."""
+        role_value = getattr(role, "value", role)
+        label = self._format_card_label(card)
+        value = card.combat_value()
+        if role_value == "traps":
+            return f"Trap {label} added {value} lost health."
+        if role_value == "weapons":
+            return f"Weapon {label} went into hand."
+        if role_value == "ballista":
+            return "Ballista started a launch choice."
+        if role_value == "walls":
+            return "Wall blocked the path."
+        return f"{label} was reached."
+
+    def _append_action_log(self, text: str) -> None:
+        """Append one non-empty line to the visible turn log."""
+        clean = " ".join(str(text or "").split())
+        if not clean:
+            return
+        if self.action_log and self.action_log[-1] == clean:
+            return
+        self.action_log.append(clean)
+        if len(self.action_log) > 12:
+            self.action_log = self.action_log[-12:]
+
+    def reset_action_log(self) -> None:
+        """Clear turn-log state for a freshly started match."""
+        self.action_log = []
+        self.current_status_text = ""
+        self._seen_appeasing_history_count = len(self.game.appeasing_history)
+        self._seen_request_history_count = len(self.game.request_history)
+        self._seen_major_event_count = len(self.game.major_events)
+        self.ai_action_elapsed = 0.0
+        self.ai_pending_action = None
+        self.ai_pending_action_elapsed = 0.0
+
+    def _sync_engine_history_to_action_log(self) -> None:
+        """Pull remote room/history events into the visible log without duplicates."""
+        if (
+            len(self.game.major_events) < self._seen_major_event_count
+            or len(self.game.request_history) < self._seen_request_history_count
+            or len(self.game.appeasing_history) < self._seen_appeasing_history_count
+        ):
+            self.action_log = []
+            self._seen_major_event_count = 0
+            self._seen_request_history_count = 0
+            self._seen_appeasing_history_count = 0
+
+        for text in self.game.appeasing_history[self._seen_appeasing_history_count:]:
+            self._append_action_log(self._format_appeasing_history_for_log(text))
+        for text in self.game.request_history[self._seen_request_history_count:]:
+            self._append_action_log(self._replace_player_tokens(text))
+        for text in self.game.major_events[self._seen_major_event_count:]:
+            self._append_action_log(self._replace_player_tokens(text))
+
+        self._seen_appeasing_history_count = len(self.game.appeasing_history)
+        self._seen_request_history_count = len(self.game.request_history)
+        self._seen_major_event_count = len(self.game.major_events)
+
+    @staticmethod
+    def _format_board_position(pos: Position | None) -> str:
+        """Return a readable one-indexed board coordinate."""
+        if pos is None:
+            return "the board"
+        return f"row {pos.row + 1}, column {pos.col + 1}"
 
     def _get_multiplayer_session(self):
         """Return the active local room session, if this game is networked."""
@@ -1142,23 +1358,42 @@ class GameScreen(Screen):
         ai_controller = self._get_single_player_ai()
         if ai_controller is not None and not self.pause_menu_open and not self._is_match_exit_prompt_active():
             if ai_controller.is_my_turn(self.game):
-                self.ai_action_elapsed += time_delta
-                if self.ai_action_elapsed >= getattr(ai_controller, "action_delay", 0.45):
-                    action = ai_controller.choose_action(self.game)
-                    if action is not None:
+                if self.ai_pending_action is None:
+                    self.ai_action_elapsed += time_delta
+                    if self.ai_action_elapsed >= getattr(ai_controller, "action_delay", 0.95):
+                        self.ai_pending_action = ai_controller.choose_action(self.game)
+                        self.ai_pending_action_elapsed = 0.0
+                        self.ai_action_elapsed = 0.0
+                        if self.ai_pending_action is None:
+                            self.ai_action_elapsed = 0.0
+                else:
+                    self.ai_pending_action_elapsed += time_delta
+                    if self.ai_pending_action_elapsed >= getattr(ai_controller, "action_preview_delay", 0.65):
+                        action = self.ai_pending_action
+                        self.ai_pending_action = None
+                        self.ai_pending_action_elapsed = 0.0
+                        self.ai_action_elapsed = 0.0
                         self._apply_action(action)
-                    self.ai_action_elapsed = 0.0
             else:
                 self.ai_action_elapsed = 0.0
+                self.ai_pending_action = None
+                self.ai_pending_action_elapsed = 0.0
+        else:
+            self.ai_action_elapsed = 0.0
+            self.ai_pending_action = None
+            self.ai_pending_action_elapsed = 0.0
 
         if self.notice_timer > 0:
             self.notice_timer = max(0.0, self.notice_timer - time_delta)
             if self.notice_timer == 0:
                 self.notice_text = None
 
+        self._sync_engine_history_to_action_log()
+
         return_notice = self.game.consume_appeasing_return_notice()
         if return_notice:
             self._show_notice(return_notice)
+            self._append_action_log(return_notice)
 
         self._sync_phase_banner_state()
         self._advance_phase_banner_transition(time_delta)
@@ -1235,6 +1470,7 @@ class GameScreen(Screen):
         else:
             status_text = f"TRAVERSING: {player} Turn (Move {self.game.movement_turn // 2 + 1})"
         
+        self.current_status_text = status_text
         self.status_label.set_text(status_text)
         self.info_label.hide()
 
@@ -1357,11 +1593,14 @@ class GameScreen(Screen):
         if self.game.has_pending_ballista():
             self._render_ballista_target_overlay(surface, highlight_positions)
         self._render_pending_placement_hover(surface)
+        self._render_ai_action_preview(surface)
         self._render_suit_role_legend(surface)
         self._render_damage_summary(surface)
+        self._render_action_log(surface)
         self._render_phase_banner(surface)
         self._render_hand_cards(surface)
         self._render_pending_placement_cards(surface)
+        self._render_board_hover_help(surface)
         self._render_active_popups(surface)
         self._render_appeasing_result_banner(surface)
         self._render_notice_banner(surface)
@@ -1377,6 +1616,8 @@ class GameScreen(Screen):
             self.window.audio.play_phase_music()
         self.pause_menu_open = False
         self.ai_action_elapsed = 0.0
+        self.ai_pending_action = None
+        self.ai_pending_action_elapsed = 0.0
         self.status_label.hide()
         self.info_label.hide()
         for _, btn in self.move_buttons:
@@ -1431,6 +1672,8 @@ class GameScreen(Screen):
         self.request_popup_labyrinth_view = False
         self.pause_menu_open = False
         self.ai_action_elapsed = 0.0
+        self.ai_pending_action = None
+        self.ai_pending_action_elapsed = 0.0
 
     def _get_frame_rate_overlay_rect(self) -> pygame.Rect:
         """Return the right-side FPS popup rect, centered about two-thirds up the page."""
@@ -2864,6 +3107,103 @@ class GameScreen(Screen):
                 preferred_font_size=font_size,
             )
 
+    def _get_action_log_rect(self) -> pygame.Rect | None:
+        """Return a non-overlapping log panel rect below the right-side Omen legend."""
+        board_rect = self.renderer.get_board_rect()
+        legend_rect = self._get_suit_role_legend_panel_rect()
+        margin = self.scale(16, 10)
+        gap = self.scale(10, 6)
+        hand_title_rect = self._get_active_hand_title_rect()
+        hand_top = hand_title_rect.top if hand_title_rect is not None else self.window.WINDOW_HEIGHT - margin
+
+        if legend_rect is not None:
+            right_edge = self.window.WINDOW_WIDTH - margin
+            left_edge = max(board_rect.right + gap, legend_rect.x - self.scale_x(34, 0))
+            width = min(
+                right_edge - left_edge,
+                max(legend_rect.width + self.scale_x(56, 20), self.scale_x(180, 118)),
+            )
+            top = legend_rect.bottom + gap
+            bottom_limit = min(board_rect.bottom, hand_top - gap)
+            height = min(self.scale_y(172, 112), bottom_limit - top)
+            if width >= self.scale_x(116, 92) and height >= self.scale_y(92, 72):
+                return pygame.Rect(left_edge, top, width, height)
+
+        top = board_rect.bottom + gap
+        bottom_limit = hand_top - gap
+        height = min(self.scale_y(138, 96), bottom_limit - top)
+        if height < self.scale_y(82, 64):
+            return None
+        width = min(board_rect.width, self.window.WINDOW_WIDTH - 2 * margin)
+        return pygame.Rect((self.window.WINDOW_WIDTH - width) // 2, top, width, height)
+
+    def _render_action_log(self, surface: pygame.Surface) -> None:
+        """Render recent actions and the current instruction under the legend."""
+        panel_rect = self._get_action_log_rect()
+        if panel_rect is None:
+            return
+
+        self._render_stone_panel(surface, panel_rect, dim_alpha=24, shadow_alpha=58)
+        content_rect = self._get_stone_content_rect(
+            panel_rect,
+            extra_x=self.scale_x(2, 1),
+            extra_top=self.scale_y(2, 1),
+        )
+        title_height = max(self.scale_y(18, 14), self.popup_small_font.get_height())
+        title_rect = pygame.Rect(content_rect.x, content_rect.y, content_rect.width, title_height)
+        self._render_carved_text(
+            surface,
+            self.popup_small_font,
+            "Turn Log",
+            (70, 62, 50),
+            title_rect.midtop,
+            anchor="midtop",
+        )
+
+        line_height = max(self.scale_y(17, 12), self.font_size(14, 10))
+        y = title_rect.bottom + self.scale_y(4, 2)
+        instruction = self.current_status_text or "Waiting for the next action."
+        instruction_rect = pygame.Rect(content_rect.x, y, content_rect.width, line_height * 2)
+        instruction_font = self._get_fitted_game_font(
+            instruction,
+            self.font_size(14, 10),
+            instruction_rect,
+            2,
+            self.font_size(10, 8),
+        )
+        self._draw_wrapped_carved_text(
+            surface,
+            instruction,
+            instruction_font,
+            (74, 66, 54),
+            instruction_rect,
+            max(line_height, instruction_font.get_linesize()),
+            2,
+        )
+
+        y = instruction_rect.bottom + self.scale_y(4, 2)
+        available_height = content_rect.bottom - y
+        if available_height <= 0:
+            return
+        log_line_height = max(self.scale_y(16, 12), self.font_size(13, 9))
+        max_lines = max(1, available_height // log_line_height)
+        visible_lines = self.action_log[-max_lines:] or ["No actions yet."]
+        log_rect = pygame.Rect(content_rect.x, y, content_rect.width, available_height)
+        old_clip = surface.get_clip()
+        surface.set_clip(log_rect)
+        log_font = self._get_game_font(self.font_size(13, 9))
+        for index, text in enumerate(visible_lines):
+            self._draw_wrapped_carved_text(
+                surface,
+                text,
+                log_font,
+                (74, 66, 54),
+                pygame.Rect(log_rect.x, log_rect.y + index * log_line_height, log_rect.width, log_line_height),
+                log_line_height,
+                1,
+            )
+        surface.set_clip(old_clip)
+
     def _render_turn_move_highlights(self, surface: pygame.Surface) -> None:
         """Highlight the active player and their legal movement targets."""
         if self.game.phase != GamePhase.TRAVERSING:
@@ -2899,6 +3239,201 @@ class GameScreen(Screen):
                 (116, 226, 156),
                 self.scale(2, 2),
             )
+
+    def _render_ai_action_preview(self, surface: pygame.Surface) -> None:
+        """Highlight the AI's pending board action before it resolves."""
+        action = self.ai_pending_action
+        if action is None:
+            return
+
+        color = (255, 232, 112)
+        if isinstance(action, MoveAction):
+            start = self.game.board.get_player_position(action.player_id)
+            if start is None:
+                return
+            dr, dc = direction_to_movement(action.direction)
+            target = Position((start.row + dr) % 6, (start.col + dc) % 6)
+            self._render_ai_preview_path(surface, start, target, color)
+            return
+
+        if isinstance(action, ResolveBallistaShotAction):
+            start = self.game.board.get_player_position(action.player_id)
+            target = Position(action.row, action.col)
+            if start is not None:
+                self._render_ai_preview_path(surface, start, target, color)
+            else:
+                self._render_ai_preview_cell(surface, target, color)
+            return
+
+        if isinstance(action, ResolvePlaneShiftAction):
+            direction = self.game.get_pending_plane_shift_direction()
+            if direction is None:
+                return
+            axis = "row" if direction in {"left", "right"} else "column"
+            for pos in self._get_plane_shift_line_positions((axis, action.index)):
+                self._render_ai_preview_cell(surface, pos, color)
+            return
+
+        if isinstance(action, PlaceCardsAction):
+            for pos in action.positions:
+                self._render_ai_preview_cell(surface, pos, color)
+
+    def _render_ai_preview_path(
+        self,
+        surface: pygame.Surface,
+        start: Position,
+        target: Position,
+        color: tuple[int, int, int],
+    ) -> None:
+        """Draw a clear line from the AI marker toward its pending destination."""
+        target_rect = self.renderer.get_cell_rect(target)
+        self._draw_ballista_segment(surface, start, target, color)
+        pygame.draw.circle(surface, color, target_rect.center, self.scale(14, 9), self.scale(3, 2))
+        self._render_ai_preview_cell(surface, target, color)
+
+    def _render_ai_preview_cell(
+        self,
+        surface: pygame.Surface,
+        pos: Position,
+        color: tuple[int, int, int],
+    ) -> None:
+        """Outline one board cell as the AI's visible pending choice."""
+        rect = self.renderer.get_cell_rect(pos)
+        pulse = (self.ai_pending_action_elapsed % 0.65) / 0.65
+        inset = self.scale(8, 5) + int(self.scale(5, 3) * pulse)
+        self.renderer.draw_value_safe_outline(
+            surface,
+            rect.inflate(-inset, -inset),
+            color,
+            self.scale(4, 3),
+        )
+
+    def _render_board_hover_help(self, surface: pygame.Surface) -> None:
+        """Show context for hovered move, Ballista, or placement targets."""
+        if (
+            self.pause_menu_open
+            or self._has_center_popup()
+            or self.damage_popup_player is not None
+            or self._is_request_labyrinth_view_active()
+        ):
+            return
+
+        mouse_pos = pygame.mouse.get_pos()
+        cell = self.renderer.get_cell_at_mouse(mouse_pos)
+        if cell is None:
+            return
+
+        text = self._get_board_hover_help_text(cell)
+        if not text:
+            return
+
+        self._render_hover_help_panel(surface, self.renderer.get_cell_rect(cell), text)
+
+    def _get_board_hover_help_text(self, cell: Position) -> str:
+        """Return a compact explanation for the hovered board cell."""
+        if self.game.has_pending_ballista():
+            if cell not in set(self.game.get_pending_ballista_targets()):
+                return ""
+            occupant = self.game.board.get_player_at(cell)
+            suffix = ""
+            if occupant is not None and occupant != self.game.current_player:
+                suffix = f" Combat starts with {self._get_player_name(occupant)}."
+            return f"Ballista target: launch to {self._format_board_position(cell)}.{suffix}"
+
+        if self.game.has_pending_card_placement():
+            if self._is_valid_placement_target(cell):
+                return "Open hole: drop the selected played card here."
+            return "Cards can only be placed into open holes with no player on them."
+
+        if self.game.phase != GamePhase.TRAVERSING or self.game.has_pending_combat():
+            return ""
+
+        current_pos = self.game.board.get_player_position(self.game.current_player)
+        if current_pos is None:
+            return ""
+
+        if cell == current_pos:
+            if not self.game.can_pick_up_current_card(self.game.current_player):
+                return ""
+            card = self.game.board.get_card(cell)
+            role = self.game.suit_roles.get(card.suit) if card else None
+            return f"Current tile: click to use it. {self._describe_hover_card_effect(card, role)}"
+
+        direction = self.input_handler.get_direction_to_cell(current_pos, cell)
+        if direction is None:
+            return ""
+
+        card = self.game.board.get_card(cell)
+        role = self.game.suit_roles.get(card.suit) if card else None
+        if direction not in self.game.get_legal_moves(self.game.current_player):
+            if getattr(role, "value", role) == "walls":
+                return "Wall: this adjacent tile blocks movement."
+            return ""
+
+        occupant = self.game.board.get_player_at(cell)
+        if occupant is not None and occupant != self.game.current_player:
+            return f"Move {direction}: combat starts with {self._get_player_name(occupant)}."
+        return f"Move {direction}: {self._describe_hover_card_effect(card, role)}"
+
+    def _describe_hover_card_effect(self, card, role) -> str:
+        """Describe a card or empty tile for board hover help."""
+        if card is None:
+            return "Empty hole; you move there with no card effect."
+
+        label = f"{get_rank_name_with_value(card.rank)} {get_family_name(card.suit)}"
+        role_value = getattr(role, "value", role)
+        if role_value == "traps":
+            return f"Trap {label}; you lose {card.combat_value()} health and the tile becomes a hole."
+        if role_value == "weapons":
+            return f"Weapon {label}; it goes into your hand."
+        if role_value == "ballista":
+            return f"Ballista {label}; choose a launch target after landing."
+        if role_value == "walls":
+            return f"Wall {label}; movement is blocked."
+        return f"{label}; no special role is assigned."
+
+    def _render_hover_help_panel(
+        self,
+        surface: pygame.Surface,
+        source_rect: pygame.Rect,
+        text: str,
+    ) -> None:
+        """Render a small clamped hover-help plaque near a board cell."""
+        margin = self.scale(12, 8)
+        width = min(self.scale_x(380, 250), self.window.WINDOW_WIDTH - 2 * margin)
+        height = self.scale_y(62, 48)
+        x = source_rect.centerx - width // 2
+        y = source_rect.y - height - self.scale_y(8, 5)
+        if y < margin:
+            y = source_rect.bottom + self.scale_y(8, 5)
+        panel_rect = self._clamp_panel_rect(pygame.Rect(x, y, width, height), margin)
+
+        action_log_rect = self._get_action_log_rect()
+        if action_log_rect is not None and panel_rect.colliderect(action_log_rect):
+            alternate = panel_rect.copy()
+            alternate.y = action_log_rect.bottom + self.scale_y(6, 4)
+            alternate = self._clamp_panel_rect(alternate, margin)
+            if not alternate.colliderect(action_log_rect):
+                panel_rect = alternate
+
+        self._render_stone_panel(surface, panel_rect, dim_alpha=24, shadow_alpha=58)
+        text_rect = self._get_stone_content_rect(panel_rect, extra_x=self.scale_x(2, 1))
+        font = self._get_fitted_game_font(
+            text,
+            self.font_size(16, 12),
+            text_rect,
+            3,
+            self.font_size(11, 9),
+        )
+        self._draw_wrapped_carved_text(
+            surface,
+            text,
+            font,
+            (74, 66, 54),
+            text_rect,
+            max(self.scale_y(17, 12), font.get_linesize()),
+            3,
+        )
 
     def _render_plane_shift_line_controls(self, surface: pygame.Surface) -> None:
         """Render numbered Plane Shift row and column selectors."""
@@ -3365,6 +3900,9 @@ class GameScreen(Screen):
         legend_rect = self._get_suit_role_legend_panel_rect()
         if legend_rect is not None:
             avoid_rects.append(legend_rect)
+        action_log_rect = self._get_action_log_rect()
+        if action_log_rect is not None:
+            avoid_rects.append(action_log_rect)
 
         return avoid_rects
 

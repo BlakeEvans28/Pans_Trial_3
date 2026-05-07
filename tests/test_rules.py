@@ -16,7 +16,7 @@ from engine import (
     MoveAction, PickupCurrentCardAction, PlayCardAction, Position, SuitRole, ChooseCombatCardAction,
     ChooseRequestAction, RequestType, ResolveBallistaShotAction, SelectDamageCardAction,
     SelectRestructureSuitAction, SelectPlaneShiftDirectionAction, ResolvePlaneShiftAction,
-    CancelRequestSelectionAction, PlaceCardsAction, SmartPanAI, StrategicAI
+    CancelRequestSelectionAction, PlaceCardsAction, SmartPanAI, StrategicAI, direction_to_movement
 )
 from deck_utils import setup_game_deck, create_6x6_labyrinth, draft_hands, get_jack_suit_order
 from multiplayer import LocalRoomClient, LocalRoomServer
@@ -490,6 +490,22 @@ def test_room_store_game_over_poll_is_one_shot():
     assert room.game.major_events == first_events
 
 
+def test_room_store_ready_endpoint_toggles_unready_before_start():
+    """Pressing Ready again in the lobby should remove that player's ready vote."""
+    store = RoomStore()
+    room, host_id = store.create_room("Host")
+    room.players[1] = "Guest"
+
+    store.toggle_player_ready(room.code, host_id)
+    assert room.ready_players == {0}
+    assert "is ready" in room.message
+
+    store.toggle_player_ready(room.code, host_id)
+    assert room.ready_players == set()
+    assert "no longer ready" in room.message
+    assert room.stage == "lobby"
+
+
 def test_room_store_rejects_stale_action_revision():
     """The room server should reject actions from clients with old snapshots."""
     store = RoomStore()
@@ -861,6 +877,22 @@ def test_multiplayer_lobby_screen_lays_out_room_controls():
         screen.render(surface)
 
 
+def test_multiplayer_lobby_ready_button_labels_unready_for_ready_player():
+    """The lobby button should reflect whether the local player has already readied."""
+    window = SmokeWindow(width=1200, height=900)
+    window.multiplayer_session = type(
+        "Session",
+        (),
+        {"stage": "lobby", "player_id": 0, "ready_players": {0}},
+    )()
+    screen = MultiplayerLobbyScreen(window)
+
+    assert screen._get_ready_button_label() == "Unready"
+
+    window.multiplayer_session.ready_players = set()
+    assert screen._get_ready_button_label() == "Ready"
+
+
 def test_multiplayer_lobby_code_only_flow_keeps_server_url_internal():
     """Players should only need the room code while the server URL remains automatic."""
     window = SmokeWindow(width=1200, height=900)
@@ -1188,6 +1220,54 @@ def test_single_player_ai_locks_input_and_advances_turn(game_setup):
     screen.update(0.2)
 
     assert screen.ai_action_elapsed == 0.0
+
+
+def test_game_action_log_records_move_effects(game_setup):
+    """The gameplay log should explain movement consequences like trap damage."""
+    window = SmokeWindow(width=1200, height=900)
+    game = game_setup
+    game.phase = GamePhase.TRAVERSING
+    game.current_player = 0
+    direction = game.get_legal_moves(0)[0]
+    current_pos = game.board.get_player_position(0)
+    dr, dc = direction_to_movement(direction)
+    target = Position((current_pos.row + dr) % 6, (current_pos.col + dc) % 6)
+    game.board.set_card(target, Card(CardRank.TEN, CardSuit.HEARTS))
+    game.suit_roles[CardSuit.HEARTS] = SuitRole.TRAPS
+    screen = GameScreen(window, game)
+
+    assert screen._apply_action(MoveAction(0, direction))
+    assert any("lost health" in line for line in screen.action_log)
+
+
+def test_action_log_hides_appeasing_pan_card_picks(game_setup):
+    """The gameplay log should not reveal which cards were submitted for Appeasing Pan."""
+    window = SmokeWindow(width=1200, height=900)
+    window.local_player_names = {0: "You", 1: "Pan AI"}
+    game = game_setup
+    game.phase = GamePhase.APPEASING
+    game.current_player = 0
+    game.current_request_winner = None
+    game.phase_started_cards = []
+    game.hands[0].cards.clear()
+    game.hands[1].cards.clear()
+    player_card = Card(CardRank.KING, CardSuit.HEARTS)
+    ai_card = Card(CardRank.QUEEN, CardSuit.SPADES)
+    game.add_card_to_hand(0, player_card)
+    game.add_card_to_hand(1, ai_card)
+    screen = GameScreen(window, game)
+
+    assert screen._apply_action(PlayCardAction(0, player_card))
+    assert screen._apply_action(PlayCardAction(1, ai_card))
+
+    log_text = "\n".join(screen.action_log)
+    assert "hidden Appeasing Pan card" in log_text
+    assert "Appeasing Pan resolved:" in log_text
+    assert "Hero" not in log_text
+    assert "Oracle" not in log_text
+    assert "Crimson" not in log_text
+    assert "Azure" not in log_text
+    assert " over " not in log_text
 
 
 def test_card_combat_value():
