@@ -138,7 +138,7 @@ If your website cannot run a long-lived Python backend but can run PHP, build th
 .\.venv-web\Scripts\python.exe build_web.py --build-only --php-room-server
 ```
 
-Upload the contents of `WEB_BUILD\site` to your website. The generated `index.html` will point Two Player rooms at `room_server.php`, and the PHP file will store room snapshots in a `pan_trial_room_data` folder beside it. Your host must allow PHP file writes in that folder.
+Upload the contents of `WEB_BUILD\site` to your website. The generated `index.html` will point Two Player rooms at `room_server.php`, and the package includes a `pan_trial_room_data` folder with a protective `.htaccess`. Your host must allow PHP file writes in that folder.
 
 This mode is a hardened lightweight room relay: the PHP file issues per-player secret tokens, rejects mismatched player requests, enforces room revisions, limits payload sizes, and only accepts snapshot updates on the expected room-stage endpoints. The browser game still runs the rules engine, so `room_server.py` remains the stricter authoritative option for production competition, but the PHP path now blocks room-code hijacking and casual forged requests.
 

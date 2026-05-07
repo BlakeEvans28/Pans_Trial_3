@@ -20,6 +20,7 @@ Summary:
 - Updated the browser room client so `.php` room URLs use query-routed endpoints, per-player secret tokens, and authenticated draft/gameplay/rematch/leave requests.
 - Hardened the PHP relay with token checks, revision checks, stage-specific snapshot gates, base64/payload-size validation, and token-aware tab-close cleanup.
 - Added `build_web.py --php-room-server`, copied the PHP relay into generated web builds, rebuilt `WEB_BUILD/site`, and documented the shared-hosting deployment path.
+- Made the PHP relay avoid PHP 7.4-only arrow-function syntax and packaged a pre-created `pan_trial_room_data` folder with `.htaccess` for shared hosts that do not allow PHP to create directories.
 - Added relay regression coverage, verified the suite at `114` tests, and linted both PHP relay copies with PHP 8.4.
 
 ## 2026-05-05 - Codex

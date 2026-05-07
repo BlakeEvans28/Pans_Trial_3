@@ -421,6 +421,17 @@ def install_php_room_server(project_root: Path, build_web_dir: Path) -> None:
     if not source_path.exists():
         raise SystemExit(f"Required PHP room server file is missing: {source_path}")
     shutil.copy2(source_path, build_web_dir / PHP_ROOM_SERVER_FILE)
+    room_data_dir = build_web_dir / "pan_trial_room_data"
+    room_data_dir.mkdir(parents=True, exist_ok=True)
+    (room_data_dir / ".htaccess").write_text(
+        "# Deny direct access to JSON files\n"
+        '<Files "*.json">\n'
+        "    Require all denied\n"
+        "</Files>\n\n"
+        "# Deny directory listing\n"
+        "Options -Indexes\n",
+        encoding="utf-8",
+    )
 
 
 def install_favicon(project_root: Path, build_web_dir: Path) -> None:

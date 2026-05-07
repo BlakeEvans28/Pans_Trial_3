@@ -264,7 +264,9 @@ function leave_room(string $dataDir, string $code, array $body): array
         $room['ready'] = count($players) >= 2;
         $room['ready_players'] = array_values(array_filter(
             normalized_int_list($room['ready_players'] ?? []),
-            fn (int $readyPlayerId): bool => $readyPlayerId !== $playerId
+            function (int $readyPlayerId) use ($playerId): bool {
+                return $readyPlayerId !== $playerId;
+            }
         ));
         $room['message'] = $departedName . ' left the room.';
         $room['revision'] = intval($room['revision'] ?? 0) + 1;
@@ -471,7 +473,9 @@ function clean_pregame(array $pregame): array
 function unique_player_name(string $playerName, int $playerId, array $existingNames): string
 {
     $name = trim(preg_replace('/\s+/', ' ', $playerName)) ?: 'Player ' . ($playerId + 1);
-    $existing = array_map(fn (string $value): string => strtolower(trim($value)), $existingNames);
+    $existing = array_map(function (string $value): string {
+        return strtolower(trim($value));
+    }, $existingNames);
     if (!in_array(strtolower($name), $existing, true)) {
         return $name;
     }
@@ -551,7 +555,9 @@ function request_parts(): array
     if ($path === '') {
         return [];
     }
-    return array_values(array_filter(explode('/', $path), fn (string $part): bool => $part !== ''));
+    return array_values(array_filter(explode('/', $path), function (string $part): bool {
+        return $part !== '';
+    }));
 }
 
 function data_dir(): string
@@ -565,7 +571,15 @@ function data_dir(): string
     }
     $htaccess = $dir . DIRECTORY_SEPARATOR . '.htaccess';
     if (!is_file($htaccess)) {
-        @file_put_contents($htaccess, "Options -Indexes\nRequire all denied\nDeny from all\n");
+        @file_put_contents(
+            $htaccess,
+            "# Deny direct access to JSON files\n"
+            . "<Files \"*.json\">\n"
+            . "    Require all denied\n"
+            . "</Files>\n\n"
+            . "# Deny directory listing\n"
+            . "Options -Indexes\n"
+        );
     }
     return $dir;
 }
