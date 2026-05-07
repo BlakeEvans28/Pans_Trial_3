@@ -9,3 +9,5 @@
 - I would have a logging window that shows how things resolved and what happened (as in moves, why I lost life, etc.).  This could also say who is currently playing and what they need to do - as in "Place the cards on the side of the board".
 
 - In drafting I don't know the difference between Satyr and Oracle versus Hero.  Maybe have a hover over card so that it tells me what?  Similarly, when I'm supposed to move a hover over the location telling me what happens would be useful. This is because the legend doesn't show on smaller screens
+
+- When the AI makes moves or decisions in vs AI mode, the decisions and moviements it makes needs to be slower (they are currently too fast and hard to understand to the normal player). Do not use text prompts that say what is does, just visually make their decisions slower and more understandable.
