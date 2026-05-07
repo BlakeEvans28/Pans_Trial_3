@@ -20,6 +20,19 @@ from .serialization import (
 )
 
 
+def _decode_player_map(value: Any) -> dict[int, str]:
+    """Return player names from PHP/Python room snapshots."""
+    if isinstance(value, dict):
+        return {int(key): str(player_name) for key, player_name in value.items()}
+    if isinstance(value, list):
+        return {
+            index: str(player_name)
+            for index, player_name in enumerate(value)
+            if player_name is not None and str(player_name)
+        }
+    return {}
+
+
 class BrowserRoomClient:
     """Polling client for web builds using the page's JavaScript HTTP bridge."""
 
@@ -364,7 +377,7 @@ class BrowserRoomClient:
             self.relay_mode = True
         if snapshot.get("player_token") is not None:
             self.player_token = str(snapshot.get("player_token") or "")
-        self.players = {int(key): value for key, value in snapshot.get("players", {}).items()}
+        self.players = _decode_player_map(snapshot.get("players", {}))
         self.ready = bool(snapshot.get("ready"))
         self.ready_players = {int(player_id) for player_id in snapshot.get("ready_players", [])}
         self.stage = str(snapshot.get("stage") or self.stage)
