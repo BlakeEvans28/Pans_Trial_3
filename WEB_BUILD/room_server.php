@@ -676,5 +676,5 @@ function respond_json(int $status, array $payload): void
 {
     http_response_code($status);
     header('Content-Type: application/json');
-    echo json_encode($payload, JSON_UNESCAPED_SLASHES);
+    echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_FORCE_OBJECT);
 }
