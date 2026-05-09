@@ -2,6 +2,18 @@
 
 The files in this folder are named to match GitHub wiki conventions. GitHub stores wiki pages in a separate repository ending in `.wiki.git`, so publishing is mostly a matter of copying these files into that repo.
 
+For this project, the source repository is:
+
+```text
+https://github.com/BlakeEvans28/Pans_Trial_3
+```
+
+The live GitHub wiki repository is:
+
+```text
+https://github.com/BlakeEvans28/Pans_Trial_3.wiki.git
+```
+
 ## What GitHub Expects
 
 - `Home.md` becomes the wiki landing page.
@@ -14,7 +26,7 @@ The files in this folder are named to match GitHub wiki conventions. GitHub stor
 2. Clone the wiki repo:
 
 ```powershell
-git clone https://github.com/<owner>/<repo>.wiki.git
+git clone https://github.com/BlakeEvans28/Pans_Trial_3.wiki.git
 ```
 
 3. Copy the contents of this local `wiki/` folder into the root of the cloned wiki repo.
@@ -22,7 +34,7 @@ git clone https://github.com/<owner>/<repo>.wiki.git
 
 ```powershell
 git add .
-git commit -m "Add initial Pan's Trial wiki"
+git commit -m "Update Pan's Trial digital report wiki"
 git push
 ```
 
@@ -41,8 +53,8 @@ That gives you:
 If you want richer wiki presentation later, you can also add:
 
 - `_Footer.md`
-- image folders copied into the wiki repo
-- page-specific screenshots
+- image folders copied into the wiki repo when screenshots are ready
+- page-specific screenshots listed on [Media and References](Media-and-References)
 - changelog or release-history pages
 
 ## Important Note

@@ -2,6 +2,8 @@
 
 This roadmap summarizes the most reasonable next steps based on the current project state and the checked-in reports.
 
+The written report recommends productization rather than redesign. The core rules work; the next work should make the game easier to learn, easier to host, easier to share, and easier to package for a small public audience.
+
 ## Near-Term Gameplay and UX
 
 - Add a stronger first-run tutorial so new players can learn the draft, Traversing, and Appeasing Pan without outside explanation.
@@ -15,6 +17,7 @@ This roadmap summarizes the most reasonable next steps based on the current proj
 - Move hosted multiplayer onto stable HTTPS by default.
 - Package a clean public demo build for class review, friends, and wider testing.
 - Prepare trailer, screenshots, and store-facing material for a later public release.
+- Use the web demo as the lead platform before testing itch.io, Steam, and mobile/tablet release paths.
 
 ## Balance and Design Iteration
 
@@ -27,6 +30,7 @@ This roadmap summarizes the most reasonable next steps based on the current proj
 - Explore a web-first launch followed by desktop storefront release.
 - Consider cosmetic board themes or visual packs that do not affect competitive fairness.
 - Evaluate a mobile or tablet release once the browser and desktop flows are stable.
+- Keep monetization cosmetic, access-based, or convenience-based so paid content does not damage competitive trust.
 
 ## Engineering Extensions
 
@@ -48,3 +52,9 @@ If time is limited, the most valuable sequence is:
 2. public hosted browser demo
 3. stronger AI and balance iteration
 4. platform expansion and release packaging
+
+## Report Links
+
+- [Publication Case](Publication-Case)
+- [Testing and Balance](Testing-and-Balance)
+- [Media and References](Media-and-References)

@@ -85,10 +85,10 @@ Be careful to keep:
 
 ## Good Places to Look First
 
-- `README.md` for the current user-facing project overview
-- `Changes.md` for recent implementation history
-- `tests/test_rules.py` for current expected behavior
-- `PROJECT_STATUS.md` and `ARCHITECTURE_FOR_AI.py` for design intent
+- [`README.md`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/README.md) for the current user-facing project overview
+- [`Changes.md`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/Changes.md) for recent implementation history
+- [`tests/test_rules.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/tests/test_rules.py) for current expected behavior
+- [`PROJECT_STATUS.md`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/PROJECT_STATUS.md) and [`ARCHITECTURE_FOR_AI.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/ARCHITECTURE_FOR_AI.py) for design intent
 
 ## Documentation Habit
 
@@ -101,3 +101,9 @@ After meaningful work:
 ## Rule of Thumb
 
 If a change feels like "just a UI tweak" but it affects legality, turn order, or victory state, move that logic into the engine instead.
+
+## Related Wiki Pages
+
+- [Project Architecture](Project-Architecture)
+- [Testing and Balance](Testing-and-Balance)
+- [Publication Case](Publication-Case)

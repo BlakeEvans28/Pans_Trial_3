@@ -58,9 +58,9 @@ For a hosted setup where the same origin serves both the web game and multiplaye
 
 Helpful repo files:
 
-- `render.yaml`
-- `Procfile`
-- `room_server.py`
+- [`render.yaml`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/render.yaml)
+- [`Procfile`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/Procfile)
+- [`room_server.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/room_server.py)
 
 The room server also exposes:
 
@@ -107,3 +107,9 @@ Environment variable equivalents exist for room limits and timeout tuning.
 3. Host `WEB_BUILD/site` behind the Python room server when possible.
 4. Fall back to the PHP relay only when long-lived Python hosting is not available.
 5. Rebuild and redeploy after gameplay, UI, or asset changes.
+
+## Report Links
+
+- [Publication Case](Publication-Case)
+- [Multiplayer and Rooms](Multiplayer-and-Rooms)
+- [Media and References](Media-and-References)

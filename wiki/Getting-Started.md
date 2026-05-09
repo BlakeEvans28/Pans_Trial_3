@@ -7,6 +7,7 @@ This page is the quickest way to run Pan's Trial locally, understand the control
 - `Pans_Trial.exe`: quickest Windows launch if you just want to play the checked-in desktop build.
 - `main.py`: best path for active development and local desktop testing.
 - `build_web.py`: best path when you need the browser build or hosted multiplayer flow.
+- `room_server.py`: best path when you want the browser build and room-code multiplayer from one local URL.
 
 ## Prerequisites
 
@@ -71,8 +72,16 @@ Open the printed `LAN Game URL` on each device. The same URL hosts both the brow
 4. Play through Traversing and Appeasing Pan cycles until one player reaches 25 or more damage.
 5. Use the match summary and rematch flow after game over.
 
+## What to Notice During a Demo
+
+- The Omen legend explains which suits currently act as Walls, Traps, Ballista, and Weapons.
+- During Appeasing Pan, the role order explains why one submitted card wins request priority.
+- Request screens are intentionally guided because Restructure, Steal Life, Ignore Us, and Plane Shift are state-heavy effects.
+- The same rules are enforced in single player, room-code multiplayer, tests, and balance simulations.
+
 ## Useful Next Pages
 
 - [Gameplay and Rules](Gameplay-and-Rules)
 - [Multiplayer and Rooms](Multiplayer-and-Rooms)
 - [Web Build and Deployment](Web-Build-and-Deployment)
+- [Media and References](Media-and-References)

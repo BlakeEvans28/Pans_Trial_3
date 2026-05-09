@@ -89,14 +89,15 @@ The Python room server remains the stricter and more authoritative option for co
 
 ## Important Files
 
-- `multiplayer/local_room.py`
-- `multiplayer/browser_room.py`
-- `multiplayer/serialization.py`
-- `multiplayer/game_setup.py`
-- `room_server.py`
-- `WEB_BUILD/room_server.php`
+- [`multiplayer/local_room.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/multiplayer/local_room.py)
+- [`multiplayer/browser_room.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/multiplayer/browser_room.py)
+- [`multiplayer/serialization.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/multiplayer/serialization.py)
+- [`multiplayer/game_setup.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/multiplayer/game_setup.py)
+- [`room_server.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/room_server.py)
+- [`WEB_BUILD/room_server.php`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/WEB_BUILD/room_server.php)
 
 ## Recommended Reading
 
 - [Web Build and Deployment](Web-Build-and-Deployment)
 - [Project Architecture](Project-Architecture)
+- [Publication Case](Publication-Case)

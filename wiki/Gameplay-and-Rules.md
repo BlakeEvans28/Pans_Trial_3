@@ -1,6 +1,15 @@
 # Gameplay and Rules
 
-This page describes the current implemented rules in the digital project.
+This page describes the current implemented rules in the digital project. It corresponds to the written report's "Rules of Play" section, but adds links back into the source code so readers can connect the player-facing rules to the implementation.
+
+## Rule Vocabulary
+
+- `Labyrinth`: the 6x6 toroidal board. Leaving one edge wraps to the opposite edge.
+- `Omen`: one of the four Jack cards that assigns a suit family to a role.
+- `Roles`: Walls block movement, Traps reduce health, Ballista cards create line movement, and Weapons become combat cards.
+- `Traversing`: the main movement phase.
+- `Appeasing Pan`: the second phase where both players play a hand card to win request priority.
+- `Requests`: Restructure, Steal Life, Ignore Us, and Plane Shift.
 
 ## Goal
 
@@ -140,3 +149,20 @@ Some request outcomes can trap a player by leaving them with no legal moves. Whe
 
 - A player loses immediately when their damage pile reaches `25` or more total damage.
 - The surviving player becomes Pan's champion.
+
+## Source Code Links
+
+- Card ranks, suits, roles, and damage values: [`engine/cards.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/engine/cards.py)
+- Toroidal board, positions, and Plane Shift row/column movement: [`engine/board.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/engine/board.py)
+- Typed gameplay actions and request definitions: [`engine/actions.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/engine/actions.py)
+- Main phase transitions, movement, combat, Appeasing Pan, requests, holes, and victory checks: [`engine/game_state.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/engine/game_state.py)
+- Gameplay rendering and player prompts: [`ui/game_screen.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/ui/game_screen.py)
+- Board rendering, tile roles, suit visuals, and coordinate mapping: [`ui/board_renderer.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/ui/board_renderer.py)
+- Regression coverage for the rules on this page: [`tests/test_rules.py`](https://github.com/BlakeEvans28/Pans_Trial_3/blob/main/tests/test_rules.py)
+
+## Related Pages
+
+- [Publication Case](Publication-Case)
+- [Project Architecture](Project-Architecture)
+- [Testing and Balance](Testing-and-Balance)
+- [Media and References](Media-and-References)

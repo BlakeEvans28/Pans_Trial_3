@@ -1,5 +1,10 @@
 [Home](Home)
 
+## Digital Report
+
+- [Publication Case](Publication-Case)
+- [Media and References](Media-and-References)
+
 ## Play and Setup
 
 - [Getting Started](Getting-Started)
